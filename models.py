@@ -219,6 +219,17 @@ def remove_group_member(group_id, user_id):
         db.execute("DELETE FROM group_members WHERE group_id = ? AND user_id = ?", (group_id, user_id))
 
 
+def update_group(group_id, **kwargs):
+    allowed = {"name", "avatar"}
+    fields = {k: v for k, v in kwargs.items() if k in allowed}
+    if not fields:
+        return
+    set_clause = ", ".join(f"{k} = ?" for k in fields)
+    values = list(fields.values()) + [group_id]
+    with get_db_ctx() as db:
+        db.execute(f"UPDATE groups SET {set_clause} WHERE id = ?", values)
+
+
 def get_group_members(group_id):
     db = get_db()
     rows = db.execute(
@@ -242,6 +253,14 @@ def get_user_groups(user_id):
     return [dict(r) for r in rows]
 
 
+def delete_group(group_id):
+    with get_db_ctx() as db:
+        db.execute("DELETE FROM unread_messages WHERE message_id IN (SELECT id FROM messages WHERE chat_type = 'group' AND chat_id = ?)", (group_id,))
+        db.execute("DELETE FROM messages WHERE chat_type = 'group' AND chat_id = ?", (group_id,))
+        db.execute("DELETE FROM group_members WHERE group_id = ?", (group_id,))
+        db.execute("DELETE FROM groups WHERE id = ?", (group_id,))
+
+
 def is_group_member(group_id, user_id):
     db = get_db()
     row = db.execute(
@@ -253,6 +272,15 @@ def is_group_member(group_id, user_id):
 
 
 # ── Direct chat operations ──
+
+def delete_direct_chat(chat_id, user_id):
+    with get_db_ctx() as db:
+        chat = db.execute("SELECT * FROM direct_chats WHERE id = ? AND (user1_id = ? OR user2_id = ?)", (chat_id, user_id, user_id)).fetchone()
+        if chat:
+            db.execute("DELETE FROM unread_messages WHERE message_id IN (SELECT id FROM messages WHERE chat_type = 'direct' AND chat_id = ?)", (chat_id,))
+            db.execute("DELETE FROM messages WHERE chat_type = 'direct' AND chat_id = ?", (chat_id,))
+            db.execute("DELETE FROM direct_chats WHERE id = ?", (chat_id,))
+
 
 def get_or_create_direct_chat(user1_id, user2_id):
     a, b = sorted([user1_id, user2_id])

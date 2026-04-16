@@ -66,6 +66,10 @@ function connectSocket() {
         updatePresence(data);
     });
 
+    socket.on('chat_list_updated', () => {
+        loadChats();
+    });
+
     socket.on('disconnect', () => {
         console.log('Disconnected');
     });
@@ -91,7 +95,11 @@ function renderChatList() {
         for (const g of chats.groups) {
             const isActive = currentChat && currentChat.type === 'group' && currentChat.id === g.id;
             const initial = g.name.charAt(0);
-            html += `<div class="chat-item ${isActive ? 'active' : ''}" onclick="openChat('group','${g.id}','${escHtml(g.name)}')">
+            const isCreator = g.created_by === currentUser.id;
+            const menuAction = isCreator
+                ? `showChatMenu(event,'group','${g.id}','dissolve')`
+                : `showChatMenu(event,'group','${g.id}','leave')`;
+            html += `<div class="chat-item ${isActive ? 'active' : ''}" onclick="openChat('group','${g.id}','${escHtml(g.name)}')" oncontextmenu="${menuAction}">
                 <div class="avatar">${g.avatar ? `<img src="${escHtml(g.avatar)}">` : initial}</div>
                 <div class="chat-item-info">
                     <div class="name">${escHtml(g.name)}</div>
@@ -107,7 +115,7 @@ function renderChatList() {
             const isActive = currentChat && currentChat.type === 'direct' && currentChat.id === d.id;
             const initial = (d.peer_name || '?').charAt(0);
             const dot = d.peer_online ? '<span class="online-dot"></span>' : '';
-            html += `<div class="chat-item ${isActive ? 'active' : ''}" onclick="openChat('direct','${d.id}','${escHtml(d.peer_name)}')">
+            html += `<div class="chat-item ${isActive ? 'active' : ''}" onclick="openChat('direct','${d.id}','${escHtml(d.peer_name)}')" oncontextmenu="showChatMenu(event,'direct','${d.id}','delete')">
                 <div class="avatar">${d.peer_avatar ? `<img src="${escHtml(d.peer_avatar)}">` : initial}</div>
                 <div class="chat-item-info">
                     <div class="name">${dot}${escHtml(d.peer_name)}</div>
@@ -118,7 +126,7 @@ function renderChatList() {
     }
 
     if (!chats.groups.length && !chats.directs.length) {
-        html = '<div style="padding:20px;text-align:center;color:#999;font-size:13px;">还没有对话<br>在管理面板中创建群组</div>';
+        html = '<div style="padding:20px;text-align:center;color:#999;font-size:13px;">还没有对话<br>点击右上角菜单创建</div>';
     }
 
     el.innerHTML = html;
@@ -129,6 +137,7 @@ async function openChat(type, id, name) {
     currentChat = { type, id, name };
     document.getElementById('emptyState').classList.add('hidden');
     document.getElementById('chatContainer').classList.remove('hidden');
+    document.getElementById('membersPanel').classList.add('hidden');
     document.getElementById('chatTitle').textContent = name;
     document.getElementById('messageList').innerHTML = '';
     document.getElementById('loadMoreBtn').classList.add('hidden');
@@ -142,14 +151,32 @@ async function openChat(type, id, name) {
     scrollToBottom();
     renderChatList();
 
-    // Update subtitle
+    // Update header
+    const avatarEl = document.getElementById('chatHeaderAvatar');
     if (type === 'group') {
-        const members = await (await fetch(`/api/groups/${id}/members`)).json();
+        const [members, group] = await Promise.all([
+            (await fetch(`/api/groups/${id}/members`)).json(),
+            (await fetch(`/api/groups/${id}`)).json(),
+        ]);
         document.getElementById('chatSubtitle').textContent = `${members.length} 名成员`;
         document.getElementById('chatMembersBtn').classList.remove('hidden');
+
+        const initial = name.charAt(0);
+        avatarEl.innerHTML = group.avatar ? `<img src="${escHtml(group.avatar)}">` : initial;
+        avatarEl.classList.remove('hidden');
+        if (group.created_by === currentUser.id) {
+            avatarEl.classList.add('editable');
+            avatarEl.title = '点击修改群头像';
+            avatarEl.onclick = () => uploadGroupAvatar(id);
+        } else {
+            avatarEl.classList.remove('editable');
+            avatarEl.title = '';
+            avatarEl.onclick = null;
+        }
     } else {
         document.getElementById('chatSubtitle').textContent = '';
         document.getElementById('chatMembersBtn').classList.add('hidden');
+        avatarEl.classList.add('hidden');
     }
 
     // Close sidebar on mobile
@@ -199,6 +226,12 @@ async function loadMoreMessages() {
     const before = oldestTimestamp[key];
     if (!before) return;
     await loadMessages(currentChat.type, currentChat.id, before);
+}
+
+function appendMessage(msg) {
+    const list = document.getElementById('messageList');
+    list.insertAdjacentHTML('beforeend', renderMessage(msg));
+    list.querySelectorAll('pre code:not([data-highlighted])').forEach(el => hljs.highlightElement(el));
 }
 
 /* ── Render Message ── */
@@ -330,7 +363,7 @@ function sendMessage() {
     });
 
     input.value = '';
-    input.style.height = 'auto';
+    input.style.height = '42px';
 }
 
 async function handleFileSelect(event) {
@@ -370,7 +403,7 @@ function setupInputHandlers() {
 
     // Auto-resize textarea
     input.addEventListener('input', () => {
-        input.style.height = 'auto';
+        input.style.height = '42px';
         input.style.height = Math.min(input.scrollHeight, 120) + 'px';
 
         // Typing indicator
@@ -434,11 +467,16 @@ async function toggleMembers() {
     }
     if (!currentChat || currentChat.type !== 'group') return;
 
-    const res = await fetch(`/api/groups/${currentChat.id}/members`);
-    const members = await res.json();
+    const [membersRes, groupRes] = await Promise.all([
+        fetch(`/api/groups/${currentChat.id}/members`),
+        fetch(`/api/groups/${currentChat.id}`),
+    ]);
+    const members = await membersRes.json();
+    const group = await groupRes.json();
+    const canManage = currentUser.role === 'admin' || group.created_by === currentUser.id;
 
     let html = '';
-    if (currentUser.role === 'admin') {
+    if (canManage) {
         html += `<div style="padding:8px 12px"><button class="btn-sm" onclick="showAddMember('${currentChat.id}')">+ 添加成员</button></div>`;
     }
     for (const m of members) {
@@ -449,14 +487,31 @@ async function toggleMembers() {
         if (m.role === 'admin') tag = '<span class="member-tag admin">管理员</span>';
         else if (m.is_agent) tag = '<span class="member-tag agent">Agent</span>';
 
+        let removeBtn = '';
+        if (canManage && m.id !== group.created_by) {
+            removeBtn = `<button class="icon-btn" style="font-size:13px;color:#ff4757" onclick="removeMember('${currentChat.id}','${m.id}')" title="移除">✕</button>`;
+        }
+
         html += `<div class="member-item">
             <div class="${avatarClass}">${initial}</div>
             <span class="member-name">${dot}${escHtml(m.display_name)}</span>
-            ${tag}
+            ${tag}${removeBtn}
         </div>`;
     }
     document.getElementById('membersList').innerHTML = html;
     panel.classList.remove('hidden');
+}
+
+async function removeMember(groupId, userId) {
+    if (!confirm('确定要移除该成员吗？')) return;
+    const res = await fetch(`/api/groups/${groupId}/members/${userId}`, { method: 'DELETE' });
+    if (res.ok) {
+        toggleMembers(); // close
+        toggleMembers(); // reopen to refresh
+    } else {
+        const data = await res.json();
+        alert(data.error || '移除失败');
+    }
 }
 
 /* ── Admin panel ── */
@@ -467,34 +522,18 @@ function showAdminPanel() {
     loadAdminData();
 }
 
-function switchAdminTab(tab) {
-    document.querySelectorAll('.admin-tabs button').forEach((b, i) => {
-        b.classList.toggle('active', (tab === 'groups' ? i === 0 : i === 1));
-    });
-    document.getElementById('adminGroups').classList.toggle('hidden', tab !== 'groups');
-    document.getElementById('adminAgents').classList.toggle('hidden', tab !== 'agents');
-}
-
 async function loadAdminData() {
-    const [groups, agents] = await Promise.all([
-        (await fetch('/api/groups')).json(),
-        (await fetch('/api/agents')).json(),
-    ]);
-
-    let groupHtml = '';
-    for (const g of groups) {
-        groupHtml += `<div class="admin-group-item">
-            <div class="group-info"><strong>${escHtml(g.name)}</strong></div>
-            <button class="btn-sm" onclick="showAddMember('${g.id}')">添加成员</button>
-        </div>`;
-    }
-    document.getElementById('adminGroupList').innerHTML = groupHtml || '<div style="color:#999;font-size:13px">暂无群组</div>';
+    const agents = await (await fetch('/api/agents')).json();
 
     let agentHtml = '';
     for (const a of agents) {
         const statusDot = a.is_online ? '<span class="online-dot"></span>' : '';
+        const agentAvatar = a.avatar
+            ? `<img src="${escHtml(a.avatar)}" style="width:36px;height:36px;border-radius:8px;object-fit:cover;cursor:pointer" onclick="uploadAgentAvatar('${a.id}')" title="点击更换头像">`
+            : `<div style="width:36px;height:36px;border-radius:8px;background:linear-gradient(135deg,#f093fb,#f5576c);color:#fff;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:600;cursor:pointer" onclick="uploadAgentAvatar('${a.id}')" title="点击设置头像">${escHtml(a.display_name).charAt(0)}</div>`;
         agentHtml += `<div class="admin-agent-item">
-            <div class="agent-info">
+            ${agentAvatar}
+            <div class="agent-info" style="margin-left:10px">
                 <div>${statusDot}<strong>${escHtml(a.display_name)}</strong> (${escHtml(a.username)})</div>
                 <div class="token-display">Token: ${escHtml(a.agent_token)}</div>
             </div>
@@ -503,22 +542,37 @@ async function loadAdminData() {
     document.getElementById('adminAgentList').innerHTML = agentHtml || '<div style="color:#999;font-size:13px">暂无 Agent</div>';
 }
 
-async function createGroup() {
-    const name = document.getElementById('newGroupName').value.trim();
-    if (!name) return;
-    const res = await fetch('/api/groups', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name }),
-    });
-    if (res.ok) {
-        document.getElementById('newGroupName').value = '';
-        loadAdminData();
-        loadChats();
-    } else {
+async function previewAgentAvatar(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    const formData = new FormData();
+    formData.append('file', file);
+    const res = await fetch('/api/upload', { method: 'POST', body: formData });
+    if (!res.ok) { alert('上传失败'); return; }
+    const data = await res.json();
+    document.getElementById('newAgentAvatarUrl').value = data.url;
+}
+
+async function uploadAgentAvatar(agentId) {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.onchange = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const formData = new FormData();
+        formData.append('file', file);
+        const res = await fetch('/api/upload', { method: 'POST', body: formData });
+        if (!res.ok) { alert('上传失败'); return; }
         const data = await res.json();
-        alert(data.error || '创建失败');
-    }
+        await fetch(`/api/agents/${agentId}`, {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ avatar: data.url }),
+        });
+        loadAdminData();
+    };
+    input.click();
 }
 
 async function createAgent() {
@@ -528,11 +582,12 @@ async function createAgent() {
     const res = await fetch('/api/agents', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, display_name: displayName || username }),
+        body: JSON.stringify({ username, display_name: displayName || username, avatar: document.getElementById('newAgentAvatarUrl').value }),
     });
     if (res.ok) {
         document.getElementById('newAgentUsername').value = '';
         document.getElementById('newAgentDisplayName').value = '';
+        document.getElementById('newAgentAvatarUrl').value = '';
         const data = await res.json();
         alert(`Agent 创建成功！\nToken: ${data.agent_token}\n请妥善保存此 Token`);
         loadAdminData();
@@ -570,6 +625,192 @@ async function addMember(groupId, userId, btn) {
         btn.parentElement.remove();
         loadChats();
     }
+}
+
+function showProfileModal() {
+    document.getElementById('sidebarMenu').classList.add('hidden');
+    const avatar = document.getElementById('profileAvatar');
+    if (currentUser.avatar) {
+        avatar.innerHTML = `<img src="${escHtml(currentUser.avatar)}">`;
+    } else {
+        avatar.textContent = (currentUser.display_name || '?').charAt(0);
+    }
+    document.getElementById('profileDisplayName').value = currentUser.display_name || '';
+    document.getElementById('profileModal').classList.remove('hidden');
+}
+
+async function uploadAvatar(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    const formData = new FormData();
+    formData.append('file', file);
+    const res = await fetch('/api/upload', { method: 'POST', body: formData });
+    if (!res.ok) { alert('上传失败'); return; }
+    const data = await res.json();
+    currentUser.avatar = data.url;
+    document.getElementById('profileAvatar').innerHTML = `<img src="${escHtml(data.url)}">`;
+}
+
+async function saveProfile() {
+    const displayName = document.getElementById('profileDisplayName').value.trim();
+    const res = await fetch('/api/me', {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ display_name: displayName, avatar: currentUser.avatar || '' }),
+    });
+    if (res.ok) {
+        currentUser = await res.json();
+        closeModal('profileModal');
+        loadChats();
+    } else {
+        alert('保存失败');
+    }
+}
+
+/* ── Context menu for chat list ── */
+function showChatMenu(event, chatType, chatId, action) {
+    event.preventDefault();
+    event.stopPropagation();
+    const menu = document.getElementById('contextMenu');
+    let html = '';
+    if (chatType === 'group' && action === 'dissolve') {
+        html = `<button class="danger" onclick="dissolveGroup('${chatId}')">解散群组</button>`;
+    } else if (chatType === 'group' && action === 'leave') {
+        html = `<button class="danger" onclick="leaveGroup('${chatId}')">退出群组</button>`;
+    } else if (chatType === 'direct') {
+        html = `<button class="danger" onclick="deleteDirectChat('${chatId}')">删除会话</button>`;
+    }
+    menu.innerHTML = html;
+    menu.style.left = event.clientX + 'px';
+    menu.style.top = event.clientY + 'px';
+    menu.classList.remove('hidden');
+}
+
+document.addEventListener('click', () => {
+    document.getElementById('contextMenu').classList.add('hidden');
+});
+
+async function dissolveGroup(groupId) {
+    document.getElementById('contextMenu').classList.add('hidden');
+    if (!confirm('确定要解散该群组吗？所有消息将被删除。')) return;
+    const res = await fetch(`/api/groups/${groupId}`, { method: 'DELETE' });
+    if (res.ok) {
+        if (currentChat && currentChat.type === 'group' && currentChat.id === groupId) {
+            currentChat = null;
+            document.getElementById('chatContainer').classList.add('hidden');
+            document.getElementById('emptyState').classList.remove('hidden');
+        }
+        loadChats();
+    } else {
+        const data = await res.json();
+        alert(data.error || '解散失败');
+    }
+}
+
+async function leaveGroup(groupId) {
+    document.getElementById('contextMenu').classList.add('hidden');
+    if (!confirm('确定要退出该群组吗？')) return;
+    const res = await fetch(`/api/groups/${groupId}/leave`, { method: 'POST' });
+    if (res.ok) {
+        if (currentChat && currentChat.type === 'group' && currentChat.id === groupId) {
+            currentChat = null;
+            document.getElementById('chatContainer').classList.add('hidden');
+            document.getElementById('emptyState').classList.remove('hidden');
+        }
+        loadChats();
+    } else {
+        const data = await res.json();
+        alert(data.error || '退出失败');
+    }
+}
+
+async function deleteDirectChat(chatId) {
+    document.getElementById('contextMenu').classList.add('hidden');
+    if (!confirm('确定要删除该会话吗？聊天记录将被清除。')) return;
+    const res = await fetch(`/api/direct-chats/${chatId}`, { method: 'DELETE' });
+    if (res.ok) {
+        if (currentChat && currentChat.type === 'direct' && currentChat.id === chatId) {
+            currentChat = null;
+            document.getElementById('chatContainer').classList.add('hidden');
+            document.getElementById('emptyState').classList.remove('hidden');
+        }
+        loadChats();
+    } else {
+        alert('删除失败');
+    }
+}
+
+function uploadGroupAvatar(groupId) {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.onchange = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const formData = new FormData();
+        formData.append('file', file);
+        const res = await fetch('/api/upload', { method: 'POST', body: formData });
+        if (!res.ok) { alert('上传失败'); return; }
+        const data = await res.json();
+        const r2 = await fetch(`/api/groups/${groupId}`, {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ avatar: data.url }),
+        });
+        if (r2.ok) {
+            document.getElementById('chatHeaderAvatar').innerHTML = `<img src="${escHtml(data.url)}">`;
+            loadChats();
+        } else {
+            const err = await r2.json();
+            alert(err.error || '修改失败');
+        }
+    };
+    input.click();
+}
+
+function showCreateGroupModal() {
+    document.getElementById('sidebarMenu').classList.add('hidden');
+    const name = prompt('请输入群组名称');
+    if (!name || !name.trim()) return;
+    fetch('/api/groups', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ name: name.trim() }),
+    }).then(r => {
+        if (r.ok) { loadChats(); }
+        else r.json().then(d => alert(d.error || '创建失败'));
+    });
+}
+
+async function showNewChatModal() {
+    document.getElementById('sidebarMenu').classList.add('hidden');
+    const users = await (await fetch('/api/users')).json();
+
+    let html = '';
+    for (const u of users) {
+        if (u.id === currentUser.id) continue;
+        const dot = u.is_online ? '<span class="online-dot"></span>' : '';
+        const tag = u.is_agent ? ' <span class="member-tag agent">Agent</span>' : '';
+        html += `<div class="add-user-item">
+            <span>${dot}${escHtml(u.display_name)}${tag}</span>
+            <button class="btn-sm" onclick="startDirectChat('${u.id}','${escHtml(u.display_name)}')">聊天</button>
+        </div>`;
+    }
+    document.getElementById('newChatUserList').innerHTML = html || '<div style="color:#999;font-size:13px;padding:12px">暂无其他用户</div>';
+    document.getElementById('newChatModal').classList.remove('hidden');
+}
+
+async function startDirectChat(userId, userName) {
+    closeModal('newChatModal');
+    const res = await fetch('/api/direct-chats', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({user_id: userId}),
+    });
+    if (!res.ok) { alert('创建对话失败'); return; }
+    const chat = await res.json();
+    await loadChats();
+    openChat('direct', chat.id, userName);
 }
 
 function closeModal(id) {

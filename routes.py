@@ -80,6 +80,57 @@ def me():
     return jsonify(_safe_user(request.current_user))
 
 
+@api.route("/api/me", methods=["PUT"])
+@login_required
+def update_me():
+    data = request.get_json()
+    updates = {}
+    if "display_name" in data and data["display_name"].strip():
+        updates["display_name"] = data["display_name"].strip()
+    if "avatar" in data:
+        updates["avatar"] = data["avatar"]
+    if updates:
+        models.update_user(request.current_user["id"], **updates)
+    user = models.get_user_by_id(request.current_user["id"])
+    return jsonify(_safe_user(user))
+
+
+@api.route("/api/agents/<agent_id>", methods=["PUT"])
+@admin_required
+def update_agent(agent_id):
+    agent = models.get_user_by_id(agent_id)
+    if not agent or not agent["is_agent"]:
+        return jsonify({"error": "Agent 不存在"}), 404
+    data = request.get_json()
+    updates = {}
+    if "display_name" in data and data["display_name"].strip():
+        updates["display_name"] = data["display_name"].strip()
+    if "avatar" in data:
+        updates["avatar"] = data["avatar"]
+    if updates:
+        models.update_user(agent_id, **updates)
+    return jsonify({"ok": True})
+
+
+@api.route("/api/groups/<group_id>", methods=["PUT"])
+@login_required
+def update_group(group_id):
+    group = models.get_group(group_id)
+    if not group:
+        return jsonify({"error": "群组不存在"}), 404
+    if group["created_by"] != request.current_user["id"]:
+        return jsonify({"error": "只有创建者可以修改群组"}), 403
+    data = request.get_json()
+    updates = {}
+    if "name" in data and data["name"].strip():
+        updates["name"] = data["name"].strip()
+    if "avatar" in data:
+        updates["avatar"] = data["avatar"]
+    if updates:
+        models.update_group(group_id, **updates)
+    return jsonify(models.get_group(group_id))
+
+
 # ── Agent management (admin only) ──
 
 @api.route("/api/agents", methods=["POST"])
@@ -116,7 +167,7 @@ def list_users():
 # ── Group management ──
 
 @api.route("/api/groups", methods=["POST"])
-@admin_required
+@login_required
 def create_group():
     data = request.get_json()
     name = data.get("name", "").strip()
@@ -134,6 +185,15 @@ def list_groups():
     return jsonify(models.get_user_groups(request.current_user["id"]))
 
 
+@api.route("/api/groups/<group_id>")
+@login_required
+def get_group(group_id):
+    group = models.get_group(group_id)
+    if not group:
+        return jsonify({"error": "群组不存在"}), 404
+    return jsonify(group)
+
+
 @api.route("/api/groups/<group_id>/members")
 @login_required
 def group_members(group_id):
@@ -143,22 +203,83 @@ def group_members(group_id):
 
 
 @api.route("/api/groups/<group_id>/members", methods=["POST"])
-@admin_required
+@login_required
 def add_member(group_id):
+    group = models.get_group(group_id)
+    if not group:
+        return jsonify({"error": "群组不存在"}), 404
+    cur = request.current_user
+    if cur["role"] != "admin" and group["created_by"] != cur["id"]:
+        return jsonify({"error": "只有管理员或群创建者可以添加成员"}), 403
     data = request.get_json()
     user_id = data.get("user_id")
     if not user_id or not models.get_user_by_id(user_id):
         return jsonify({"error": "用户不存在"}), 404
-    if not models.get_group(group_id):
-        return jsonify({"error": "群组不存在"}), 404
     models.add_group_member(group_id, user_id)
+
+    # Notify the added user in real-time
+    from socket_events import user_sids
+    from app import socketio
+    from flask_socketio import join_room as sio_join_room
+    if user_id in user_sids:
+        for sid in user_sids[user_id]:
+            sio_join_room(f"group_{group_id}", sid=sid)
+            socketio.emit("chat_list_updated", to=sid)
+
     return jsonify({"ok": True})
 
 
 @api.route("/api/groups/<group_id>/members/<user_id>", methods=["DELETE"])
-@admin_required
+@login_required
 def remove_member(group_id, user_id):
+    group = models.get_group(group_id)
+    if not group:
+        return jsonify({"error": "群组不存在"}), 404
+    cur = request.current_user
+    if cur["role"] != "admin" and group["created_by"] != cur["id"]:
+        return jsonify({"error": "只有管理员或群创建者可以移除成员"}), 403
+    if user_id == group["created_by"]:
+        return jsonify({"error": "不能移除群创建者"}), 400
     models.remove_group_member(group_id, user_id)
+    return jsonify({"ok": True})
+
+
+@api.route("/api/groups/<group_id>", methods=["DELETE"])
+@login_required
+def delete_group(group_id):
+    group = models.get_group(group_id)
+    if not group:
+        return jsonify({"error": "群组不存在"}), 404
+    if group["created_by"] != request.current_user["id"]:
+        return jsonify({"error": "只有创建者可以解散群组"}), 403
+    # Notify all online members
+    from socket_events import user_sids
+    from app import socketio
+    members = models.get_group_members(group_id)
+    for m in members:
+        if m["id"] in user_sids:
+            for sid in user_sids[m["id"]]:
+                socketio.emit("chat_list_updated", to=sid)
+    models.delete_group(group_id)
+    return jsonify({"ok": True})
+
+
+@api.route("/api/groups/<group_id>/leave", methods=["POST"])
+@login_required
+def leave_group(group_id):
+    group = models.get_group(group_id)
+    if not group:
+        return jsonify({"error": "群组不存在"}), 404
+    if group["created_by"] == request.current_user["id"]:
+        return jsonify({"error": "创建者不能退出群组，请使用解散功能"}), 400
+    models.remove_group_member(group_id, request.current_user["id"])
+    return jsonify({"ok": True})
+
+
+@api.route("/api/direct-chats/<chat_id>", methods=["DELETE"])
+@login_required
+def delete_direct_chat(chat_id):
+    models.delete_direct_chat(chat_id, request.current_user["id"])
     return jsonify({"ok": True})
 
 

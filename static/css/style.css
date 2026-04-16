@@ -23,6 +23,7 @@ body {
     display: flex;
     flex-direction: column;
     z-index: 100;
+    position: relative;
 }
 .sidebar-header {
     padding: 16px 20px;
@@ -165,6 +166,26 @@ body {
     align-items: center;
     gap: 12px;
 }
+.chat-header-avatar {
+    width: 38px;
+    height: 38px;
+    border-radius: 10px;
+    background: linear-gradient(135deg, #667eea, #764ba2);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    font-weight: 600;
+    flex-shrink: 0;
+    overflow: hidden;
+}
+.chat-header-avatar.editable { cursor: pointer; }
+.chat-header-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
 .chat-header-info { flex: 1; }
 .chat-header-info h3 { font-size: 16px; }
 .chat-header-info .subtitle { font-size: 12px; color: #999; }
@@ -222,7 +243,7 @@ body {
     border-radius: 8px;
     object-fit: cover;
 }
-.message .msg-body { flex: 1; min-width: 0; }
+.message .msg-body { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; }
 .message .msg-header {
     display: flex;
     align-items: baseline;
@@ -249,6 +270,15 @@ body {
     display: inline-block;
     max-width: 100%;
     box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+}
+.message.self {
+    flex-direction: row-reverse;
+}
+.message.self .msg-body {
+    align-items: flex-end;
+}
+.message.self .msg-header {
+    flex-direction: row-reverse;
 }
 .message.self .msg-content {
     background: #eef0ff;
@@ -386,6 +416,9 @@ body {
     font-size: 14px;
     resize: none;
     outline: none;
+    overflow: hidden;
+    height: 42px;
+    min-height: 42px;
     max-height: 120px;
     font-family: inherit;
     line-height: 1.5;
@@ -579,6 +612,47 @@ body {
     background: #f8f9fa;
     margin-bottom: 6px;
 }
+.profile-avatar {
+    width: 80px;
+    height: 80px;
+    border-radius: 16px;
+    background: linear-gradient(135deg, #667eea, #764ba2);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 32px;
+    font-weight: 600;
+    margin: 0 auto;
+    overflow: hidden;
+}
+.profile-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+.context-menu {
+    position: fixed;
+    background: #fff;
+    border-radius: 10px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+    z-index: 400;
+    overflow: hidden;
+    min-width: 120px;
+}
+.context-menu button {
+    display: block;
+    width: 100%;
+    padding: 10px 18px;
+    border: none;
+    background: none;
+    text-align: left;
+    font-size: 13px;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.context-menu button:hover { background: #f5f5f5; }
+.context-menu button.danger { color: #ff4757; }
 .mention-tag {
     color: #667eea;
     font-weight: 600;

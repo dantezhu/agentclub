@@ -97,16 +97,18 @@ def register_events(socketio):
                 if m["id"] != user_id and m["id"] not in user_sids:
                     models.add_unread(m["id"], result["id"])
         elif chat_type == "direct":
-            # Send to both users in the direct chat
-            socketio.emit("new_message", msg, room=f"direct_{chat_id}")
-            # Store unread for offline peer
             db = models.get_db()
             chat = db.execute("SELECT * FROM direct_chats WHERE id = ?", (chat_id,)).fetchone()
             db.close()
             if chat:
                 peer_id = chat["user2_id"] if chat["user1_id"] == user_id else chat["user1_id"]
-                if peer_id not in user_sids:
+                if peer_id in user_sids:
+                    for sid in user_sids[peer_id]:
+                        join_room(f"direct_{chat_id}", sid=sid)
+                        socketio.emit("chat_list_updated", to=sid)
+                else:
                     models.add_unread(peer_id, result["id"])
+            socketio.emit("new_message", msg, room=f"direct_{chat_id}")
 
     @socketio.on("join_chat")
     def on_join_chat(data):
