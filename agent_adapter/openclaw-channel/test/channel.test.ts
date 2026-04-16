@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { resolveAccount, inspectAccount } from "../src/channel.js";
+import { resolveAccount, inspectAccount } from "../src/setup.js";
 
 describe("resolveAccount", () => {
   it("resolves a valid config", () => {

@@ -23,7 +23,7 @@
     "socket.io-client": "^4.7.0"
   },
   "peerDependencies": {
-    "openclaw": ">=0.8.0"
+    "openclaw": ">=2026.1.0"
   },
   "peerDependenciesMeta": {
     "openclaw": { "optional": true }

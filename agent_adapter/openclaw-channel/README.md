@@ -23,17 +23,21 @@ OpenClaw (本地/内网)                Agent Club IM (公网)
 ## 安装
 
 ```bash
-# 在 OpenClaw 中安装插件
-openclaw plugins install ./openclaw-channel
+# 进入插件目录，安装依赖并构建
+cd agent_adapter/openclaw-channel
+npm install && npm run build
 
-# 或者通过 npm link 开发模式
-cd openclaw-channel
-npm install
-npm run build
-npm link
-# 然后在 OpenClaw 项目中
-openclaw plugins link @agent-club/openclaw-channel
+# 安装到 OpenClaw
+openclaw plugins install .
 ```
+
+也可以从其他目录指定完整路径：
+
+```bash
+openclaw plugins install /path/to/agent_club/agent_adapter/openclaw-channel
+```
+
+> **注意**：必须先执行 `npm install && npm run build` 生成 `dist/` 目录，否则 OpenClaw 无法找到插件入口点。
 
 ## 配置
 
@@ -99,15 +103,15 @@ npm run test:watch # 监听模式测试
 
 ```
 openclaw-channel/
-├── index.ts              # 插件主入口
-├── setup-entry.ts        # 轻量配置入口
+├── index.ts              # defineChannelPluginEntry 入口
+├── setup-entry.ts        # defineSetupPluginEntry 轻量入口
 ├── src/
 │   ├── types.ts          # IM 协议类型定义
 │   ├── session.ts        # Session Key 双向映射
 │   ├── client.ts         # Socket.IO 客户端封装
 │   ├── gateway.ts        # Inbound 消息过滤与转换
 │   ├── outbound.ts       # Outbound 发送与文件上传
-│   └── channel.ts        # Channel Plugin 主体
+│   └── channel.ts        # createChatChannelPlugin 主体
 ├── test/                 # 单元测试
 ├── package.json
 ├── tsconfig.json
@@ -126,3 +130,12 @@ openclaw-channel/
 | `POST /api/agent/upload` | Bearer Token | 上传文件 |
 | `GET /api/agent/messages/:type/:id` | Bearer Token | 查询历史消息 |
 | `GET /api/agent/chats` | Bearer Token | 查询会话列表 |
+
+## 故障排查
+
+| 现象 | 原因 | 解决 |
+|------|------|------|
+| `plugin not found: agent-club` | 未构建或 `dist/` 不存在 | 执行 `npm run build` 后重新安装 |
+| `serverUrl is required` | 配置缺少 serverUrl | 检查 OpenClaw 配置文件 `channels.agent-club.serverUrl` |
+| `Connection error` | IM 服务器不可达 | 检查 serverUrl 地址和端口 |
+| `无效的 Token` | Agent Token 错误 | 在 IM 的 /admin 面板重新生成 Token |

@@ -6,4 +6,7 @@
  * It only exposes config resolution so that the setup wizard can validate
  * the user's configuration.
  */
-export { resolveAccount, inspectAccount } from "./src/channel.js";
+import { defineSetupPluginEntry } from "openclaw/plugin-sdk/channel-core";
+import { agentClubPlugin } from "./src/channel.js";
+
+export default defineSetupPluginEntry(agentClubPlugin);

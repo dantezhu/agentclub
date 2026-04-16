@@ -1,81 +1,103 @@
-import type { ResolvedAccount, AgentClubConfig } from "./types.js";
+import {
+  createChatChannelPlugin,
+  createChannelPluginBase,
+} from "openclaw/plugin-sdk/channel-core";
+import type { ResolvedAccount } from "./types.js";
 import { AgentClubClient } from "./client.js";
-import { createInboundGateway, type InboundMessage } from "./gateway.js";
-import { createOutboundHandlers } from "./outbound.js";
+import { createInboundGateway } from "./gateway.js";
+import { resolveAccount, inspectAccount } from "./setup.js";
+import { parseSessionKey } from "./session.js";
+import { readFile } from "node:fs/promises";
+import { basename } from "node:path";
+import type { ContentType } from "./types.js";
+
+export { resolveAccount, inspectAccount } from "./setup.js";
 
 // ---------------------------------------------------------------------------
-// Config resolution
+// Runtime state — module-level client holder
 // ---------------------------------------------------------------------------
 
-/**
- * Extract and validate the agent-club channel config from the top-level
- * OpenClaw configuration object.
- */
-export function resolveAccount(
-  cfg: Record<string, unknown>,
-  accountId?: string | null,
-): ResolvedAccount {
-  const channels = cfg.channels as Record<string, unknown> | undefined;
-  const section = channels?.["agent-club"] as AgentClubConfig | undefined;
+let _client: AgentClubClient | null = null;
 
-  if (!section?.serverUrl) throw new Error("agent-club: serverUrl is required");
-  if (!section?.agentToken) throw new Error("agent-club: agentToken is required");
-
-  return {
-    accountId: accountId ?? null,
-    serverUrl: section.serverUrl,
-    agentToken: section.agentToken,
-    requireMention: section.requireMention ?? true,
-    allowFrom: section.allowFrom ?? [],
-    dmPolicy: undefined,
-  };
+export function getClient(): AgentClubClient {
+  if (!_client) throw new Error("Agent Club client not connected");
+  return _client;
 }
 
-export function inspectAccount(
-  cfg: Record<string, unknown>,
-  _accountId?: string | null,
-): { enabled: boolean; configured: boolean; tokenStatus: string } {
-  const channels = cfg.channels as Record<string, unknown> | undefined;
-  const section = channels?.["agent-club"] as AgentClubConfig | undefined;
-
-  return {
-    enabled: Boolean(section?.serverUrl && section?.agentToken),
-    configured: Boolean(section?.serverUrl && section?.agentToken),
-    tokenStatus: section?.agentToken ? "available" : "missing",
-  };
+export function setClient(client: AgentClubClient | null): void {
+  _client = client;
 }
 
 // ---------------------------------------------------------------------------
-// Channel plugin object
-//
-// This is the main export consumed by index.ts / setup-entry.ts.
-// It wires config resolution, outbound messaging, and the gateway lifecycle.
+// Helpers
 // ---------------------------------------------------------------------------
 
-export interface AgentClubChannelPlugin {
-  id: string;
-  setup: {
-    resolveAccount: typeof resolveAccount;
-    inspectAccount: typeof inspectAccount;
-  };
+function inferContentType(mimeOrCategory: string): ContentType {
+  const lower = mimeOrCategory.toLowerCase();
+  if (lower === "image" || lower.startsWith("image/")) return "image";
+  if (lower === "audio" || lower.startsWith("audio/")) return "audio";
+  if (lower === "video" || lower.startsWith("video/")) return "video";
+  return "file";
+}
+
+// ---------------------------------------------------------------------------
+// Plugin object — SDK-compatible ChannelPlugin
+// ---------------------------------------------------------------------------
+
+export const agentClubPlugin = createChatChannelPlugin<ResolvedAccount>({
+  base: createChannelPluginBase({
+    id: "agent-club",
+    setup: {
+      resolveAccount,
+      inspectAccount,
+    },
+  }),
+
   outbound: {
-    sendText: (params: { to: string; text: string }) => Promise<{ messageId?: string }>;
-    sendMedia: (params: { to: string; filePath: string; caption?: string }) => Promise<void>;
-  } | null;
-  gateway: {
-    start: () => Promise<void>;
-    stop: () => void;
-  } | null;
-  /** Called once the channel runtime is ready. Connects to the IM server. */
-  activate: (opts: ActivateOptions) => Promise<void>;
-  /** The underlying Socket.IO client (available after activate) */
-  client: AgentClubClient | null;
-}
+    attachedResults: {
+      async sendText(params: { to: string; text: string }) {
+        const parsed = parseSessionKey(params.to);
+        if (!parsed) throw new Error(`Invalid session key: ${params.to}`);
 
-export interface ActivateOptions {
+        getClient().sendMessage({
+          chat_type: parsed.chatType,
+          chat_id: parsed.chatId,
+          content: params.text,
+          content_type: "text",
+        });
+
+        return {};
+      },
+    },
+    base: {
+      async sendMedia(params: { to: string; filePath: string; caption?: string }) {
+        const parsed = parseSessionKey(params.to);
+        if (!parsed) throw new Error(`Invalid session key: ${params.to}`);
+
+        const fileBuffer = await readFile(params.filePath);
+        const fileName = basename(params.filePath);
+        const upload = await getClient().uploadFile(fileBuffer, fileName);
+
+        getClient().sendMessage({
+          chat_type: parsed.chatType,
+          chat_id: parsed.chatId,
+          content: params.caption || "",
+          content_type: inferContentType(upload.content_type),
+          file_url: upload.url,
+          file_name: upload.filename,
+        });
+      },
+    },
+  },
+});
+
+// ---------------------------------------------------------------------------
+// Runtime lifecycle — connect / disconnect the Socket.IO client
+// ---------------------------------------------------------------------------
+
+export interface ConnectOptions {
   account: ResolvedAccount;
-  /** Callback: OpenClaw should process this inbound message */
-  onInbound: (msg: InboundMessage) => void;
+  onInbound: (msg: import("./gateway.js").InboundMessage) => void;
   logger?: {
     info: (...args: unknown[]) => void;
     warn: (...args: unknown[]) => void;
@@ -83,69 +105,47 @@ export interface ActivateOptions {
   };
 }
 
-export function createAgentClubChannelPlugin(): AgentClubChannelPlugin {
-  let client: AgentClubClient | null = null;
-  let outbound: ReturnType<typeof createOutboundHandlers> | null = null;
+export async function connectRuntime(opts: ConnectOptions): Promise<void> {
+  const { account, onInbound, logger } = opts;
 
-  const plugin: AgentClubChannelPlugin = {
-    id: "agent-club",
+  let gateway: ((msg: import("./types.js").NewMessagePayload) => void) | null = null;
+  const pendingMessages: import("./types.js").NewMessagePayload[] = [];
 
-    setup: {
-      resolveAccount,
-      inspectAccount,
+  const client = new AgentClubClient({
+    config: {
+      serverUrl: account.serverUrl,
+      agentToken: account.agentToken,
+      requireMention: account.requireMention,
+      allowFrom: account.allowFrom,
     },
-
-    get outbound() {
-      return outbound;
+    onMessage: (msg) => {
+      if (gateway) gateway(msg);
+      else pendingMessages.push(msg);
     },
-
-    gateway: null,
-
-    client: null,
-
-    async activate(opts: ActivateOptions) {
-      const { account, onInbound, logger } = opts;
-
-      client = new AgentClubClient({
-        config: {
-          serverUrl: account.serverUrl,
-          agentToken: account.agentToken,
-          requireMention: account.requireMention,
-          allowFrom: account.allowFrom,
-        },
-        onMessage: (msg) => gateway(msg),
-        onOfflineMessages: (msgs) => {
-          for (const msg of msgs) gateway(msg);
-        },
-        logger,
-      });
-
-      const authResult = await client.connect();
-
-      const gateway = createInboundGateway({
-        agentUserId: authResult.user_id,
-        account,
-        onInbound,
-        logger,
-      });
-
-      outbound = createOutboundHandlers(client);
-
-      plugin.client = client;
-
-      plugin.gateway = {
-        start: async () => {
-          /* already connected via activate() */
-        },
-        stop: () => {
-          client?.disconnect();
-          client = null;
-          outbound = null;
-          plugin.client = null;
-        },
-      };
+    onOfflineMessages: (msgs) => {
+      for (const msg of msgs) {
+        if (gateway) gateway(msg);
+        else pendingMessages.push(msg);
+      }
     },
-  };
+    logger,
+  });
 
-  return plugin;
+  const authResult = await client.connect();
+
+  gateway = createInboundGateway({
+    agentUserId: authResult.user_id,
+    account,
+    onInbound,
+    logger,
+  });
+
+  for (const msg of pendingMessages) gateway(msg);
+
+  setClient(client);
+}
+
+export function disconnectRuntime(): void {
+  _client?.disconnect();
+  setClient(null);
 }
