@@ -1,0 +1,37 @@
+{
+  "id": "agent-club",
+  "kind": "channel",
+  "channels": ["agent-club"],
+  "name": "Agent Club",
+  "description": "Connect OpenClaw to an Agent Club IM server via Socket.IO",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "agent-club": {
+        "type": "object",
+        "properties": {
+          "serverUrl": {
+            "type": "string",
+            "description": "Agent Club IM server URL, e.g. https://im.example.com:5555"
+          },
+          "agentToken": {
+            "type": "string",
+            "description": "Agent token from the /admin panel"
+          },
+          "requireMention": {
+            "type": "boolean",
+            "default": true,
+            "description": "In group chats, only respond when @mentioned"
+          },
+          "allowFrom": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Allowed user IDs (empty = allow all)"
+          }
+        },
+        "required": ["serverUrl", "agentToken"]
+      }
+    }
+  }
+}

@@ -400,6 +400,41 @@ def agent_upload_file():
     return jsonify({"url": url, "filename": filename, "content_type": content_type})
 
 
+# ── Agent message history (token auth) ──
+
+@api.route("/api/agent/messages/<chat_type>/<chat_id>")
+def agent_get_messages(chat_type, chat_id):
+    """Token-authenticated message history for agents."""
+    token = request.headers.get("Authorization", "").replace("Bearer ", "")
+    if not token:
+        return jsonify({"error": "缺少认证"}), 401
+    user = models.get_user_by_agent_token(token)
+    if not user:
+        return jsonify({"error": "无效的 Token"}), 401
+
+    before = request.args.get("before", type=float)
+    limit = min(request.args.get("limit", Config.MESSAGE_PAGE_SIZE, type=int), 100)
+    messages = models.get_messages(chat_type, chat_id, before=before, limit=limit)
+    return jsonify(messages)
+
+
+# ── Agent chat list (token auth) ──
+
+@api.route("/api/agent/chats")
+def agent_list_chats():
+    """Token-authenticated chat list for agents."""
+    token = request.headers.get("Authorization", "").replace("Bearer ", "")
+    if not token:
+        return jsonify({"error": "缺少认证"}), 401
+    user = models.get_user_by_agent_token(token)
+    if not user:
+        return jsonify({"error": "无效的 Token"}), 401
+
+    groups = models.get_user_groups(user["id"])
+    directs = models.get_user_direct_chats(user["id"])
+    return jsonify({"groups": groups, "directs": directs})
+
+
 @api.route("/static/uploads/<filename>")
 def serve_upload(filename):
     return send_from_directory(Config.UPLOAD_FOLDER, filename)

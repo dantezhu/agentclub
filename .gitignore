@@ -5,3 +5,5 @@ __pycache__/
 .pytest_cache/
 static/uploads/*
 !static/uploads/.gitkeep
+node_modules/
+agent_adapter/openclaw-channel/dist/
