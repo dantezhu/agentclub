@@ -65,7 +65,16 @@ CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages(chat_type, chat_id, cre
 CREATE INDEX IF NOT EXISTS idx_messages_created ON messages(created_at);
 CREATE INDEX IF NOT EXISTS idx_unread_user ON unread_messages(user_id);
 CREATE INDEX IF NOT EXISTS idx_users_agent_token ON users(agent_token);
+
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 """
+
+_DEFAULT_SETTINGS = {
+    "allow_registration": "true",
+}
 
 
 def get_db():
@@ -169,6 +178,13 @@ def list_agents():
     ).fetchall()
     db.close()
     return [dict(r) for r in rows]
+
+
+def delete_user(user_id):
+    with get_db_ctx() as db:
+        db.execute("DELETE FROM group_members WHERE user_id = ?", (user_id,))
+        db.execute("DELETE FROM unread_messages WHERE user_id = ?", (user_id,))
+        db.execute("DELETE FROM users WHERE id = ?", (user_id,))
 
 
 def update_user(user_id, **kwargs):
@@ -333,6 +349,29 @@ def save_message(chat_type, chat_id, sender_id, content="", content_type="text",
     return {"id": mid, "created_at": ts}
 
 
+def get_last_messages(chat_keys):
+    """Get the last message for each (chat_type, chat_id) pair.
+    chat_keys: list of (chat_type, chat_id) tuples
+    Returns dict: "type_id" -> {sender_name, content, content_type, created_at}
+    """
+    if not chat_keys:
+        return {}
+    db = get_db()
+    result = {}
+    for chat_type, chat_id in chat_keys:
+        row = db.execute(
+            "SELECT m.content, m.content_type, m.created_at, u.display_name AS sender_name "
+            "FROM messages m JOIN users u ON m.sender_id = u.id "
+            "WHERE m.chat_type = ? AND m.chat_id = ? "
+            "ORDER BY m.created_at DESC LIMIT 1",
+            (chat_type, chat_id),
+        ).fetchone()
+        if row:
+            result[f"{chat_type}_{chat_id}"] = dict(row)
+    db.close()
+    return result
+
+
 def get_messages(chat_type, chat_id, before=None, limit=50):
     db = get_db()
     if before:
@@ -361,6 +400,18 @@ def add_unread(user_id, message_id):
             "INSERT OR IGNORE INTO unread_messages (user_id, message_id) VALUES (?, ?)",
             (user_id, message_id),
         )
+
+
+def get_unread_counts(user_id):
+    db = get_db()
+    rows = db.execute(
+        "SELECT m.chat_type, m.chat_id, COUNT(*) AS count "
+        "FROM unread_messages um JOIN messages m ON um.message_id = m.id "
+        "WHERE um.user_id = ? GROUP BY m.chat_type, m.chat_id",
+        (user_id,),
+    ).fetchall()
+    db.close()
+    return {f"{r['chat_type']}_{r['chat_id']}": r["count"] for r in rows}
 
 
 def get_unread_messages(user_id):
@@ -396,3 +447,32 @@ def cleanup_old_messages(days=None):
     with get_db_ctx() as db:
         db.execute("DELETE FROM unread_messages WHERE message_id IN (SELECT id FROM messages WHERE created_at < ?)", (cutoff,))
         db.execute("DELETE FROM messages WHERE created_at < ?", (cutoff,))
+
+
+# ── Settings ──
+
+def get_setting(key):
+    db = get_db()
+    row = db.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+    db.close()
+    if row:
+        return row["value"]
+    return _DEFAULT_SETTINGS.get(key, "")
+
+
+def set_setting(key, value):
+    with get_db_ctx() as db:
+        db.execute(
+            "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = ?",
+            (key, value, value),
+        )
+
+
+def get_all_settings():
+    db = get_db()
+    rows = db.execute("SELECT key, value FROM settings").fetchall()
+    db.close()
+    result = dict(_DEFAULT_SETTINGS)
+    for r in rows:
+        result[r["key"]] = r["value"]
+    return result

@@ -5,6 +5,8 @@ let currentChat = null; // { type: 'group'|'direct', id, name }
 let chats = { groups: [], directs: [] };
 let oldestTimestamp = {};
 let typingTimeout = null;
+let unreadCounts = {};
+let lastMessages = {};
 
 /* ── Init ── */
 async function init() {
@@ -25,8 +27,13 @@ async function init() {
     });
 
     connectSocket();
+    unreadCounts = await (await fetch('/api/unread-counts')).json();
     await loadChats();
     setupInputHandlers();
+
+    // Only show admin link for admins
+    const adminLink = document.getElementById('adminLink');
+    if (adminLink && currentUser.role !== 'admin') adminLink.style.display = 'none';
 }
 
 /* ── Socket.IO ── */
@@ -44,6 +51,11 @@ function connectSocket() {
             socket.emit('mark_read', { chat_type: msg.chat_type, chat_id: msg.chat_id });
         }
         updateChatPreview(msg);
+    });
+
+    socket.on('unread_updated', async () => {
+        unreadCounts = await (await fetch('/api/unread-counts')).json();
+        renderChatList();
     });
 
     socket.on('offline_messages', (messages) => {
@@ -77,12 +89,14 @@ function connectSocket() {
 
 /* ── Load Chats ── */
 async function loadChats() {
-    const [groupsRes, directsRes] = await Promise.all([
+    const [groupsRes, directsRes, lastMsgRes] = await Promise.all([
         fetch('/api/groups'),
         fetch('/api/direct-chats'),
+        fetch('/api/last-messages'),
     ]);
     chats.groups = await groupsRes.json();
     chats.directs = await directsRes.json();
+    lastMessages = await lastMsgRes.json();
     renderChatList();
 }
 
@@ -99,12 +113,15 @@ function renderChatList() {
             const menuAction = isCreator
                 ? `showChatMenu(event,'group','${g.id}','dissolve')`
                 : `showChatMenu(event,'group','${g.id}','leave')`;
+            const gUnread = unreadCounts[`group_${g.id}`] || 0;
+            const gBadge = gUnread ? `<span class="badge">${gUnread > 99 ? '99+' : gUnread}</span>` : '';
             html += `<div class="chat-item ${isActive ? 'active' : ''}" onclick="openChat('group','${g.id}','${escHtml(g.name)}')" oncontextmenu="${menuAction}">
                 <div class="avatar">${g.avatar ? `<img src="${escHtml(g.avatar)}">` : initial}</div>
                 <div class="chat-item-info">
                     <div class="name">${escHtml(g.name)}</div>
-                    <div class="preview" id="preview_group_${g.id}"></div>
+                    <div class="preview" id="preview_group_${g.id}">${escHtml(previewText(lastMessages['group_' + g.id]))}</div>
                 </div>
+                ${gBadge}
             </div>`;
         }
     }
@@ -115,12 +132,15 @@ function renderChatList() {
             const isActive = currentChat && currentChat.type === 'direct' && currentChat.id === d.id;
             const initial = (d.peer_name || '?').charAt(0);
             const dot = d.peer_online ? '<span class="online-dot"></span>' : '';
+            const dUnread = unreadCounts[`direct_${d.id}`] || 0;
+            const dBadge = dUnread ? `<span class="badge">${dUnread > 99 ? '99+' : dUnread}</span>` : '';
             html += `<div class="chat-item ${isActive ? 'active' : ''}" onclick="openChat('direct','${d.id}','${escHtml(d.peer_name)}')" oncontextmenu="showChatMenu(event,'direct','${d.id}','delete')">
                 <div class="avatar">${d.peer_avatar ? `<img src="${escHtml(d.peer_avatar)}">` : initial}</div>
                 <div class="chat-item-info">
                     <div class="name">${dot}${escHtml(d.peer_name)}</div>
-                    <div class="preview" id="preview_direct_${d.id}"></div>
+                    <div class="preview" id="preview_direct_${d.id}">${escHtml(previewText(lastMessages['direct_' + d.id]))}</div>
                 </div>
+                ${dBadge}
             </div>`;
         }
     }
@@ -143,8 +163,10 @@ async function openChat(type, id, name) {
     document.getElementById('loadMoreBtn').classList.add('hidden');
     delete oldestTimestamp[`${type}_${id}`];
 
-    // Join room
+    // Join room & clear unread
     socket.emit('join_chat', { chat_type: type, chat_id: id });
+    delete unreadCounts[`${type}_${id}`];
+    renderChatList();
 
     // Load history
     await loadMessages(type, id);
@@ -441,14 +463,11 @@ function updatePresence(data) {
 }
 
 function updateChatPreview(msg) {
-    const previewEl = document.getElementById(`preview_${msg.chat_type}_${msg.chat_id}`);
+    const key = `${msg.chat_type}_${msg.chat_id}`;
+    lastMessages[key] = { sender_name: msg.sender_name, content: msg.content, content_type: msg.content_type };
+    const previewEl = document.getElementById(`preview_${key}`);
     if (previewEl) {
-        let text = msg.content || '';
-        if (msg.content_type === 'image') text = '[图片]';
-        else if (msg.content_type === 'audio') text = '[语音]';
-        else if (msg.content_type === 'video') text = '[视频]';
-        else if (msg.content_type === 'file') text = '[文件]';
-        previewEl.textContent = `${msg.sender_name}: ${text}`.slice(0, 40);
+        previewEl.textContent = previewText(lastMessages[key]);
     }
 }
 
@@ -514,88 +533,6 @@ async function removeMember(groupId, userId) {
     }
 }
 
-/* ── Admin panel ── */
-function showAdminPanel() {
-    if (currentUser.role !== 'admin') { alert('需要管理员权限'); return; }
-    document.getElementById('adminModal').classList.remove('hidden');
-    document.getElementById('sidebarMenu').classList.add('hidden');
-    loadAdminData();
-}
-
-async function loadAdminData() {
-    const agents = await (await fetch('/api/agents')).json();
-
-    let agentHtml = '';
-    for (const a of agents) {
-        const statusDot = a.is_online ? '<span class="online-dot"></span>' : '';
-        const agentAvatar = a.avatar
-            ? `<img src="${escHtml(a.avatar)}" style="width:36px;height:36px;border-radius:8px;object-fit:cover;cursor:pointer" onclick="uploadAgentAvatar('${a.id}')" title="点击更换头像">`
-            : `<div style="width:36px;height:36px;border-radius:8px;background:linear-gradient(135deg,#f093fb,#f5576c);color:#fff;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:600;cursor:pointer" onclick="uploadAgentAvatar('${a.id}')" title="点击设置头像">${escHtml(a.display_name).charAt(0)}</div>`;
-        agentHtml += `<div class="admin-agent-item">
-            ${agentAvatar}
-            <div class="agent-info" style="margin-left:10px">
-                <div>${statusDot}<strong>${escHtml(a.display_name)}</strong> (${escHtml(a.username)})</div>
-                <div class="token-display">Token: ${escHtml(a.agent_token)}</div>
-            </div>
-        </div>`;
-    }
-    document.getElementById('adminAgentList').innerHTML = agentHtml || '<div style="color:#999;font-size:13px">暂无 Agent</div>';
-}
-
-async function previewAgentAvatar(event) {
-    const file = event.target.files[0];
-    if (!file) return;
-    const formData = new FormData();
-    formData.append('file', file);
-    const res = await fetch('/api/upload', { method: 'POST', body: formData });
-    if (!res.ok) { alert('上传失败'); return; }
-    const data = await res.json();
-    document.getElementById('newAgentAvatarUrl').value = data.url;
-}
-
-async function uploadAgentAvatar(agentId) {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = 'image/*';
-    input.onchange = async (e) => {
-        const file = e.target.files[0];
-        if (!file) return;
-        const formData = new FormData();
-        formData.append('file', file);
-        const res = await fetch('/api/upload', { method: 'POST', body: formData });
-        if (!res.ok) { alert('上传失败'); return; }
-        const data = await res.json();
-        await fetch(`/api/agents/${agentId}`, {
-            method: 'PUT',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ avatar: data.url }),
-        });
-        loadAdminData();
-    };
-    input.click();
-}
-
-async function createAgent() {
-    const username = document.getElementById('newAgentUsername').value.trim();
-    const displayName = document.getElementById('newAgentDisplayName').value.trim();
-    if (!username) return;
-    const res = await fetch('/api/agents', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, display_name: displayName || username, avatar: document.getElementById('newAgentAvatarUrl').value }),
-    });
-    if (res.ok) {
-        document.getElementById('newAgentUsername').value = '';
-        document.getElementById('newAgentDisplayName').value = '';
-        document.getElementById('newAgentAvatarUrl').value = '';
-        const data = await res.json();
-        alert(`Agent 创建成功！\nToken: ${data.agent_token}\n请妥善保存此 Token`);
-        loadAdminData();
-    } else {
-        const d = await res.json();
-        alert(d.error || '创建失败');
-    }
-}
 
 async function showAddMember(groupId) {
     const users = await (await fetch('/api/users')).json();
@@ -836,6 +773,13 @@ function formatTime(ts) {
     if (d.toDateString() === now.toDateString()) return time;
     if (d.getFullYear() === now.getFullYear()) return `${d.getMonth() + 1}/${d.getDate()} ${time}`;
     return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${time}`;
+}
+
+function previewText(msg) {
+    if (!msg) return '';
+    const typeMap = { image: '[图片]', audio: '[语音]', video: '[视频]', file: '[文件]' };
+    const text = typeMap[msg.content_type] || (msg.content || '').replace(/\n/g, ' ').slice(0, 30);
+    return msg.sender_name ? `${msg.sender_name}: ${text}` : text;
 }
 
 function escHtml(str) {

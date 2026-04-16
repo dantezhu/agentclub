@@ -25,7 +25,7 @@
                 <button onclick="showProfileModal()">个人设置</button>
                 <button onclick="showNewChatModal()">发起私聊</button>
                 <button onclick="showCreateGroupModal()">创建群组</button>
-                <button onclick="showAdminPanel()">管理面板</button>
+                <a href="/admin" style="display:block;padding:12px 24px;font-size:14px;text-decoration:none;color:inherit" id="adminLink">管理后台</a>
                 <button onclick="handleLogout()">退出登录</button>
             </div>
             <div class="chat-list" id="chatList"></div>
@@ -80,36 +80,6 @@
                 <div id="membersList"></div>
             </div>
         </main>
-    </div>
-
-    <!-- Admin Modal -->
-    <div class="modal hidden" id="adminModal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h3>管理面板</h3>
-                <button class="icon-btn" onclick="closeModal('adminModal')">✕</button>
-            </div>
-            <div class="modal-body">
-                <div id="adminAgents">
-                    <div class="admin-section">
-                        <h4>创建 Agent</h4>
-                        <div class="inline-form">
-                            <input type="text" id="newAgentUsername" placeholder="用户名">
-                            <input type="text" id="newAgentDisplayName" placeholder="显示名称">
-                            <label class="btn-sm" style="cursor:pointer" title="选择头像">
-                                🖼 <input type="file" accept="image/*" id="newAgentAvatarFile" style="display:none" onchange="previewAgentAvatar(event)">
-                            </label>
-                            <button class="btn-sm" onclick="createAgent()">创建</button>
-                        </div>
-                        <input type="hidden" id="newAgentAvatarUrl" value="">
-                    </div>
-                    <div class="admin-section">
-                        <h4>Agent 列表</h4>
-                        <div id="adminAgentList"></div>
-                    </div>
-                </div>
-            </div>
-        </div>
     </div>
 
     <!-- Profile modal -->

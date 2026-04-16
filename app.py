@@ -30,6 +30,11 @@ def chat_page():
     return send_from_directory("templates", "chat.html")
 
 
+@app.route("/admin")
+def admin_page():
+    return send_from_directory("templates", "admin.html")
+
+
 @app.before_request
 def ensure_db():
     if not hasattr(app, "_db_initialized"):

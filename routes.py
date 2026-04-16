@@ -29,6 +29,11 @@ def _detect_content_type(filename):
 
 @api.route("/api/register", methods=["POST"])
 def register():
+    # Allow first user even if registration is disabled
+    users = models.list_users()
+    if users and models.get_setting("allow_registration") != "true":
+        return jsonify({"error": "注册功能已关闭"}), 403
+
     data = request.get_json()
     username = data.get("username", "").strip()
     password = data.get("password", "")
@@ -44,14 +49,19 @@ def register():
     if models.get_user_by_username(username):
         return jsonify({"error": "用户名已存在"}), 409
 
-    # First user becomes admin
-    users = models.list_users()
     role = "admin" if not users else "user"
 
     uid = models.create_user(username, hash_password(password), display_name, role=role)
     session["user_id"] = uid
     user = models.get_user_by_id(uid)
     return jsonify(_safe_user(user)), 201
+
+
+@api.route("/api/registration-status")
+def registration_status():
+    users = models.list_users()
+    allow = not users or models.get_setting("allow_registration") == "true"
+    return jsonify({"allow_registration": allow})
 
 
 @api.route("/api/login", methods=["POST"])
@@ -109,6 +119,16 @@ def update_agent(agent_id):
         updates["avatar"] = data["avatar"]
     if updates:
         models.update_user(agent_id, **updates)
+    return jsonify({"ok": True})
+
+
+@api.route("/api/agents/<agent_id>", methods=["DELETE"])
+@admin_required
+def delete_agent(agent_id):
+    agent = models.get_user_by_id(agent_id)
+    if not agent or not agent["is_agent"]:
+        return jsonify({"error": "Agent 不存在"}), 404
+    models.delete_user(agent_id)
     return jsonify({"ok": True})
 
 
@@ -304,6 +324,22 @@ def create_direct_chat():
 
 # ── Messages ──
 
+@api.route("/api/unread-counts")
+@login_required
+def unread_counts():
+    return jsonify(models.get_unread_counts(request.current_user["id"]))
+
+
+@api.route("/api/last-messages")
+@login_required
+def last_messages():
+    uid = request.current_user["id"]
+    groups = models.get_user_groups(uid)
+    directs = models.get_user_direct_chats(uid)
+    chat_keys = [(("group", g["id"])) for g in groups] + [("direct", d["id"]) for d in directs]
+    return jsonify(models.get_last_messages(chat_keys))
+
+
 @api.route("/api/messages/<chat_type>/<chat_id>")
 @login_required
 def get_messages(chat_type, chat_id):
@@ -367,6 +403,23 @@ def agent_upload_file():
 @api.route("/static/uploads/<filename>")
 def serve_upload(filename):
     return send_from_directory(Config.UPLOAD_FOLDER, filename)
+
+
+# ── Admin settings ──
+
+@api.route("/api/settings")
+@admin_required
+def get_settings():
+    return jsonify(models.get_all_settings())
+
+
+@api.route("/api/settings", methods=["PUT"])
+@admin_required
+def update_settings():
+    data = request.get_json()
+    for key, value in data.items():
+        models.set_setting(key, value)
+    return jsonify(models.get_all_settings())
 
 
 def _safe_user(user):

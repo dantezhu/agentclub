@@ -7,6 +7,8 @@ import models
 connected_users = {}
 # user_id → set of sids (one user can have multiple tabs)
 user_sids = {}
+# sid → "chat_type_chat_id" currently viewing
+active_chat = {}
 
 
 def register_events(socketio):
@@ -35,6 +37,7 @@ def register_events(socketio):
 
     @socketio.on("disconnect")
     def on_disconnect():
+        active_chat.pop(request.sid, None)
         user_id = connected_users.pop(request.sid, None)
         if user_id:
             sids = user_sids.get(user_id, set())
@@ -89,13 +92,23 @@ def register_events(socketio):
             "created_at": result["created_at"],
         }
 
+        chat_key = f"{chat_type}_{chat_id}"
+
         if chat_type == "group":
-            # Send to group room, store unread for offline members
             socketio.emit("new_message", msg, room=f"group_{chat_id}")
             members = models.get_group_members(chat_id)
             for m in members:
-                if m["id"] != user_id and m["id"] not in user_sids:
+                if m["id"] == user_id:
+                    continue
+                # Check if any of this user's tabs are viewing this chat
+                viewing = any(
+                    active_chat.get(sid) == chat_key
+                    for sid in user_sids.get(m["id"], set())
+                )
+                if not viewing:
                     models.add_unread(m["id"], result["id"])
+                    _notify_unread(socketio, m["id"])
+
         elif chat_type == "direct":
             db = models.get_db()
             chat = db.execute("SELECT * FROM direct_chats WHERE id = ?", (chat_id,)).fetchone()
@@ -106,8 +119,13 @@ def register_events(socketio):
                     for sid in user_sids[peer_id]:
                         join_room(f"direct_{chat_id}", sid=sid)
                         socketio.emit("chat_list_updated", to=sid)
-                else:
+                viewing = any(
+                    active_chat.get(sid) == chat_key
+                    for sid in user_sids.get(peer_id, set())
+                )
+                if not viewing:
                     models.add_unread(peer_id, result["id"])
+                    _notify_unread(socketio, peer_id)
             socketio.emit("new_message", msg, room=f"direct_{chat_id}")
 
     @socketio.on("join_chat")
@@ -122,6 +140,7 @@ def register_events(socketio):
 
         room = f"{chat_type}_{chat_id}"
         join_room(room)
+        active_chat[request.sid] = f"{chat_type}_{chat_id}"
         models.clear_unread(user_id, chat_type, chat_id)
 
     @socketio.on("leave_chat")
@@ -130,6 +149,7 @@ def register_events(socketio):
         chat_id = data.get("chat_id")
         if chat_id:
             leave_room(f"{chat_type}_{chat_id}")
+        active_chat.pop(request.sid, None)
 
     @socketio.on("typing")
     def on_typing(data):
@@ -195,6 +215,11 @@ def _register_connection(user, sid):
         "role": user["role"],
         "is_agent": user["is_agent"],
     })
+
+
+def _notify_unread(socketio, target_user_id):
+    for sid in user_sids.get(target_user_id, set()):
+        socketio.emit("unread_updated", to=sid)
 
 
 def _broadcast_presence(user, online):

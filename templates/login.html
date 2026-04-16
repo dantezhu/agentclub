@@ -200,6 +200,13 @@
 
     // Auto-redirect if already logged in
     fetch('/api/me').then(r => { if (r.ok) window.location.href = '/chat'; });
+
+    // Hide register tab if registration is disabled
+    fetch('/api/registration-status').then(r => r.json()).then(data => {
+        if (!data.allow_registration) {
+            document.querySelectorAll('.tabs button')[1].style.display = 'none';
+        }
+    });
     </script>
 </body>
 </html>

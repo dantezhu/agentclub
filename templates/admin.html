@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agent Club - 管理后台</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: #f0f2f5;
+            color: #1a1a2e;
+        }
+        .topbar {
+            background: #fff;
+            border-bottom: 1px solid #eee;
+            padding: 14px 24px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .topbar h1 { font-size: 18px; color: #667eea; }
+        .topbar a {
+            color: #667eea;
+            text-decoration: none;
+            font-size: 14px;
+        }
+        .topbar a:hover { text-decoration: underline; }
+        .container {
+            max-width: 800px;
+            margin: 24px auto;
+            padding: 0 20px;
+        }
+        .card {
+            background: #fff;
+            border-radius: 12px;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+            padding: 24px;
+            margin-bottom: 20px;
+        }
+        .card h2 {
+            font-size: 16px;
+            margin-bottom: 16px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #eee;
+            color: #333;
+        }
+        .setting-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 0;
+        }
+        .setting-row + .setting-row { border-top: 1px solid #f5f5f5; }
+        .setting-label { font-size: 14px; }
+        .setting-desc { font-size: 12px; color: #999; margin-top: 2px; }
+        .toggle {
+            position: relative;
+            width: 44px;
+            height: 24px;
+        }
+        .toggle input { display: none; }
+        .toggle .slider {
+            position: absolute;
+            inset: 0;
+            background: #ccc;
+            border-radius: 24px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .toggle .slider::before {
+            content: "";
+            position: absolute;
+            width: 18px;
+            height: 18px;
+            left: 3px;
+            top: 3px;
+            background: #fff;
+            border-radius: 50%;
+            transition: transform 0.2s;
+        }
+        .toggle input:checked + .slider { background: #667eea; }
+        .toggle input:checked + .slider::before { transform: translateX(20px); }
+        .inline-form {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-bottom: 16px;
+        }
+        .inline-form input {
+            flex: 1;
+            min-width: 120px;
+            padding: 10px 14px;
+            border: 1.5px solid #ddd;
+            border-radius: 8px;
+            font-size: 14px;
+            outline: none;
+        }
+        .inline-form input:focus { border-color: #667eea; }
+        .btn {
+            padding: 10px 18px;
+            background: #667eea;
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+        .btn:hover { opacity: 0.9; }
+        .btn.danger { background: #ff4757; }
+        .btn.sm { padding: 6px 14px; font-size: 13px; }
+        .agent-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px;
+            border-radius: 8px;
+            background: #f8f9fa;
+            margin-bottom: 8px;
+        }
+        .agent-avatar {
+            width: 40px;
+            height: 40px;
+            border-radius: 10px;
+            background: linear-gradient(135deg, #f093fb, #f5576c);
+            color: #fff;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            font-weight: 600;
+            flex-shrink: 0;
+            overflow: hidden;
+            cursor: pointer;
+        }
+        .agent-avatar img { width: 100%; height: 100%; object-fit: cover; }
+        .agent-info { flex: 1; min-width: 0; }
+        .agent-info .name { font-size: 14px; font-weight: 500; }
+        .agent-info .token {
+            font-size: 11px;
+            color: #999;
+            font-family: monospace;
+            word-break: break-all;
+            margin-top: 2px;
+        }
+        .online-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #2ed573;
+            display: inline-block;
+            margin-right: 4px;
+        }
+        .empty { color: #999; font-size: 13px; padding: 8px 0; }
+    </style>
+</head>
+<body>
+    <div class="topbar">
+        <h1>管理后台</h1>
+        <a href="/chat">← 返回聊天</a>
+    </div>
+
+    <div class="container">
+        <!-- System Settings -->
+        <div class="card">
+            <h2>系统设置</h2>
+            <div class="setting-row">
+                <div>
+                    <div class="setting-label">开放注册</div>
+                    <div class="setting-desc">关闭后新用户将无法注册，管理员仍可在此创建账号</div>
+                </div>
+                <label class="toggle">
+                    <input type="checkbox" id="allowRegistration" onchange="saveSetting('allow_registration', this.checked)">
+                    <span class="slider"></span>
+                </label>
+            </div>
+        </div>
+
+        <!-- Agent Management -->
+        <div class="card">
+            <h2>Agent 管理</h2>
+            <div class="inline-form">
+                <input type="text" id="newAgentUsername" placeholder="用户名">
+                <input type="text" id="newAgentDisplayName" placeholder="显示名称（选填）">
+                <label class="btn" style="cursor:pointer">
+                    🖼 头像 <input type="file" accept="image/*" id="agentAvatarFile" style="display:none" onchange="handleAgentAvatarSelect(event)">
+                </label>
+                <button class="btn" onclick="createAgent()">创建 Agent</button>
+            </div>
+            <input type="hidden" id="agentAvatarUrl" value="">
+            <div id="agentList"></div>
+        </div>
+    </div>
+
+    <script>
+    let currentUser = null;
+
+    async function init() {
+        const res = await fetch('/api/me');
+        if (!res.ok) { window.location.href = '/'; return; }
+        currentUser = await res.json();
+        if (currentUser.role !== 'admin') {
+            document.querySelector('.container').innerHTML = '<div class="card"><p style="text-align:center;padding:40px;color:#999">需要管理员权限</p></div>';
+            return;
+        }
+        await Promise.all([loadSettings(), loadAgents()]);
+    }
+
+    async function loadSettings() {
+        const res = await fetch('/api/settings');
+        const settings = await res.json();
+        document.getElementById('allowRegistration').checked = settings.allow_registration === 'true';
+    }
+
+    async function saveSetting(key, value) {
+        const body = {};
+        body[key] = value ? 'true' : 'false';
+        await fetch('/api/settings', {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body),
+        });
+    }
+
+    async function loadAgents() {
+        const res = await fetch('/api/agents');
+        const agents = await res.json();
+        if (!agents.length) {
+            document.getElementById('agentList').innerHTML = '<div class="empty">暂无 Agent</div>';
+            return;
+        }
+        let html = '';
+        for (const a of agents) {
+            const dot = a.is_online ? '<span class="online-dot"></span>' : '';
+            const initial = (a.display_name || '?').charAt(0);
+            const avatar = a.avatar
+                ? `<img src="${esc(a.avatar)}">`
+                : initial;
+            html += `<div class="agent-item">
+                <div class="agent-avatar" onclick="changeAgentAvatar('${a.id}')" title="点击更换头像">${avatar}</div>
+                <div class="agent-info">
+                    <div class="name">${dot}${esc(a.display_name)} <span style="color:#999;font-weight:400">(${esc(a.username)})</span></div>
+                    <div class="token">Token: ${esc(a.agent_token)}</div>
+                </div>
+                <button class="btn sm danger" onclick="deleteAgent('${a.id}','${esc(a.display_name)}')">删除</button>
+            </div>`;
+        }
+        document.getElementById('agentList').innerHTML = html;
+    }
+
+    async function handleAgentAvatarSelect(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+        const formData = new FormData();
+        formData.append('file', file);
+        const res = await fetch('/api/upload', { method: 'POST', body: formData });
+        if (res.ok) {
+            const data = await res.json();
+            document.getElementById('agentAvatarUrl').value = data.url;
+        }
+    }
+
+    async function createAgent() {
+        const username = document.getElementById('newAgentUsername').value.trim();
+        const displayName = document.getElementById('newAgentDisplayName').value.trim();
+        const avatar = document.getElementById('agentAvatarUrl').value;
+        if (!username) { alert('请输入用户名'); return; }
+        const res = await fetch('/api/agents', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ username, display_name: displayName || username, avatar }),
+        });
+        if (res.ok) {
+            const data = await res.json();
+            showTokenDialog(data.agent_token);
+            document.getElementById('newAgentUsername').value = '';
+            document.getElementById('newAgentDisplayName').value = '';
+            document.getElementById('agentAvatarUrl').value = '';
+            loadAgents();
+        } else {
+            const data = await res.json();
+            alert(data.error || '创建失败');
+        }
+    }
+
+    async function changeAgentAvatar(agentId) {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'image/*';
+        input.onchange = async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const formData = new FormData();
+            formData.append('file', file);
+            const res = await fetch('/api/upload', { method: 'POST', body: formData });
+            if (!res.ok) return;
+            const data = await res.json();
+            await fetch(`/api/agents/${agentId}`, {
+                method: 'PUT',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ avatar: data.url }),
+            });
+            loadAgents();
+        };
+        input.click();
+    }
+
+    async function deleteAgent(agentId, name) {
+        if (!confirm(`确定要删除 Agent "${name}" 吗？`)) return;
+        const res = await fetch(`/api/agents/${agentId}`, { method: 'DELETE' });
+        if (res.ok) loadAgents();
+        else alert('删除失败');
+    }
+
+    function showTokenDialog(token) {
+        const overlay = document.createElement('div');
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:999';
+        overlay.innerHTML = `<div style="background:#fff;border-radius:12px;padding:24px;max-width:480px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,0.2);position:relative">
+            <button onclick="this.closest('div[style]').parentElement.remove()" style="position:absolute;top:12px;right:12px;background:none;border:none;font-size:18px;cursor:pointer;color:#999">✕</button>
+            <h3 style="margin-bottom:6px;font-size:16px">Agent 创建成功</h3>
+            <p style="font-size:13px;color:#999;margin-bottom:16px">以下是该 Agent 的连接 Token，请妥善保存。</p>
+            <div style="display:flex;gap:8px">
+                <input readonly value="${esc(token)}" style="flex:1;padding:10px 12px;border:1.5px solid #ddd;border-radius:8px;font-family:monospace;font-size:13px;outline:none;background:#f8f9fa" onclick="this.select()">
+                <button class="btn" onclick="navigator.clipboard.writeText('${esc(token)}');this.textContent='已复制';setTimeout(()=>this.textContent='复制',1500)">复制</button>
+            </div>
+        </div>`;
+        document.body.appendChild(overlay);
+    }
+
+    function esc(str) {
+        if (!str) return '';
+        const d = document.createElement('div');
+        d.textContent = str;
+        return d.innerHTML;
+    }
+
+    init();
+    </script>
+</body>
+</html>
