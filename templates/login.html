@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agent Club - 登录</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .card {
+            background: #fff;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.15);
+            padding: 40px;
+            width: 100%;
+            max-width: 400px;
+            margin: 20px;
+        }
+        .card h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 8px;
+            font-size: 28px;
+        }
+        .card .subtitle {
+            text-align: center;
+            color: #888;
+            margin-bottom: 32px;
+            font-size: 14px;
+        }
+        .tabs {
+            display: flex;
+            margin-bottom: 24px;
+            border-bottom: 2px solid #eee;
+        }
+        .tabs button {
+            flex: 1;
+            padding: 12px;
+            border: none;
+            background: none;
+            font-size: 15px;
+            color: #888;
+            cursor: pointer;
+            transition: all 0.2s;
+            border-bottom: 2px solid transparent;
+            margin-bottom: -2px;
+        }
+        .tabs button.active {
+            color: #667eea;
+            border-bottom-color: #667eea;
+            font-weight: 600;
+        }
+        .form-group {
+            margin-bottom: 18px;
+        }
+        .form-group label {
+            display: block;
+            font-size: 13px;
+            color: #555;
+            margin-bottom: 6px;
+            font-weight: 500;
+        }
+        .form-group input {
+            width: 100%;
+            padding: 12px 14px;
+            border: 1.5px solid #ddd;
+            border-radius: 10px;
+            font-size: 15px;
+            transition: border-color 0.2s;
+            outline: none;
+        }
+        .form-group input:focus {
+            border-color: #667eea;
+        }
+        .btn {
+            width: 100%;
+            padding: 13px;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: #fff;
+            margin-top: 8px;
+        }
+        .btn:hover { opacity: 0.9; transform: translateY(-1px); }
+        .btn:active { transform: translateY(0); }
+        .error {
+            background: #fff0f0;
+            color: #d63031;
+            padding: 10px 14px;
+            border-radius: 8px;
+            font-size: 13px;
+            margin-bottom: 16px;
+            display: none;
+        }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>Agent Club</h1>
+        <p class="subtitle">与 AI Agent 实时聊天</p>
+        <div class="tabs">
+            <button class="active" onclick="switchTab('login')">登录</button>
+            <button onclick="switchTab('register')">注册</button>
+        </div>
+        <div class="error" id="error"></div>
+
+        <form id="loginForm" onsubmit="return handleLogin(event)">
+            <div class="form-group">
+                <label>用户名</label>
+                <input type="text" id="loginUsername" autocomplete="username" required>
+            </div>
+            <div class="form-group">
+                <label>密码</label>
+                <input type="password" id="loginPassword" autocomplete="current-password" required>
+            </div>
+            <button type="submit" class="btn">登录</button>
+        </form>
+
+        <form id="registerForm" class="hidden" onsubmit="return handleRegister(event)">
+            <div class="form-group">
+                <label>用户名</label>
+                <input type="text" id="regUsername" autocomplete="username" required minlength="2" maxlength="32">
+            </div>
+            <div class="form-group">
+                <label>显示名称</label>
+                <input type="text" id="regDisplayName" placeholder="选填，默认使用用户名">
+            </div>
+            <div class="form-group">
+                <label>密码</label>
+                <input type="password" id="regPassword" autocomplete="new-password" required minlength="6">
+            </div>
+            <button type="submit" class="btn">注册</button>
+        </form>
+    </div>
+
+    <script>
+    function switchTab(tab) {
+        document.getElementById('error').style.display = 'none';
+        document.querySelectorAll('.tabs button').forEach((b, i) => {
+            b.classList.toggle('active', (tab === 'login' ? i === 0 : i === 1));
+        });
+        document.getElementById('loginForm').classList.toggle('hidden', tab !== 'login');
+        document.getElementById('registerForm').classList.toggle('hidden', tab !== 'register');
+    }
+
+    function showError(msg) {
+        const el = document.getElementById('error');
+        el.textContent = msg;
+        el.style.display = 'block';
+    }
+
+    async function handleLogin(e) {
+        e.preventDefault();
+        try {
+            const res = await fetch('/api/login', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    username: document.getElementById('loginUsername').value,
+                    password: document.getElementById('loginPassword').value,
+                }),
+            });
+            const data = await res.json();
+            if (!res.ok) { showError(data.error); return false; }
+            window.location.href = '/chat';
+        } catch (err) { showError('网络错误'); }
+        return false;
+    }
+
+    async function handleRegister(e) {
+        e.preventDefault();
+        try {
+            const res = await fetch('/api/register', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    username: document.getElementById('regUsername').value,
+                    display_name: document.getElementById('regDisplayName').value,
+                    password: document.getElementById('regPassword').value,
+                }),
+            });
+            const data = await res.json();
+            if (!res.ok) { showError(data.error); return false; }
+            window.location.href = '/chat';
+        } catch (err) { showError('网络错误'); }
+        return false;
+    }
+
+    // Auto-redirect if already logged in
+    fetch('/api/me').then(r => { if (r.ok) window.location.href = '/chat'; });
+    </script>
+</body>
+</html>
