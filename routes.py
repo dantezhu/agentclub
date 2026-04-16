@@ -9,8 +9,12 @@ import models
 api = Blueprint("api", __name__)
 
 
+def _get_ext(filename):
+    return filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+
+
 def _allowed_file(filename):
-    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    ext = _get_ext(filename)
     all_exts = set()
     for exts in Config.ALLOWED_EXTENSIONS.values():
         all_exts.update(exts)
@@ -18,11 +22,20 @@ def _allowed_file(filename):
 
 
 def _detect_content_type(filename):
-    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    ext = _get_ext(filename)
     for ctype, exts in Config.ALLOWED_EXTENSIONS.items():
         if ext in exts:
             return ctype
     return "file"
+
+
+def _safe_filename(filename):
+    """secure_filename that preserves the extension even for non-ASCII names."""
+    ext = _get_ext(filename)
+    base = secure_filename(filename.rsplit(".", 1)[0]) if "." in filename else secure_filename(filename)
+    if not base:
+        base = "file"
+    return f"{base}.{ext}" if ext else base
 
 
 # ── Auth routes ──
@@ -361,7 +374,7 @@ def upload_file():
     if not f.filename or not _allowed_file(f.filename):
         return jsonify({"error": "不支持的文件类型"}), 400
 
-    filename = secure_filename(f.filename)
+    filename = _safe_filename(f.filename)
     unique_name = f"{models.new_id()}_{filename}"
     filepath = os.path.join(Config.UPLOAD_FOLDER, unique_name)
     os.makedirs(Config.UPLOAD_FOLDER, exist_ok=True)
@@ -389,7 +402,7 @@ def agent_upload_file():
     if not f.filename or not _allowed_file(f.filename):
         return jsonify({"error": "不支持的文件类型"}), 400
 
-    filename = secure_filename(f.filename)
+    filename = _safe_filename(f.filename)
     unique_name = f"{models.new_id()}_{filename}"
     filepath = os.path.join(Config.UPLOAD_FOLDER, unique_name)
     os.makedirs(Config.UPLOAD_FOLDER, exist_ok=True)

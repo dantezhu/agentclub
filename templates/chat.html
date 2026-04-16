@@ -59,13 +59,19 @@
                 </div>
 
                 <div class="input-area" id="inputArea">
+                    <div class="image-preview-bar hidden" id="imagePreviewBar">
+                        <div class="image-preview-list" id="imagePreviewList"></div>
+                    </div>
                     <div class="input-toolbar">
-                        <label class="icon-btn" title="发送图片/文件">
+                        <label class="icon-btn" title="发送图片">
+                            🖼️ <input type="file" id="imageInput" accept="image/*" multiple style="display:none" onchange="handleImageSelect(event)">
+                        </label>
+                        <label class="icon-btn" title="发送文件">
                             📎 <input type="file" id="fileInput" style="display:none" onchange="handleFileSelect(event)">
                         </label>
                     </div>
                     <div class="input-row">
-                        <textarea id="messageInput" placeholder="输入消息... (Enter 发送, Shift+Enter 换行)"></textarea>
+                        <textarea id="messageInput" placeholder="输入消息... (Enter 发送, Shift+Enter 换行, 可粘贴/拖拽图片)"></textarea>
                         <button class="send-btn" onclick="sendMessage()">发送</button>
                     </div>
                 </div>
@@ -131,6 +137,20 @@
 
     <!-- Context menu -->
     <div class="context-menu hidden" id="contextMenu"></div>
+
+    <!-- Image lightbox -->
+    <div class="lightbox hidden" id="lightbox" onclick="closeLightbox(event)">
+        <button class="lightbox-close" onclick="closeLightbox()">&times;</button>
+        <img id="lightboxImg" src="" alt="">
+    </div>
+
+    <!-- Drag-drop overlay -->
+    <div class="drop-overlay hidden" id="dropOverlay">
+        <div class="drop-hint">
+            <div class="drop-icon">🖼️</div>
+            <div>松开鼠标发送图片</div>
+        </div>
+    </div>
 
     <script src="/static/js/chat.js"></script>
 </body>

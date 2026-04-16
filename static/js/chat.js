@@ -7,6 +7,7 @@ let oldestTimestamp = {};
 let typingTimeout = null;
 let unreadCounts = {};
 let lastMessages = {};
+let pendingImages = []; // Files queued for preview before sending
 
 /* ── Init ── */
 async function init() {
@@ -282,7 +283,7 @@ function renderMessage(msg) {
 function renderContent(msg) {
     switch (msg.content_type) {
         case 'image':
-            return `<img src="${escHtml(msg.file_url)}" alt="${escHtml(msg.file_name)}" onclick="window.open(this.src)" loading="lazy">`;
+            return `<div class="image-message"><img src="${escHtml(msg.file_url)}" alt="${escHtml(msg.file_name)}" onclick="openLightbox(this.src)" loading="lazy"></div>`;
         case 'audio':
             return renderAudioPlayer(msg.file_url, msg.file_name);
         case 'video':
@@ -366,7 +367,14 @@ function seekAudio(event, id) {
 function sendMessage() {
     const input = document.getElementById('messageInput');
     const text = input.value.trim();
-    if (!text || !currentChat) return;
+    if (!currentChat) return;
+
+    // Send pending images first
+    if (pendingImages.length > 0) {
+        sendPendingImages();
+    }
+
+    if (!text) return;
 
     // Parse @mentions from text
     const mentions = [];
@@ -412,6 +420,103 @@ async function handleFileSelect(event) {
     } catch { alert('上传失败'); }
 }
 
+/* ── Image handling ── */
+
+function handleImageSelect(event) {
+    const files = Array.from(event.target.files);
+    event.target.value = '';
+    if (!files.length || !currentChat) return;
+    addImagesToPending(files.filter(f => f.type.startsWith('image/')));
+}
+
+function addImagesToPending(files) {
+    for (const file of files) {
+        if (!file.type.startsWith('image/')) continue;
+        const id = Math.random().toString(36).slice(2);
+        const objectUrl = URL.createObjectURL(file);
+        pendingImages.push({ id, file, objectUrl });
+    }
+    renderImagePreview();
+}
+
+function renderImagePreview() {
+    const bar = document.getElementById('imagePreviewBar');
+    const list = document.getElementById('imagePreviewList');
+    if (!pendingImages.length) {
+        bar.classList.add('hidden');
+        list.innerHTML = '';
+        return;
+    }
+    bar.classList.remove('hidden');
+    list.innerHTML = pendingImages.map(img =>
+        `<div class="image-preview-item" id="preview_${img.id}">
+            <img src="${img.objectUrl}" alt="">
+            <button class="image-preview-remove" onclick="removeImagePreview('${img.id}')">&times;</button>
+        </div>`
+    ).join('');
+}
+
+function removeImagePreview(id) {
+    const idx = pendingImages.findIndex(img => img.id === id);
+    if (idx >= 0) {
+        URL.revokeObjectURL(pendingImages[idx].objectUrl);
+        pendingImages.splice(idx, 1);
+    }
+    renderImagePreview();
+}
+
+function clearImagePreviews() {
+    for (const img of pendingImages) {
+        URL.revokeObjectURL(img.objectUrl);
+    }
+    pendingImages = [];
+    renderImagePreview();
+}
+
+async function sendPendingImages() {
+    const images = [...pendingImages];
+    clearImagePreviews();
+    for (const img of images) {
+        await uploadAndSendImage(img.file);
+    }
+}
+
+async function uploadAndSendImage(file) {
+    const formData = new FormData();
+    formData.append('file', file);
+    try {
+        const res = await fetch('/api/upload', { method: 'POST', body: formData });
+        if (!res.ok) { alert('图片上传失败'); return; }
+        const data = await res.json();
+        socket.emit('send_message', {
+            chat_type: currentChat.type,
+            chat_id: currentChat.id,
+            content: '',
+            content_type: data.content_type,
+            file_url: data.url,
+            file_name: data.filename,
+        });
+    } catch { alert('图片上传失败'); }
+}
+
+/* ── Lightbox ── */
+
+function openLightbox(src) {
+    const lb = document.getElementById('lightbox');
+    const img = document.getElementById('lightboxImg');
+    img.src = src;
+    lb.classList.remove('hidden');
+    document.body.style.overflow = 'hidden';
+}
+
+function closeLightbox(event) {
+    if (event && event.target.id === 'lightboxImg') return;
+    const lb = document.getElementById('lightbox');
+    lb.classList.add('hidden');
+    document.getElementById('lightboxImg').src = '';
+    document.body.style.overflow = '';
+}
+
 /* ── Input handlers ── */
 function setupInputHandlers() {
     const input = document.getElementById('messageInput');
@@ -434,6 +539,66 @@ function setupInputHandlers() {
         }
     });
 
+    // Paste image from clipboard
+    input.addEventListener('paste', (e) => {
+        const items = e.clipboardData?.items;
+        if (!items) return;
+        const imageFiles = [];
+        for (const item of items) {
+            if (item.type.startsWith('image/')) {
+                const file = item.getAsFile();
+                if (file) imageFiles.push(file);
+            }
+        }
+        if (imageFiles.length) {
+            e.preventDefault();
+            addImagesToPending(imageFiles);
+        }
+    });
+
+    // Drag & drop images
+    const mainArea = document.getElementById('mainArea');
+    let dragCounter = 0;
+
+    mainArea.addEventListener('dragenter', (e) => {
+        e.preventDefault();
+        dragCounter++;
+        if (currentChat && hasImageFiles(e)) {
+            document.getElementById('dropOverlay').classList.remove('hidden');
+        }
+    });
+
+    mainArea.addEventListener('dragleave', (e) => {
+        e.preventDefault();
+        dragCounter--;
+        if (dragCounter <= 0) {
+            dragCounter = 0;
+            document.getElementById('dropOverlay').classList.add('hidden');
+        }
+    });
+
+    mainArea.addEventListener('dragover', (e) => {
+        e.preventDefault();
+    });
+
+    mainArea.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dragCounter = 0;
+        document.getElementById('dropOverlay').classList.add('hidden');
+        if (!currentChat) return;
+        const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'));
+        if (files.length) {
+            addImagesToPending(files);
+        }
+    });
+
+    // Close lightbox with Escape
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            closeLightbox();
+        }
+    });
+
     // Menu toggle
     document.getElementById('menuBtn').addEventListener('click', () => {
         document.getElementById('sidebarMenu').classList.toggle('hidden');
@@ -445,6 +610,19 @@ function setupInputHandlers() {
             menu.classList.add('hidden');
         }
     });
+}
+
+function hasImageFiles(e) {
+    if (e.dataTransfer?.types?.includes('Files')) {
+        const items = e.dataTransfer.items;
+        if (items) {
+            for (const item of items) {
+                if (item.type.startsWith('image/')) return true;
+            }
+        }
+        return true; // Can't determine type during dragenter in some browsers
+    }
+    return false;
 }
 
 /* ── Typing indicator ── */
