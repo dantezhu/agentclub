@@ -176,7 +176,7 @@ async function openChat(type, id, name) {
 
     // Load history
     await loadMessages(type, id);
-    scrollToBottom();
+    scrollToBottomWhenReady();
     renderChatList();
 
     // Update header
@@ -977,19 +977,30 @@ function selectMentionPickerItem(idx) {
     pill.contentEditable = 'false';
     pill.textContent = '@' + item.label;
 
-    const space = document.createTextNode('\u00a0');
+    // Chromium has a long-standing bug where IME composition silently fails
+    // to engage when the caret sits *adjacent* to a contenteditable=false
+    // element (the span above). Symptom: user types pinyin, expects to
+    // pick a Chinese character with Enter, but `compositionstart` never
+    // fires, the raw pinyin letters land in the DOM as plain ASCII, and
+    // our Enter handler then sends them as an English message. Firefox
+    // doesn't have this bug.
+    //
+    // The robust workaround used by Slack/Discord/Lexical is to keep the
+    // caret *inside* a plain text node — never at a node boundary next to
+    // the pill. We achieve that with a trailing regular space (not NBSP;
+    // NBSP further upsets some IMEs) and explicitly `setStart(space, 1)`
+    // so the caret is at offset 1 *within* the text node, not between
+    // nodes in the parent. `white-space: pre-wrap` on #messageInput keeps
+    // the trailing space from collapsing.
+    const space = document.createTextNode(' ');
 
-    // Insert pill + trailing space as a single fragment so `insertNode` only
-    // runs once — avoids the ambiguity of how Range.start moves after each
-    // insertion. After insert, position the caret AFTER the space so
-    // continued typing doesn't extend the pill.
     const frag = document.createDocumentFragment();
     frag.appendChild(pill);
     frag.appendChild(space);
     range.insertNode(frag);
 
     const newRange = document.createRange();
-    newRange.setStartAfter(space);
+    newRange.setStart(space, space.length);
     newRange.collapse(true);
     const sel = window.getSelection();
     sel.removeAllRanges();
@@ -1382,6 +1393,25 @@ async function handleLogout() {
 function scrollToBottom() {
     const area = document.getElementById('messagesArea');
     requestAnimationFrame(() => { area.scrollTop = area.scrollHeight; });
+}
+
+/**
+ * Scroll to the bottom now AND re-scroll as any currently-pending images
+ * finish loading. Called on chat open so that history containing images
+ * still lands at the bottom after all images have laid out. Without this,
+ * `scrollToBottom()` runs before images have measurable height, so the
+ * final resting scroll position is several images short.
+ */
+function scrollToBottomWhenReady() {
+    scrollToBottom();
+    const list = document.getElementById('messageList');
+    if (!list) return;
+    list.querySelectorAll('img').forEach((img) => {
+        if (img.complete && img.naturalHeight > 0) return;
+        const rescroll = () => scrollToBottom();
+        img.addEventListener('load', rescroll, { once: true });
+        img.addEventListener('error', rescroll, { once: true });
+    });
 }
 
 function formatTime(ts) {
