@@ -35,6 +35,14 @@ async function init() {
     // Only show admin link for admins
     const adminLink = document.getElementById('adminLink');
     if (adminLink && currentUser.role !== 'admin') adminLink.style.display = 'none';
+
+    // On mobile, the sidebar is a hidden drawer and the empty-state view has
+    // no menu button of its own — so open the drawer on first load when no
+    // chat is selected, otherwise the user would face a dead-end screen.
+    if (window.matchMedia('(max-width: 768px)').matches) {
+        document.getElementById('sidebar').classList.add('open');
+        syncMobileOverlay();
+    }
 }
 
 /* ── Socket.IO ── */
@@ -164,6 +172,10 @@ async function openChat(type, id, name) {
     document.getElementById('emptyState').classList.add('hidden');
     document.getElementById('chatContainer').classList.remove('hidden');
     document.getElementById('membersPanel').classList.add('hidden');
+    // On mobile, picking a chat from the sidebar drawer should close the
+    // drawer so the chat view is visible.
+    document.getElementById('sidebar').classList.remove('open');
+    syncMobileOverlay();
     document.getElementById('chatTitle').textContent = name;
     document.getElementById('messageList').innerHTML = '';
     document.getElementById('loadMoreBtn').classList.add('hidden');
@@ -914,8 +926,14 @@ function positionMentionPicker(range) {
     let left = rect.left - areaRect.left;
     left = Math.max(8, Math.min(left, areaRect.width - maxW - 8));
     el.style.left = left + 'px';
-    // Put it *above* the input row since there's no space below it.
-    el.style.bottom = (window.innerHeight - rect.top + 4) + 'px';
+    // Put it *above* the input row since there's no space below it. On
+    // mobile with the soft keyboard open, `window.innerHeight` stays at the
+    // pre-keyboard size on iOS Safari — use `visualViewport` when present
+    // so the picker lands above the keyboard, not behind it.
+    const vv = window.visualViewport;
+    const viewportHeight = vv ? vv.height : window.innerHeight;
+    const viewportOffsetTop = vv ? vv.offsetTop : 0;
+    el.style.bottom = (viewportHeight + viewportOffsetTop - rect.top + 4) + 'px';
     el.style.top = 'auto';
 }
 
@@ -1071,8 +1089,35 @@ function updateChatPreview(msg) {
 
 /* ── Sidebar toggle (mobile) ── */
 function toggleSidebar() {
-    document.getElementById('sidebar').classList.toggle('open');
-    document.getElementById('overlay').classList.toggle('hidden');
+    const sidebar = document.getElementById('sidebar');
+    sidebar.classList.toggle('open');
+    syncMobileOverlay();
+}
+
+/**
+ * Show the dim backdrop whenever any mobile drawer is open (sidebar OR the
+ * members panel). Click on the overlay closes whichever drawer is open.
+ * This lets one shared `<div id="overlay">` serve both drawers and keeps
+ * the backdrop state in sync with the UI.
+ */
+function syncMobileOverlay() {
+    const sidebarOpen = document.getElementById('sidebar').classList.contains('open');
+    const membersOpen = !document.getElementById('membersPanel').classList.contains('hidden');
+    const overlay = document.getElementById('overlay');
+    if (sidebarOpen || membersOpen) overlay.classList.remove('hidden');
+    else overlay.classList.add('hidden');
+}
+
+function handleOverlayClick() {
+    const sidebar = document.getElementById('sidebar');
+    if (sidebar.classList.contains('open')) {
+        sidebar.classList.remove('open');
+    }
+    const panel = document.getElementById('membersPanel');
+    if (!panel.classList.contains('hidden')) {
+        panel.classList.add('hidden');
+    }
+    syncMobileOverlay();
 }
 
 /* ── Members panel ── */
@@ -1117,11 +1162,13 @@ async function toggleMembers() {
     const panel = document.getElementById('membersPanel');
     if (!panel.classList.contains('hidden')) {
         panel.classList.add('hidden');
+        syncMobileOverlay();
         return;
     }
     if (!currentChat || currentChat.type !== 'group') return;
     await renderMembersPanel();
     panel.classList.remove('hidden');
+    syncMobileOverlay();
 }
 
 async function removeMember(groupId, userId) {
