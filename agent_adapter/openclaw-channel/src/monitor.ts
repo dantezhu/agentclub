@@ -220,6 +220,39 @@ function sanitizeFilename(raw: string, fallback: string): string {
 }
 
 /**
+ * Find a non-colliding on-disk path inside `dir` for `desiredName`. If the
+ * file already exists we don't want to silently overwrite the previous
+ * attachment — two users sending `photo.jpg` should end up with two files,
+ * not one. Appends `-1`, `-2`, … between the basename and extension,
+ * matching the convention most desktop OSes use for "Save As" collisions.
+ *
+ * Uses `O_EXCL` (`flag: "wx"`) in the caller so the existence check + write
+ * is atomic; this helper only computes candidate names.
+ */
+async function findAvailableMediaPath(
+  dir: string,
+  desiredName: string,
+): Promise<{ filePath: string; fileName: string }> {
+  const ext = path.extname(desiredName);
+  const stem = desiredName.slice(0, desiredName.length - ext.length);
+
+  for (let i = 0; i < 1000; i++) {
+    const candidate = i === 0 ? desiredName : `${stem}-${i}${ext}`;
+    const candidatePath = path.join(dir, candidate);
+    try {
+      await fs.access(candidatePath);
+    } catch {
+      return { filePath: candidatePath, fileName: candidate };
+    }
+  }
+  // Extremely unlikely: fall back to a random suffix so the write never
+  // silently overwrites even under pathological collision patterns.
+  const random = crypto.randomBytes(4).toString("hex");
+  const name = `${stem}-${random}${ext}`;
+  return { filePath: path.join(dir, name), fileName: name };
+}
+
+/**
  * Download an inbound attachment from the IM server into
  * `<workspaceDir>/media/`.
  *
@@ -265,14 +298,35 @@ async function downloadAttachmentToWorkspace(params: {
 
     // Prefer sender-supplied name; fall back to URL basename, then random hex.
     const urlBasename = path.basename(new URL(absoluteUrl).pathname) || "";
-    const finalName = sanitizeFilename(
+    const desiredName = sanitizeFilename(
       fileName || urlBasename,
       `inbound-${crypto.randomBytes(4).toString("hex")}.bin`,
     );
 
-    const filePath = path.join(mediaDir, finalName);
+    // Resolve a non-colliding filename, then open with `O_EXCL` so two
+    // concurrent downloads racing on the same name can't both claim it.
+    // If the exclusive-create fails because another writer just won the
+    // race, loop once more to pick a new candidate.
+    let filePath: string;
+    let finalName: string;
+    let attempt = 0;
+    for (;;) {
+      const picked = await findAvailableMediaPath(mediaDir, desiredName);
+      try {
+        await fs.writeFile(picked.filePath, buf, { flag: "wx" });
+        filePath = picked.filePath;
+        finalName = picked.fileName;
+        break;
+      } catch (err: unknown) {
+        // EEXIST = racing writer won, retry with a fresh candidate.
+        if ((err as NodeJS.ErrnoException)?.code === "EEXIST" && attempt < 5) {
+          attempt += 1;
+          continue;
+        }
+        throw err;
+      }
+    }
     const relativePath = `${MEDIA_SUBDIR}/${finalName}`;
-    await fs.writeFile(filePath, buf);
     log.info(`Saved inbound attachment to ${filePath} (${buf.length} bytes)`);
     return { filePath, fileName: finalName, relativePath };
   } catch (err) {
