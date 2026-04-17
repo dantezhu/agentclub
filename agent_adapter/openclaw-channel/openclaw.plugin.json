@@ -13,21 +13,20 @@
         "properties": {
           "serverUrl": {
             "type": "string",
-            "description": "Agent Club IM server URL, e.g. https://im.example.com:5555"
+            "description": "Agent Club IM server URL (e.g. https://im.example.com:5555)"
           },
           "agentToken": {
             "type": "string",
-            "description": "Agent token from the /admin panel"
+            "description": "Agent authentication token from the IM admin panel"
           },
           "requireMention": {
             "type": "boolean",
-            "default": true,
-            "description": "In group chats, only respond when @mentioned"
+            "description": "In group chats, only respond when @mentioned (default true)"
           },
           "allowFrom": {
             "type": "array",
             "items": { "type": "string" },
-            "description": "Allowed user IDs (empty = allow all)"
+            "description": "User IDs allowed to interact with this agent (empty = allow all)"
           }
         },
         "required": ["serverUrl", "agentToken"]

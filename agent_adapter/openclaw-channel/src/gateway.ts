@@ -3,10 +3,11 @@ import { toSessionKey } from "./session.js";
 
 export interface InboundMessage {
   sessionKey: string;
+  chatType: string;
+  chatId: string;
   senderId: string;
   senderName: string;
   text: string;
-  /** Non-empty when the original message carried an attachment */
   attachmentUrl?: string;
   attachmentName?: string;
   contentType: string;
@@ -29,8 +30,8 @@ export interface InboundGatewayOptions {
  * Filtering rules:
  * 1. Skip messages sent by the agent itself.
  * 2. If allowFrom is configured, skip messages from unlisted senders.
- * 3. In group chats with requireMention, skip messages that don't @mention the agent.
- * 4. Private (direct) chats always pass through.
+ * 3. In group chats with requireMention, skip messages without @mention.
+ * 4. Direct chats always pass through.
  */
 export function createInboundGateway(opts: InboundGatewayOptions) {
   const { agentUserId, account, onInbound } = opts;
@@ -40,30 +41,22 @@ export function createInboundGateway(opts: InboundGatewayOptions) {
   };
 
   return function handleMessage(msg: NewMessagePayload): void {
-    // 1. Never process own messages
     if (msg.sender_id === agentUserId) return;
 
-    // 2. allowFrom filter
     if (account.allowFrom.length > 0 && !account.allowFrom.includes(msg.sender_id)) {
       logger.warn(`Ignored message from ${msg.sender_name} (not in allowFrom)`);
       return;
     }
 
-    // 3. Group mention check
     if (msg.chat_type === "group" && account.requireMention) {
       const mentioned = Array.isArray(msg.mentions) && msg.mentions.includes(agentUserId);
       if (!mentioned) return;
     }
 
-    // Build text representation
     let text = msg.content || "";
     if (msg.file_url && msg.content_type !== "text") {
       const label = msg.file_name || msg.file_url;
-      if (text) {
-        text += `\n[${msg.content_type}: ${label}]`;
-      } else {
-        text = `[${msg.content_type}: ${label}]`;
-      }
+      text = text ? `${text}\n[${msg.content_type}: ${label}]` : `[${msg.content_type}: ${label}]`;
     }
 
     if (!text.trim()) return;
@@ -76,6 +69,8 @@ export function createInboundGateway(opts: InboundGatewayOptions) {
 
     onInbound({
       sessionKey,
+      chatType: msg.chat_type,
+      chatId: msg.chat_id,
       senderId: msg.sender_id,
       senderName: msg.sender_name,
       text,

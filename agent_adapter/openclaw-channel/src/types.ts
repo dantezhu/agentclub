@@ -1,8 +1,4 @@
-// ---------------------------------------------------------------------------
-// Agent Club IM server protocol types
-// ---------------------------------------------------------------------------
-
-/** Plugin configuration stored in openclaw.config.json under channels.agent-club */
+/** Plugin configuration stored in openclaw config under channels.agent-club */
 export interface AgentClubConfig {
   serverUrl: string;
   agentToken: string;
@@ -20,13 +16,8 @@ export interface ResolvedAccount {
   dmPolicy: string | undefined;
 }
 
-// -- Socket.IO auth payloads ------------------------------------------------
+// -- Socket.IO payloads -----------------------------------------------------
 
-export interface SocketAuth {
-  agent_token: string;
-}
-
-/** Server emits this on successful connection */
 export interface AuthOkPayload {
   user_id: string;
   display_name: string;
@@ -34,13 +25,10 @@ export interface AuthOkPayload {
   is_agent: boolean;
 }
 
-// -- Message types ----------------------------------------------------------
-
 export type ChatType = "group" | "direct";
-
 export type ContentType = "text" | "image" | "audio" | "video" | "file";
 
-/** Payload sent with the send_message client event */
+/** Client → Server: send a message */
 export interface SendMessagePayload {
   chat_type: ChatType;
   chat_id: string;
@@ -51,7 +39,7 @@ export interface SendMessagePayload {
   mentions?: string[];
 }
 
-/** Payload received from new_message server event */
+/** Server → Client: new message arrived */
 export interface NewMessagePayload {
   id: string;
   chat_type: ChatType;
@@ -68,25 +56,11 @@ export interface NewMessagePayload {
   created_at: number;
 }
 
-// -- Other server events ----------------------------------------------------
-
 export interface PresencePayload {
   user_id: string;
   display_name: string;
   is_online: boolean;
   is_agent: boolean;
-}
-
-export interface TypingPayload {
-  user_id: string;
-  display_name: string;
-  chat_type: ChatType;
-  chat_id: string;
-}
-
-export interface JoinChatPayload {
-  chat_type: ChatType;
-  chat_id: string;
 }
 
 /** Response from POST /api/agent/upload */
@@ -96,23 +70,29 @@ export interface UploadResponse {
   content_type: string;
 }
 
-// -- Client events (emitted by the plugin) ----------------------------------
+// -- runEmbeddedAgent result ------------------------------------------------
 
-export interface ClientEvents {
-  send_message: (data: SendMessagePayload) => void;
-  join_chat: (data: JoinChatPayload) => void;
-  leave_chat: (data: JoinChatPayload) => void;
-  typing: (data: { chat_type: ChatType; chat_id: string }) => void;
-  mark_read: (data: { chat_type: ChatType; chat_id: string }) => void;
+export interface RunResultPayload {
+  text?: string;
+  mediaUrl?: string;
+  mediaUrls?: string[];
+  replyToId?: string;
+  isError?: boolean;
 }
 
-export interface ServerEvents {
-  auth_ok: (data: AuthOkPayload) => void;
-  new_message: (data: NewMessagePayload) => void;
-  offline_messages: (data: NewMessagePayload[]) => void;
-  presence: (data: PresencePayload) => void;
-  typing: (data: TypingPayload) => void;
-  error: (data: { message: string }) => void;
-  chat_list_updated: () => void;
-  unread_updated: () => void;
+export interface EmbeddedRunResult {
+  payloads?: RunResultPayload[];
+  meta: {
+    durationMs: number;
+    agentMeta?: {
+      sessionId: string;
+      provider: string;
+      model: string;
+    };
+    aborted?: boolean;
+    error?: { kind: string; message: string };
+    stopReason?: string;
+  };
+  didSendViaMessagingTool?: boolean;
+  messagingToolSentTexts?: string[];
 }

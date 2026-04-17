@@ -37,26 +37,12 @@ describe("resolveAccount", () => {
   });
 
   it("throws when serverUrl is missing", () => {
-    const cfg = {
-      channels: {
-        "agent-club": {
-          agentToken: "token",
-        },
-      },
-    };
-
+    const cfg = { channels: { "agent-club": { agentToken: "token" } } };
     expect(() => resolveAccount(cfg)).toThrow("serverUrl is required");
   });
 
   it("throws when agentToken is missing", () => {
-    const cfg = {
-      channels: {
-        "agent-club": {
-          serverUrl: "https://im.example.com",
-        },
-      },
-    };
-
+    const cfg = { channels: { "agent-club": { serverUrl: "https://im.example.com" } } };
     expect(() => resolveAccount(cfg)).toThrow("agentToken is required");
   });
 });
@@ -85,14 +71,7 @@ describe("inspectAccount", () => {
   });
 
   it("reports not configured when token is missing", () => {
-    const cfg = {
-      channels: {
-        "agent-club": {
-          serverUrl: "https://im.example.com",
-        },
-      },
-    };
-
+    const cfg = { channels: { "agent-club": { serverUrl: "https://im.example.com" } } };
     const result = inspectAccount(cfg);
     expect(result.configured).toBe(false);
   });

@@ -1,6 +1,6 @@
 {
   "name": "@agent-club/openclaw-channel",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "OpenClaw channel plugin for Agent Club IM",
   "type": "module",
   "main": "./dist/index.js",
@@ -16,14 +16,15 @@
     "channel": {
       "id": "agent-club",
       "label": "Agent Club",
-      "blurb": "Connect OpenClaw to an Agent Club IM server."
+      "blurb": "Connect OpenClaw to an Agent Club IM server.",
+      "markdownCapable": true
     }
   },
   "dependencies": {
     "socket.io-client": "^4.7.0"
   },
   "peerDependencies": {
-    "openclaw": ">=2026.1.0"
+    "openclaw": ">=2026.3.0"
   },
   "peerDependenciesMeta": {
     "openclaw": { "optional": true }

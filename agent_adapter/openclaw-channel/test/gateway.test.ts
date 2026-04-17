@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { createInboundGateway, type InboundMessage } from "../src/gateway.js";
 import type { NewMessagePayload, ResolvedAccount } from "../src/types.js";
 
@@ -49,6 +49,8 @@ describe("createInboundGateway", () => {
     expect(received).toHaveLength(1);
     expect(received[0].text).toBe("Hello");
     expect(received[0].sessionKey).toBe("agent-club:direct:chat-1");
+    expect(received[0].chatType).toBe("direct");
+    expect(received[0].chatId).toBe("chat-1");
   });
 
   it("skips messages from the agent itself", () => {
@@ -60,7 +62,6 @@ describe("createInboundGateway", () => {
     });
 
     handle(makeMsg({ sender_id: AGENT_ID }));
-
     expect(received).toHaveLength(0);
   });
 
@@ -73,7 +74,6 @@ describe("createInboundGateway", () => {
     });
 
     handle(makeMsg({ chat_type: "group", mentions: [] }));
-
     expect(received).toHaveLength(0);
   });
 
@@ -86,7 +86,6 @@ describe("createInboundGateway", () => {
     });
 
     handle(makeMsg({ chat_type: "group", mentions: [AGENT_ID] }));
-
     expect(received).toHaveLength(1);
   });
 
@@ -99,7 +98,6 @@ describe("createInboundGateway", () => {
     });
 
     handle(makeMsg({ chat_type: "group", mentions: [] }));
-
     expect(received).toHaveLength(1);
   });
 
@@ -149,7 +147,6 @@ describe("createInboundGateway", () => {
     });
 
     handle(makeMsg({ content: "", content_type: "text", file_url: "" }));
-
     expect(received).toHaveLength(0);
   });
 });
