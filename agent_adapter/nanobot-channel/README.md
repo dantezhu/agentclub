@@ -95,7 +95,13 @@ export AGENTCLUB_AGENT_TOKEN="your-token-here"
 | 图片 / 音频 / 视频 / 文件 | 先下载到 `tempfile.mkdtemp(prefix="agentclub_")`，作为 media 附件 |
 | `<at user_id="…">name</at>` 标签 | 保留原文；Agent 上下文里注入 system hint 解释协议 |
 
-`session_key` 统一使用 `{chat_type}:{chat_id}`，例如 `group:grp-abc`、`direct:chat-xyz`，保证群聊 / 私聊会话相互独立。
+Channel 会给每个 `chat_id` 打上 `gr_`（群聊）或 `pr_`（私聊）前缀再交给 Agent，语义上等同于飞书的 `oc_` / `ou_`。这样：
+
+- LLM 在 Runtime Context 里看到的始终是一个不透明 identifier（形如 `gr_abc123`），不会被识别为 `key:value` 结构而被"清理"；
+- Agent 经由 `message` tool 回复时，`chat_id` 原样回传，`send()` 按前缀判断类型、剥前缀后再发到 IM；
+- 无需维护额外映射状态，重启、冷启动、跨进程都不会丢 chat_type。
+
+`session_key` 默认继承 Nanobot 的 `{channel}:{chat_id}` 规则，由于 `chat_id` 已带前缀，群聊 / 私聊会话自然独立。
 
 ### Outbound（Agent → IM）
 

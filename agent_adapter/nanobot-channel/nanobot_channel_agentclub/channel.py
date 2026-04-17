@@ -57,6 +57,36 @@ _DEDUP_CAPACITY = 1024
 _AT_TAG_RE = re.compile(r'<at user_id="([^"]+)">([^<]*)</at>')
 
 
+# Chat-id prefixes we stamp on every id before handing it to the bus,
+# then strip on the way back out to the IM server. The model sees the
+# prefixed form in Nanobot's Runtime-Context block; picking shapes
+# that look like part of the id itself (no ``:``) prevents the LLM
+# from treating them as structured "key:value" syntax and rewriting
+# the id into a bare UUID before calling the ``message`` tool. This
+# is the same trick Feishu uses with ``oc_`` / ``ou_`` — except there
+# the prefix is enforced by the platform, here we add our own.
+_GROUP_PREFIX = "gr_"
+_DIRECT_PREFIX = "pr_"
+
+
+def _encode_chat_id(chat_type: str, chat_id: str) -> str:
+    """Tag ``chat_id`` with a chat-type prefix for the bus-facing form."""
+    if chat_type == "group":
+        return f"{_GROUP_PREFIX}{chat_id}"
+    if chat_type == "direct":
+        return f"{_DIRECT_PREFIX}{chat_id}"
+    return chat_id
+
+
+def _decode_chat_id(encoded: str) -> tuple[str, str] | None:
+    """Recover ``(chat_type, chat_id)`` from a prefixed id, or ``None``."""
+    if encoded.startswith(_GROUP_PREFIX):
+        return "group", encoded[len(_GROUP_PREFIX):]
+    if encoded.startswith(_DIRECT_PREFIX):
+        return "direct", encoded[len(_DIRECT_PREFIX):]
+    return None
+
+
 def _extract_mention_user_ids(text: str) -> list[str]:
     """Pull unique user_ids out of ``<at user_id="…">`` tags."""
     if not text:
@@ -412,12 +442,20 @@ class AgentClubChannel(BaseChannel):
             # socket reconnects mid-run.
             await self._ack(message_id)
 
-            session_key = f"{chat_type}:{chat_id}"
-            reply_to = chat_id if chat_type == "group" else sender_id
+            # Stamp a chat-type prefix onto the bus-facing chat_id.
+            # MessageTool inherits this as its ``default_chat_id``, and
+            # it's what the LLM sees echoed back in Nanobot's Runtime-
+            # Context block — so ``send()`` can recover the chat_type
+            # from the id alone, statelessly, even if the LLM echoes it
+            # verbatim in a tool call. Using ``gr_`` / ``pr_`` (not
+            # ``group:`` / ``direct:``) keeps the form looking like an
+            # opaque identifier instead of a ``key:value`` structure
+            # the model might "clean up" before calling the tool.
+            encoded_chat_id = _encode_chat_id(chat_type, chat_id)
 
             await self._handle_message(
                 sender_id=sender_id,
-                chat_id=reply_to,
+                chat_id=encoded_chat_id,
                 content=prompt,
                 media=media_paths,
                 metadata={
@@ -429,7 +467,6 @@ class AgentClubChannel(BaseChannel):
                     "inbound_mentions": mentions,
                     "mentioned_bot": chat_type == "direct" or mentions_bot,
                 },
-                session_key=session_key,
             )
         except Exception as exc:  # defensive: one bad message must not kill the loop
             logger.exception("[agentclub] error processing inbound: {}", exc)
@@ -518,19 +555,33 @@ class AgentClubChannel(BaseChannel):
     ) -> tuple[str, str]:
         """Figure out ``(chat_type, chat_id)`` for the outbound envelope.
 
-        Order of preference:
-        1. Inbound metadata (same-thread reply to the triggering message).
-        2. ``session_key`` of the form ``<chat_type>:<chat_id>``.
-        3. Raw ``msg.chat_id`` as a direct chat id.
+        Resolution order:
+
+        1. ``metadata["chat_type"]`` + ``metadata["chat_id"]`` — the
+           only source ``_process_inbound`` can fully vouch for. In
+           practice Nanobot's ``MessageTool`` strips metadata when
+           constructing the outbound, so this path rarely hits in the
+           normal LLM flow; still useful for channel-native helpers
+           or hand-written call sites.
+        2. ``gr_<id>`` / ``pr_<id>`` prefix on the chat_id itself. This
+           is the stateless happy path: ``_process_inbound`` stamps
+           every bus-facing chat_id with a prefix, so whenever the
+           LLM echoes that id back via ``MessageTool`` we can recover
+           the type from the id alone — no cache, no state, no worry
+           about the agent replying to a chat it hasn't seen via
+           inbound in this process's lifetime.
+        3. Bare id — last-resort default, treated as a direct chat.
+           We hit this only if something upstream constructed an
+           OutboundMessage by hand without metadata or a prefix.
         """
         if meta.get("chat_type") and meta.get("chat_id"):
             return str(meta["chat_type"]), str(meta["chat_id"])
 
         raw = msg.chat_id or ""
-        if ":" in raw:
-            kind, _, rest = raw.partition(":")
-            if kind in ("direct", "group") and rest:
-                return kind, rest
+        decoded = _decode_chat_id(raw)
+        if decoded is not None:
+            return decoded
+
         return "direct", raw
 
     async def _emit_send_message(self, payload: dict[str, Any]) -> None:

@@ -143,8 +143,25 @@ class TestInboundFiltering:
         envelope = channel.bus.publish_inbound.await_args.args[0]
         assert envelope.channel == "agentclub"
         assert envelope.sender_id == "user-a"
-        # session_key is chat_type:chat_id so direct + group stay distinct
-        assert envelope.session_key == "direct:chat-x"
+        # Direct chats get a ``pr_`` prefix so the LLM sees an opaque
+        # identifier in Runtime-Context (not a ``key:value`` it might
+        # rewrite). ``send()`` strips the prefix before hitting the wire.
+        assert envelope.chat_id == "pr_chat-x"
+
+    @pytest.mark.asyncio
+    async def test_group_inbound_uses_gr_prefix(self, channel):
+        """Regression: a bare UUID chat_id left the LLM with no way to
+        distinguish group from direct, and a ``group:`` prefix was
+        actively rewritten to a bare UUID by the model when it saw
+        ``<at user_id="...">`` and tried to "clean up" structured ids.
+        ``gr_<id>`` looks like an opaque identifier so the model leaves
+        it alone — matching Feishu's ``oc_``/``ou_`` convention."""
+        channel._list_group_members = AsyncMock(return_value=[])
+        await channel._process_inbound(
+            _inbound(chat_type="group", chat_id="grp-42", mentions=["all"])
+        )
+        envelope = channel.bus.publish_inbound.await_args.args[0]
+        assert envelope.chat_id == "gr_grp-42"
 
     @pytest.mark.asyncio
     async def test_direct_messages_bypass_require_mention(self, channel):
@@ -296,15 +313,35 @@ class TestOutbound:
         )
 
     @pytest.mark.asyncio
-    async def test_send_falls_back_to_session_key_in_chat_id(self, channel):
-        """If metadata was lost, the ``<type>:<id>`` session-key format still routes."""
+    async def test_send_decodes_gr_prefix(self, channel):
+        """The common LLM path: MessageTool forwards ``default_chat_id``
+        (already prefixed at inbound time) straight through. ``send()``
+        must strip ``gr_`` and route to the right group — including
+        when the reply carries an @-mention, the exact shape that broke
+        in production with the old ``group:`` prefix."""
         outbound = OutboundMessage(
-            channel="agentclub", chat_id="group:grp-5", content="ok"
+            channel="agentclub",
+            chat_id="gr_grp-9",
+            content='<at user_id="user-b">Bob</at> hi',
+        )
+        await channel.send(outbound)
+
+        payload = channel._sio.emit.await_args.args[1]
+        assert payload["chat_type"] == "group"
+        assert payload["chat_id"] == "grp-9"
+        assert payload["mentions"] == ["user-b"]
+
+    @pytest.mark.asyncio
+    async def test_send_decodes_pr_prefix(self, channel):
+        """Same round-trip for direct chats: ``pr_<id>`` in, ``direct`` +
+        bare id out."""
+        outbound = OutboundMessage(
+            channel="agentclub", chat_id="pr_chat-1", content="hi"
         )
         await channel.send(outbound)
         payload = channel._sio.emit.await_args.args[1]
-        assert payload["chat_type"] == "group"
-        assert payload["chat_id"] == "grp-5"
+        assert payload["chat_type"] == "direct"
+        assert payload["chat_id"] == "chat-1"
 
     @pytest.mark.asyncio
     async def test_send_extracts_mentions_from_at_tags(self, channel):
@@ -322,7 +359,7 @@ class TestOutbound:
     async def test_send_omits_mentions_field_when_no_tags(self, channel):
         outbound = OutboundMessage(
             channel="agentclub",
-            chat_id="direct:chat-1",
+            chat_id="pr_chat-1",
             content="thanks!",
         )
         await channel.send(outbound)
@@ -336,7 +373,7 @@ class TestOutbound:
             channel._sio.emit.reset_mock()
             outbound = OutboundMessage(
                 channel="agentclub",
-                chat_id="direct:chat-1",
+                chat_id="pr_chat-1",
                 content="partial",
                 metadata={flag: True},
             )
@@ -347,7 +384,7 @@ class TestOutbound:
     async def test_send_noop_when_disconnected(self, channel):
         channel._sio.connected = False
         outbound = OutboundMessage(
-            channel="agentclub", chat_id="direct:chat-1", content="hi"
+            channel="agentclub", chat_id="pr_chat-1", content="hi"
         )
         await channel.send(outbound)
         channel._sio.emit.assert_not_awaited()
@@ -368,7 +405,7 @@ class TestOutbound:
 
         outbound = OutboundMessage(
             channel="agentclub",
-            chat_id="direct:chat-1",
+            chat_id="pr_chat-1",
             content="see attached",
             media=[str(fpath)],
         )
