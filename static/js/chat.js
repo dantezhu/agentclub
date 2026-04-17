@@ -258,6 +258,20 @@ function appendMessage(msg) {
     const list = document.getElementById('messageList');
     list.insertAdjacentHTML('beforeend', renderMessage(msg));
     list.querySelectorAll('pre code:not([data-highlighted])').forEach(el => hljs.highlightElement(el));
+
+    // Images load asynchronously, so the initial scrollToBottom happens before
+    // the image has a measurable height. Re-scroll once each image in the
+    // newly-appended message finishes loading so the view stays pinned to the
+    // bottom.
+    const lastMessage = list.lastElementChild;
+    if (lastMessage) {
+        lastMessage.querySelectorAll('img').forEach(img => {
+            if (img.complete && img.naturalHeight > 0) return;
+            const rescroll = () => scrollToBottom();
+            img.addEventListener('load', rescroll, { once: true });
+            img.addEventListener('error', rescroll, { once: true });
+        });
+    }
 }
 
 /* ── Render Message ── */

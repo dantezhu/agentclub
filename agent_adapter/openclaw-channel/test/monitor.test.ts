@@ -69,23 +69,64 @@ function makeAccount(overrides: Partial<ResolvedAccount> = {}): ResolvedAccount 
   };
 }
 
-function makeRuntime() {
+/**
+ * Build a fake PluginRuntime. The monitor now goes through
+ * `runtime.channel.reply.dispatchReplyWithBufferedBlockDispatcher`, so the
+ * fake dispatcher simulates the SDK by:
+ *  1. storing the `finalizeInboundContext` payload so tests can assert on
+ *     the fields we forwarded (prompt, session key, media path, etc.), and
+ *  2. invoking the caller-provided `deliver` callback with a canned agent
+ *     reply so the outbound relay path is exercised end-to-end.
+ *
+ * `replyPayload` and `replyInfo` can be overridden per test to exercise
+ * tool-event suppression, NO_REPLY, and media routing.
+ */
+function makeRuntime(options: {
+  replyPayload?: { text?: string; mediaUrl?: string };
+  replyInfo?: { kind?: string };
+  dispatchError?: Error;
+} = {}) {
+  const finalizeCalls: unknown[] = [];
+  const dispatcherCalls: unknown[] = [];
+  const replyPayload = options.replyPayload ?? { text: "Agent reply" };
+  const replyInfo = options.replyInfo ?? { kind: "final" };
+
   return {
     agent: {
       resolveAgentDir: vi.fn(() => "/tmp/agent"),
       resolveAgentWorkspaceDir: vi.fn(() => "/tmp/workspace"),
       resolveAgentTimeoutMs: vi.fn(() => 60000),
-      runEmbeddedAgent: vi.fn(async () => ({
-        payloads: [{ text: "Agent reply" }],
-        meta: { durationMs: 100 },
-      })),
+      runEmbeddedAgent: vi.fn(),
       session: { resolveStorePath: vi.fn(() => "/tmp/sessions") },
+    },
+    channel: {
+      routing: {
+        resolveAgentRoute: vi.fn((params: any) => ({
+          sessionKey: `agent-club:${params.accountId}:${params.peer.kind}:${params.peer.id}`,
+          accountId: params.accountId,
+          agentId: "main",
+        })),
+      },
+      reply: {
+        finalizeInboundContext: vi.fn((payload: unknown) => {
+          finalizeCalls.push(payload);
+          return { __ctx: payload };
+        }),
+        dispatchReplyWithBufferedBlockDispatcher: vi.fn(async (params: any) => {
+          dispatcherCalls.push(params);
+          if (options.dispatchError) throw options.dispatchError;
+          await params.dispatcherOptions.deliver(replyPayload, replyInfo);
+          return { queuedFinal: true };
+        }),
+      },
     },
     config: {
       loadConfig: vi.fn(async () => ({})),
       writeConfigFile: vi.fn(async () => {}),
     },
     logging: { shouldLogVerbose: vi.fn(() => false) },
+    __finalizeCalls: finalizeCalls,
+    __dispatcherCalls: dispatcherCalls,
   };
 }
 
@@ -158,7 +199,7 @@ describe("startAgentClubMonitor", () => {
     expect(mockSocket.disconnect).toHaveBeenCalled();
   });
 
-  it("processes inbound messages via runEmbeddedAgent", async () => {
+  it("dispatches inbound messages through channel.reply and relays agent reply", async () => {
     const runtime = makeRuntime();
     const log = makeLogger();
 
@@ -176,13 +217,29 @@ describe("startAgentClubMonitor", () => {
     triggerSocketEvent("new_message", makeInboundMsg());
     await new Promise((r) => setTimeout(r, 150));
 
-    expect(runtime.agent.runEmbeddedAgent).toHaveBeenCalledWith(
+    // Route resolution forwarded the peer correctly.
+    expect(runtime.channel.routing.resolveAgentRoute).toHaveBeenCalledWith(
       expect.objectContaining({
-        prompt: "Hello agent",
-        sessionId: "agent-club:direct:chat-42",
+        channel: "agent-club",
+        peer: { kind: "direct", id: "user-1" },
       }),
     );
 
+    // Inbound context carried the prompt + session key the SDK needs to
+    // route the agent and pick the primary model.
+    expect(runtime.channel.reply.finalizeInboundContext).toHaveBeenCalledWith(
+      expect.objectContaining({
+        Body: "Hello agent",
+        BodyForAgent: "Hello agent",
+        ChatType: "direct",
+        SenderId: "user-1",
+        From: "agent-club:user-1",
+        To: "user:user-1",
+        Provider: "agent-club",
+      }),
+    );
+
+    // Agent's reply made it back into the IM via send_message.
     expect(mockSocket.emit).toHaveBeenCalledWith(
       "send_message",
       expect.objectContaining({
@@ -215,18 +272,18 @@ describe("startAgentClubMonitor", () => {
     triggerSocketEvent("new_message", makeInboundMsg({ sender_id: "agent-1" }));
     await new Promise((r) => setTimeout(r, 100));
 
-    expect(runtime.agent.runEmbeddedAgent).not.toHaveBeenCalled();
+    expect(
+      runtime.channel.reply.dispatchReplyWithBufferedBlockDispatcher,
+    ).not.toHaveBeenCalled();
 
     abortController.abort();
     await monitorPromise;
   });
 
-  it("does not send reply when didSendViaMessagingTool is true", async () => {
-    const runtime = makeRuntime();
-    runtime.agent.runEmbeddedAgent.mockResolvedValue({
-      payloads: [{ text: "Already sent" }],
-      meta: { durationMs: 100 },
-      didSendViaMessagingTool: true,
+  it("suppresses tool-kind payloads so internal tool chatter does not leak to the user", async () => {
+    const runtime = makeRuntime({
+      replyPayload: { text: "tool output" },
+      replyInfo: { kind: "tool" },
     });
 
     const log = makeLogger();
@@ -245,8 +302,6 @@ describe("startAgentClubMonitor", () => {
     triggerSocketEvent("new_message", makeInboundMsg());
     await new Promise((r) => setTimeout(r, 150));
 
-    expect(runtime.agent.runEmbeddedAgent).toHaveBeenCalled();
-
     const sendCalls = mockSocket.emit.mock.calls.filter(
       (c: unknown[]) => c[0] === "send_message",
     );
@@ -256,9 +311,8 @@ describe("startAgentClubMonitor", () => {
     await monitorPromise;
   });
 
-  it("handles runEmbeddedAgent errors gracefully", async () => {
-    const runtime = makeRuntime();
-    runtime.agent.runEmbeddedAgent.mockRejectedValue(new Error("Provider error"));
+  it("handles dispatch errors gracefully", async () => {
+    const runtime = makeRuntime({ dispatchError: new Error("Provider error") });
 
     const log = makeLogger();
 
@@ -307,8 +361,8 @@ describe("startAgentClubMonitor", () => {
     ]);
     await new Promise((r) => setTimeout(r, 150));
 
-    expect(runtime.agent.runEmbeddedAgent).toHaveBeenCalledWith(
-      expect.objectContaining({ prompt: "Offline message" }),
+    expect(runtime.channel.reply.finalizeInboundContext).toHaveBeenCalledWith(
+      expect.objectContaining({ Body: "Offline message" }),
     );
 
     abortController.abort();

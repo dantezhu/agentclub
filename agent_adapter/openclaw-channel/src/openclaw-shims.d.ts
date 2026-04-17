@@ -19,6 +19,31 @@ declare module "openclaw/plugin-sdk/channel-core" {
     error: (...args: unknown[]) => void;
   }
 
+  /**
+   * Minimal type for the route returned by
+   * `runtime.channel.routing.resolveAgentRoute`. The real value carries more
+   * fields than we consume, but `sessionKey` + `accountId` + `agentId` are
+   * the stable ones we rely on here.
+   */
+  export interface AgentRoute {
+    sessionKey: string;
+    accountId: string;
+    agentId: string;
+    [key: string]: unknown;
+  }
+
+  /**
+   * Shape passed to the buffered dispatcher's `deliver` callback whenever
+   * the agent emits a user-facing chunk (final reply, tool event, media,
+   * etc.). We only need text + optional media URL(s) for outbound handling.
+   */
+  export interface ReplyPayload {
+    text?: string;
+    mediaUrl?: string;
+    mediaUrls?: string[];
+    [key: string]: unknown;
+  }
+
   export interface PluginRuntime {
     agent: {
       resolveAgentDir: (cfg: OpenClawConfig) => string;
@@ -43,6 +68,43 @@ declare module "openclaw/plugin-sdk/channel-core" {
       }) => Promise<unknown>;
       session: {
         resolveStorePath: (cfg: OpenClawConfig) => string;
+      };
+    };
+    /**
+     * Channel-facing APIs. This is the canonical path for a channel plugin
+     * to invoke the agent: `channel.reply.dispatchReplyWithBufferedBlockDispatcher`
+     * runs the configured primary model AND applies auto media routing (e.g.
+     * routes image understanding to MiniMax-VL-01 via the image tool),
+     * which the lower-level `runtime.agent.runEmbeddedAgent` escape hatch
+     * does NOT do.
+     */
+    channel: {
+      routing: {
+        resolveAgentRoute: (params: {
+          cfg: OpenClawConfig;
+          channel: string;
+          accountId: string;
+          peer: { kind: "direct" | "group"; id: string };
+        }) => AgentRoute;
+      };
+      reply: {
+        finalizeInboundContext: (params: Record<string, unknown>) => unknown;
+        dispatchReplyWithBufferedBlockDispatcher: (params: {
+          ctx: unknown;
+          cfg: OpenClawConfig;
+          dispatcherOptions: {
+            deliver: (
+              payload: ReplyPayload,
+              info: { kind?: string; [key: string]: unknown },
+            ) => void | Promise<void>;
+            onSkip?: (
+              payload: ReplyPayload,
+              info: { reason?: string; [key: string]: unknown },
+            ) => void;
+            onError?: (err: unknown, info: { kind?: string }) => void;
+          };
+          replyOptions?: Record<string, unknown>;
+        }) => Promise<unknown>;
       };
     };
     config: {
