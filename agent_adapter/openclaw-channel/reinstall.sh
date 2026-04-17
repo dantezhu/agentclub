@@ -1,7 +1,5 @@
 #!/usr/bin/env sh
 
-cp ~/.openclaw/openclaw.json ~/.openclaw/openclaw.json.bk -f
-
 openclaw plugins uninstall agent-club --force
 rm /root/.openclaw/extensions/agent-club -rf
 
