@@ -38,7 +38,7 @@ openclaw plugins install ./
       "serverUrl": "https://your-im-server:5555",
       "agentToken": "从 IM 管理后台获取的 agent token",
       "requireMention": true,
-      "allowFrom": []
+      "allowFrom": ["*"]
     }
   }
 }
