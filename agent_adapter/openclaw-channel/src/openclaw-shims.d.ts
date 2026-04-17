@@ -26,11 +26,20 @@ declare module "openclaw/plugin-sdk/channel-core" {
       resolveAgentTimeoutMs: (cfg: OpenClawConfig) => number;
       runEmbeddedAgent: (params: {
         sessionId: string;
+        sessionKey?: string;
+        agentId?: string;
+        agentDir?: string;
+        config?: OpenClawConfig;
+        messageChannel?: string;
+        messageProvider?: string;
+        provider?: string;
+        model?: string;
         runId: string;
         sessionFile: string;
         workspaceDir: string;
         prompt: string;
         timeoutMs: number;
+        [key: string]: unknown;
       }) => Promise<unknown>;
       session: {
         resolveStorePath: (cfg: OpenClawConfig) => string;

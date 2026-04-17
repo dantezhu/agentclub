@@ -6,6 +6,58 @@ import { AgentClubClient } from "./client.js";
 import { createInboundGateway, type InboundMessage } from "./gateway.js";
 import { setActiveClient, getRuntime } from "./runtime.js";
 
+const DEFAULT_AGENT_ID = "main";
+
+/**
+ * Resolve provider/model from the user's openclaw config.
+ *
+ * Honors `agents.<agentId>.model.primary` first, then falls back to
+ * `agents.defaults.model.primary`. Accepts both "provider/model" strings
+ * and aliases declared under `agents.defaults.models.<key>.alias`.
+ *
+ * Returns undefined when nothing is configured, so callers can decide
+ * whether to let core fall back to its own hardcoded defaults.
+ */
+function resolvePrimaryModel(
+  cfg: OpenClawConfig,
+  agentId: string,
+): { provider: string; model: string } | undefined {
+  const anyCfg = cfg as any;
+  const agentsCfg = anyCfg?.agents ?? {};
+  const perAgent = agentsCfg?.[agentId]?.model?.primary;
+  const fromDefaults = agentsCfg?.defaults?.model?.primary;
+  const raw = typeof perAgent === "string" && perAgent.trim()
+    ? perAgent.trim()
+    : typeof fromDefaults === "string" && fromDefaults.trim()
+      ? fromDefaults.trim()
+      : "";
+  if (!raw) return undefined;
+
+  // Alias lookup (e.g. "Minimax" -> "minimax/MiniMax-M2.7")
+  if (!raw.includes("/")) {
+    const models = agentsCfg?.defaults?.models;
+    if (models && typeof models === "object") {
+      for (const [key, entry] of Object.entries(models as Record<string, any>)) {
+        const alias = typeof entry?.alias === "string" ? entry.alias.trim() : "";
+        if (alias.toLowerCase() === raw.toLowerCase() && typeof key === "string" && key.includes("/")) {
+          const slash = key.indexOf("/");
+          return {
+            provider: key.slice(0, slash).trim(),
+            model: key.slice(slash + 1).trim(),
+          };
+        }
+      }
+    }
+    return undefined;
+  }
+
+  const slash = raw.indexOf("/");
+  const provider = raw.slice(0, slash).trim();
+  const model = raw.slice(slash + 1).trim();
+  if (!provider || !model) return undefined;
+  return { provider, model };
+}
+
 export interface MonitorContext {
   account: ResolvedAccount;
   cfg: OpenClawConfig;
@@ -100,16 +152,34 @@ async function processInbound(
   const timeoutMs = runtime.agent.resolveAgentTimeoutMs(cfg);
 
   const safeSessionId = msg.sessionKey.replace(/[^a-zA-Z0-9_-]/g, "_");
+  const agentId = DEFAULT_AGENT_ID;
+  const primary = resolvePrimaryModel(cfg, agentId);
+
+  if (!primary) {
+    log.warn(
+      `[agent-club] No primary model configured in agents.defaults.model.primary; embedded run will fall back to built-in defaults`,
+    );
+  } else {
+    log.debug?.(
+      `[agent-club] Using primary model ${primary.provider}/${primary.model} for ${msg.sessionKey}`,
+    );
+  }
 
   try {
     const raw = await runtime.agent.runEmbeddedAgent({
       sessionId: msg.sessionKey,
+      sessionKey: `agent:${agentId}:${msg.sessionKey}`,
+      agentId,
+      agentDir,
+      config: cfg,
+      messageChannel: "agent-club",
       runId: crypto.randomUUID(),
       sessionFile: path.join(agentDir, "sessions", `${safeSessionId}.jsonl`),
       workspaceDir,
       prompt: msg.text,
       timeoutMs,
-    });
+      ...(primary ? { provider: primary.provider, model: primary.model } : {}),
+    } as Parameters<typeof runtime.agent.runEmbeddedAgent>[0]);
 
     const result = raw as EmbeddedRunResult | undefined;
 
