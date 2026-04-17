@@ -10,6 +10,32 @@ import { setActiveClient, getRuntime } from "./runtime.js";
 const DEFAULT_AGENT_ID = "main";
 
 /**
+ * OpenClaw's plugin logger appears to treat only the first argument as the
+ * log message (additional args are silently dropped or interpreted as
+ * structured metadata). It also already prefixes each line with the plugin
+ * namespace (e.g. `[agent-club]`), so we must NOT add our own prefix or pass
+ * multiple positional args — otherwise the visible message collapses to just
+ * the namespace tag with an empty body.
+ *
+ * This helper normalizes any (...args) call to a single joined string so
+ * downstream subcomponents (Socket.IO client, gateway, etc.) can keep using
+ * console-style variadic logging without losing data.
+ */
+function formatLogArg(arg: unknown): string {
+  if (arg instanceof Error) return arg.stack || `${arg.name}: ${arg.message}`;
+  if (typeof arg === "string") return arg;
+  try {
+    return JSON.stringify(arg);
+  } catch {
+    return String(arg);
+  }
+}
+
+function joinArgs(args: unknown[]): string {
+  return args.map(formatLogArg).join(" ");
+}
+
+/**
  * Resolve provider/model from the user's openclaw config.
  *
  * Honors `agents.<agentId>.model.primary` first, then falls back to
@@ -95,9 +121,9 @@ export async function startAgentClubMonitor(ctx: MonitorContext): Promise<void> 
       }
     },
     logger: {
-      info: (...args: unknown[]) => log.info("[agent-club]", ...args),
-      warn: (...args: unknown[]) => log.warn("[agent-club]", ...args),
-      error: (...args: unknown[]) => log.error("[agent-club]", ...args),
+      info: (...args: unknown[]) => log.info(joinArgs(args)),
+      warn: (...args: unknown[]) => log.warn(joinArgs(args)),
+      error: (...args: unknown[]) => log.error(joinArgs(args)),
     },
   });
 
@@ -105,7 +131,7 @@ export async function startAgentClubMonitor(ctx: MonitorContext): Promise<void> 
   setActiveClient(client);
 
   log.info(
-    `[agent-club] Connected as ${authResult.display_name} (${authResult.user_id})`,
+    `Connected as ${authResult.display_name} (${authResult.user_id})`,
   );
 
   gateway = createInboundGateway({
@@ -114,8 +140,8 @@ export async function startAgentClubMonitor(ctx: MonitorContext): Promise<void> 
     onInbound: (msg) => processInbound(msg, client, cfg, log, account),
     onAck: (id) => client.markRead(id),
     logger: {
-      info: (...args: unknown[]) => log.info(...args),
-      warn: (...args: unknown[]) => log.warn(...args),
+      info: (...args: unknown[]) => log.info(joinArgs(args)),
+      warn: (...args: unknown[]) => log.warn(joinArgs(args)),
     },
   });
 
@@ -126,7 +152,7 @@ export async function startAgentClubMonitor(ctx: MonitorContext): Promise<void> 
     const cleanup = () => {
       client.disconnect();
       setActiveClient(null);
-      log.info("[agent-club] Monitor stopped");
+      log.info("Monitor stopped");
       resolve();
     };
 
@@ -179,7 +205,7 @@ async function downloadAttachmentToWorkspace(params: {
   try {
     const res = await fetch(absoluteUrl);
     if (!res.ok) {
-      log.warn(`[agent-club] Failed to download attachment ${absoluteUrl}: HTTP ${res.status}`);
+      log.warn(`Failed to download attachment ${absoluteUrl}: HTTP ${res.status}`);
       return null;
     }
     const buf = Buffer.from(await res.arrayBuffer());
@@ -195,10 +221,10 @@ async function downloadAttachmentToWorkspace(params: {
 
     const filePath = path.join(workspaceDir, finalName);
     await fs.writeFile(filePath, buf);
-    log.info(`[agent-club] Saved inbound attachment to ${filePath} (${buf.length} bytes)`);
+    log.info(`Saved inbound attachment to ${filePath} (${buf.length} bytes)`);
     return { filePath, fileName: finalName };
   } catch (err) {
-    log.error(`[agent-club] Attachment download failed (${absoluteUrl}):`, err);
+    log.error(`Attachment download failed (${absoluteUrl}): ${formatLogArg(err)}`);
     return null;
   }
 }
@@ -240,11 +266,11 @@ async function processInbound(
 
   if (!primary) {
     log.warn(
-      `[agent-club] No primary model configured in agents.defaults.model.primary; embedded run will fall back to built-in defaults`,
+      `No primary model configured in agents.defaults.model.primary; embedded run will fall back to built-in defaults`,
     );
   } else {
     log.debug?.(
-      `[agent-club] Using primary model ${primary.provider}/${primary.model} for ${msg.sessionKey}`,
+      `Using primary model ${primary.provider}/${primary.model} for ${msg.sessionKey}`,
     );
   }
 
@@ -268,7 +294,7 @@ async function processInbound(
 
     if (result?.didSendViaMessagingTool) {
       log.info(
-        `[agent-club] Agent reply dispatched via messaging tool for ${msg.sessionKey}`,
+        `Agent reply dispatched via messaging tool for ${msg.sessionKey}`,
       );
       return;
     }
@@ -276,7 +302,7 @@ async function processInbound(
     if (result?.payloads?.length) {
       for (const payload of result.payloads) {
         if (payload.isError) {
-          log.warn(`[agent-club] Agent returned error payload: ${payload.text}`);
+          log.warn(`Agent returned error payload: ${payload.text}`);
         }
 
         if (payload.text) {
@@ -301,8 +327,8 @@ async function processInbound(
       return;
     }
 
-    log.warn(`[agent-club] Agent produced no payloads for ${msg.sessionKey}`);
+    log.warn(`Agent produced no payloads for ${msg.sessionKey}`);
   } catch (err) {
-    log.error("[agent-club] Agent run failed:", err);
+    log.error(`Agent run failed: ${formatLogArg(err)}`);
   }
 }
