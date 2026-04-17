@@ -306,6 +306,44 @@ class TestSocketIO:
         admin_sio.disconnect()
         agent_sio.disconnect()
 
+    def test_agent_receives_group_message_when_added_after_connect(self, admin_client):
+        """Regression: an agent connected before being added to a group used
+        to silently miss every subsequent broadcast because it was never
+        placed into the ``group_{id}`` Socket.IO room. Group broadcast now
+        fans out off ``group_members``, not room membership, so the order
+        of connect vs. add-to-group no longer matters."""
+        gres = admin_client.post("/api/groups", json={"name": "LateJoin"})
+        gid = gres.get_json()["id"]
+        ares = admin_client.post("/api/agents", json={"username": "latebot"})
+        agent = ares.get_json()
+
+        # Agent connects FIRST, while it is not yet a group member.
+        agent_sio = socketio.test_client(app, auth={"agent_token": agent["agent_token"]})
+        agent_sio.get_received()  # clear connect-time events
+
+        # Then the agent gets added to the group. In production this used to
+        # route through the HTTP endpoint's best-effort ``enter_room`` which
+        # didn't reliably land for already-connected agents.
+        admin_client.post(f"/api/groups/{gid}/members", json={"user_id": agent["id"]})
+        agent_sio.get_received()  # drop any chat_list_updated noise
+
+        # Admin sends a message into the group.
+        admin_sio = socketio.test_client(app, flask_test_client=admin_client)
+        admin_sio.emit("send_message", {
+            "chat_type": "group",
+            "chat_id": gid,
+            "content": "hello bot",
+            "content_type": "text",
+        })
+
+        received = agent_sio.get_received()
+        msg_events = [r for r in received if r["name"] == "new_message"]
+        assert len(msg_events) == 1, f"agent did not receive group message; got {received!r}"
+        assert msg_events[0]["args"][0]["content"] == "hello bot"
+
+        agent_sio.disconnect()
+        admin_sio.disconnect()
+
     def test_typing_indicator(self, admin_client):
         gres = admin_client.post("/api/groups", json={"name": "G1"})
         gid = gres.get_json()["id"]

@@ -118,9 +118,25 @@ def register_events(socketio):
         # counts may have changed (they might be viewing another chat and
         # want to see the badge update).
         if chat_type == "group":
-            socketio.emit("new_message", msg, room=f"group_{chat_id}")
+            # Broadcast directly to each member's sids rather than via the
+            # ``group_{id}`` Socket.IO room. The room is populated by
+            # ``_register_connection`` at connect time and best-effort
+            # ``enter_room`` calls from ``routes.add_member``; the latter
+            # has proven unreliable for already-connected agent sockets
+            # (sid staleness / namespace timing), so members added after
+            # the bot connected wouldn't receive messages until the bot
+            # reconnected. Driving the fan-out off the ``group_members``
+            # table makes the source of truth the DB, not the in-memory
+            # room registry — agents and humans alike now always receive
+            # every message they're entitled to.
             members = models.get_group_members(chat_id)
             for m in members:
+                # Sender's own tabs are included here so the web UI's
+                # optimistic-less render pipeline (which draws every
+                # message, including one's own, off the server echo)
+                # keeps working.
+                for sid in user_sids.get(m["id"], set()):
+                    socketio.emit("new_message", msg, to=sid)
                 if m["id"] == user_id:
                     continue
                 viewing = any(
