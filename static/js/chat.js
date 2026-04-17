@@ -159,6 +159,8 @@ function renderChatList() {
 /* ── Open Chat ── */
 async function openChat(type, id, name) {
     currentChat = { type, id, name };
+    invalidateMentionMembers();
+    hideMentionPicker();
     document.getElementById('emptyState').classList.add('hidden');
     document.getElementById('chatContainer').classList.remove('hidden');
     document.getElementById('membersPanel').classList.add('hidden');
@@ -317,13 +319,44 @@ function renderContent(msg) {
 }
 
 function renderMarkdown(text) {
-    // Process @mentions
-    text = text.replace(/@(\S+)/g, '<span class="mention-tag">@$1</span>');
+    // Pull out `<at user_id="...">name</at>` tokens BEFORE Markdown parsing
+    // (otherwise `marked` would try to interpret them as unknown HTML and
+    // either drop them or escape them inconsistently). We replace each
+    // match with a placeholder sentinel, parse Markdown, then splice the
+    // styled mention pill back in via plain string replacement. Placeholders
+    // are short random tokens so Markdown never rewrites them.
+    const pills = [];
+    const prepared = String(text || '').replace(
+        /<at user_id="([^"]+)">([^<]*)<\/at>/g,
+        (_, uid, rawName) => {
+            const cls = uid === currentUser.id || uid === 'all'
+                ? 'mention-tag mention-self'
+                : 'mention-tag';
+            // serializeInput XML-escapes `< > &` inside the name so malicious
+            // display names can't forge a tag; reverse that here before
+            // running through escHtml so the pill text renders correctly.
+            const decoded = rawName
+                .replace(/&lt;/g, '<')
+                .replace(/&gt;/g, '>')
+                .replace(/&amp;/g, '&');
+            const labelName = (decoded && decoded.trim()) || (uid === 'all' ? '所有人' : uid);
+            const label = uid === 'all' ? '所有人' : labelName;
+            const pill = `<span class="${cls}" data-user-id="${escHtml(uid)}">@${escHtml(label)}</span>`;
+            // Use Unicode Private-Use-Area delimiters so marked's parser
+            // doesn't touch them (NUL and ASCII punctuation both risk being
+            // rewritten, escaped, or interpreted as emphasis markers).
+            const token = `\uE000MENTION${pills.length}\uE001`;
+            pills.push(pill);
+            return token;
+        },
+    );
+    let html;
     try {
-        return marked.parse(text);
+        html = marked.parse(prepared);
     } catch {
-        return escHtml(text);
+        html = escHtml(prepared);
     }
+    return html.replace(/\uE000MENTION(\d+)\uE001/g, (_, i) => pills[Number(i)] || '');
 }
 
 function renderAudioPlayer(url, name) {
@@ -381,9 +414,72 @@ function seekAudio(event, id) {
 }
 
 /* ── Send Message ── */
+
+/**
+ * Serialize the contenteditable input to the wire format:
+ *   - plain text nodes → literal text
+ *   - <span class="mention-tag" data-user-id="..."> → <at user_id="...">name</at>
+ *   - <br> / block boundaries → \n
+ *
+ * The returned `content` preserves the exact `<at user_id="...">name</at>`
+ * token used by the agent-club/feishu mention protocol, and `mentions` is
+ * the dedup'd array of user_ids (uuid or the literal "all") we saw.
+ */
+function serializeInput(root) {
+    const mentions = [];
+    const seen = new Set();
+    let out = '';
+
+    const walk = (node) => {
+        if (node.nodeType === Node.TEXT_NODE) {
+            out += node.nodeValue;
+            return;
+        }
+        if (node.nodeType !== Node.ELEMENT_NODE) return;
+
+        const tag = node.tagName;
+        if (tag === 'BR') {
+            out += '\n';
+            return;
+        }
+        if (node.classList && node.classList.contains('mention-tag')) {
+            const uid = node.dataset.userId || '';
+            const rawName = (node.textContent || '').replace(/^@/, '') || uid;
+            // Escape `<`, `>`, `&` so a user whose display name contains
+            // these characters can't forge a malformed `<at>` tag. `"` is
+            // safe here because it only appears inside attribute values,
+            // and user_id is backend-controlled (uuid or "all").
+            const name = rawName
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+            if (uid) {
+                out += `<at user_id="${uid}">${name}</at>`;
+                if (!seen.has(uid)) {
+                    seen.add(uid);
+                    mentions.push(uid);
+                }
+            } else {
+                out += node.textContent || '';
+            }
+            return;
+        }
+
+        // Prepend a newline before each non-first block-level child so that
+        // multi-paragraph pastes round-trip through send/render.
+        const isBlock = tag === 'DIV' || tag === 'P';
+        if (isBlock && out.length && !out.endsWith('\n')) {
+            out += '\n';
+        }
+        for (const child of node.childNodes) walk(child);
+    };
+
+    for (const child of root.childNodes) walk(child);
+    return { text: out.replace(/\n+$/, ''), mentions };
+}
+
 function sendMessage() {
     const input = document.getElementById('messageInput');
-    const text = input.value.trim();
     if (!currentChat) return;
 
     // Send pending images first
@@ -391,26 +487,18 @@ function sendMessage() {
         sendPendingImages();
     }
 
-    if (!text) return;
-
-    // Parse @mentions from text
-    const mentions = [];
-    const mentionRegex = /@(\S+)/g;
-    let match;
-    while ((match = mentionRegex.exec(text)) !== null) {
-        mentions.push(match[1]);
-    }
+    const { text, mentions } = serializeInput(input);
+    if (!text.trim()) return;
 
     socket.emit('send_message', {
         chat_type: currentChat.type,
         chat_id: currentChat.id,
         content: text,
         content_type: 'text',
-        mentions: mentions,
+        mentions,
     });
 
-    input.value = '';
-    input.style.height = '42px';
+    input.innerHTML = '';
 }
 
 async function handleFileSelect(event) {
@@ -535,45 +623,95 @@ function closeLightbox(event) {
 }
 
 /* ── Input handlers ── */
+
+// Explicit composition tracking. The native `KeyboardEvent.isComposing` flag
+// is unreliable in contenteditable divs — particularly right after inserting
+// a `contenteditable=false` pill, Chromium can report `false` on the Enter
+// that commits the first IME candidate, which would wrongly fire send()
+// and/or collapse the composition back to English. Tracking our own flag
+// via `compositionstart` / `compositionend` events is the standard fix.
+let imeComposing = false;
+
 function setupInputHandlers() {
     const input = document.getElementById('messageInput');
 
+    input.addEventListener('compositionstart', () => { imeComposing = true; });
+    input.addEventListener('compositionend', () => {
+        // Defer reset so a keydown fired on the same tick (the Enter/Space
+        // that committed the candidate) still sees `imeComposing=true`.
+        setTimeout(() => { imeComposing = false; }, 0);
+    });
+
     input.addEventListener('keydown', (e) => {
-        // Ignore Enter while an IME composition is active (e.g. selecting a
-        // Chinese/English candidate via Enter). Chromium reports keyCode 229
-        // during composition even when isComposing is momentarily false.
-        if (e.isComposing || e.keyCode === 229) return;
+        // IME composition wins before anything else: Enter pressed while an
+        // IME candidate is being selected confirms the candidate — it must
+        // not trigger sendMessage() or pick a mention. We check three
+        // signals because each browser/IME combination is flaky in its own
+        // way: `imeComposing` (our own tracker), `e.isComposing` (native),
+        // and `keyCode === 229` (Chromium's sentinel).
+        if (imeComposing || e.isComposing || e.keyCode === 229) return;
+
+        // Mention picker gets next crack — its arrow / enter / escape
+        // handling only fires while it's visible.
+        if (mentionPickerState.open && handleMentionPickerKey(e)) return;
+
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
             sendMessage();
         }
     });
 
-    // Auto-resize textarea
     input.addEventListener('input', () => {
-        input.style.height = '42px';
-        input.style.height = Math.min(input.scrollHeight, 120) + 'px';
-
-        // Typing indicator
+        maybeShowMentionPicker(input);
         if (currentChat) {
             socket.emit('typing', { chat_type: currentChat.type, chat_id: currentChat.id });
         }
     });
 
-    // Paste image from clipboard
+    // Caret-move keys can drop us out of the `@query` region, so re-check
+    // the picker state on keyup. BUT: while the picker is open and we just
+    // handled ArrowUp/Down inside the picker (to move the highlighted item),
+    // we must NOT call `maybeShowMentionPicker` — it would immediately reset
+    // `activeIdx` back to 0 and cancel the navigation.
+    input.addEventListener('keyup', (e) => {
+        if (mentionPickerState.open && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+            return;
+        }
+        if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) {
+            maybeShowMentionPicker(input);
+        }
+    });
+    input.addEventListener('click', () => maybeShowMentionPicker(input));
+    input.addEventListener('blur', () => {
+        // Delay so a click on a picker item can still register.
+        setTimeout(hideMentionPicker, 120);
+    });
+
+    // Strip rich formatting from pastes — we only want plain text and our
+    // own mention pills. Browser-native paste into a contenteditable would
+    // otherwise bring in fonts/colors/tables from the source page.
     input.addEventListener('paste', (e) => {
+        // Image-paste path: unchanged.
         const items = e.clipboardData?.items;
-        if (!items) return;
-        const imageFiles = [];
-        for (const item of items) {
-            if (item.type.startsWith('image/')) {
-                const file = item.getAsFile();
-                if (file) imageFiles.push(file);
+        if (items) {
+            const imageFiles = [];
+            for (const item of items) {
+                if (item.type.startsWith('image/')) {
+                    const file = item.getAsFile();
+                    if (file) imageFiles.push(file);
+                }
+            }
+            if (imageFiles.length) {
+                e.preventDefault();
+                addImagesToPending(imageFiles);
+                return;
             }
         }
-        if (imageFiles.length) {
+        // Text paste: force plaintext.
+        const txt = e.clipboardData?.getData('text/plain');
+        if (txt != null) {
             e.preventDefault();
-            addImagesToPending(imageFiles);
+            insertPlainTextAtCaret(txt);
         }
     });
 
@@ -631,6 +769,256 @@ function setupInputHandlers() {
             menu.classList.add('hidden');
         }
     });
+}
+
+/* ── Mention picker ──
+ *
+ * Triggered when the caret is immediately to the right of an `@` that begins
+ * a new word (start-of-line or after whitespace). We track the `@` position
+ * in `mentionPickerState.triggerRange` so that committing a pick can splice
+ * the placeholder text (`@que`) out and replace it with a styled pill.
+ *
+ * Only groups fetch a member list — direct chats get no picker because `@`
+ * has no disambiguation value when there's exactly one peer.
+ */
+const mentionPickerState = {
+    open: false,
+    items: [],           // [{id, label, is_agent, is_all}]
+    filtered: [],
+    activeIdx: 0,
+    triggerRange: null,  // Range covering the `@` char that opened the picker
+    query: '',
+    groupId: null,
+    members: null,       // Cached members roster for current group
+};
+
+async function loadMentionMembers(groupId) {
+    if (mentionPickerState.members && mentionPickerState.groupId === groupId) {
+        return mentionPickerState.members;
+    }
+    try {
+        const res = await fetch(`/api/groups/${groupId}/members`);
+        if (!res.ok) return [];
+        const members = await res.json();
+        mentionPickerState.groupId = groupId;
+        mentionPickerState.members = members;
+        return members;
+    } catch { return []; }
+}
+
+/** Invalidate the cached roster when the group or its membership changes. */
+function invalidateMentionMembers() {
+    mentionPickerState.members = null;
+    mentionPickerState.groupId = null;
+}
+
+/**
+ * Inspect the caret position and, if it sits in an unfinished `@query`
+ * token, show the picker filtered by `query`. Otherwise hide it.
+ *
+ * The `@` qualifies as a trigger only when preceded by whitespace or
+ * start-of-line so that mid-word `@` (emails, handles pasted as plain
+ * text) doesn't erroneously open the picker.
+ */
+async function maybeShowMentionPicker(input) {
+    if (!currentChat || currentChat.type !== 'group') {
+        hideMentionPicker();
+        return;
+    }
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) {
+        hideMentionPicker();
+        return;
+    }
+    const range = sel.getRangeAt(0);
+    if (!input.contains(range.startContainer)) {
+        hideMentionPicker();
+        return;
+    }
+    const node = range.startContainer;
+    if (node.nodeType !== Node.TEXT_NODE) {
+        hideMentionPicker();
+        return;
+    }
+    const offset = range.startOffset;
+    const before = node.nodeValue.slice(0, offset);
+    // Match `@query` where `@` is at start-of-text or preceded by whitespace,
+    // and `query` contains no whitespace. Query may be empty (just typed `@`).
+    const m = before.match(/(^|\s)@([^\s@]*)$/);
+    if (!m) {
+        hideMentionPicker();
+        return;
+    }
+
+    const query = m[2];
+    // Index of the `@` character in the text node.
+    const atOffset = offset - query.length - 1;
+    const atRange = document.createRange();
+    atRange.setStart(node, atOffset);
+    atRange.setEnd(node, offset);
+
+    const members = await loadMentionMembers(currentChat.id);
+    const items = [
+        { id: 'all', label: '所有人', is_agent: false, is_all: true },
+        ...members
+            .filter((u) => u.id !== currentUser.id)
+            .map((u) => ({ id: u.id, label: u.display_name, is_agent: !!u.is_agent, is_all: false })),
+    ];
+    const q = query.toLowerCase();
+    const filtered = q
+        ? items.filter((it) => it.label.toLowerCase().includes(q))
+        : items;
+
+    if (!filtered.length) {
+        hideMentionPicker();
+        return;
+    }
+
+    mentionPickerState.open = true;
+    mentionPickerState.items = items;
+    mentionPickerState.filtered = filtered;
+    mentionPickerState.activeIdx = 0;
+    mentionPickerState.triggerRange = atRange;
+    mentionPickerState.query = query;
+    renderMentionPicker();
+    positionMentionPicker(atRange);
+}
+
+function renderMentionPicker() {
+    const el = document.getElementById('mentionPicker');
+    const { filtered, activeIdx } = mentionPickerState;
+    el.innerHTML = filtered.map((it, i) => {
+        const avatarClass = it.is_all
+            ? 'mention-picker-avatar all'
+            : it.is_agent ? 'mention-picker-avatar agent' : 'mention-picker-avatar';
+        const avatar = it.is_all ? '@' : escHtml(it.label.charAt(0));
+        const tag = it.is_agent ? '<span class="member-tag agent">Agent</span>' : '';
+        return `<div class="mention-picker-item ${i === activeIdx ? 'active' : ''}"
+                     data-idx="${i}"
+                     onmousedown="selectMentionPickerItem(${i}); return false;">
+            <div class="${avatarClass}">${avatar}</div>
+            <span class="mention-picker-name">${escHtml(it.label)}</span>
+            ${tag}
+        </div>`;
+    }).join('');
+    el.classList.remove('hidden');
+}
+
+function positionMentionPicker(range) {
+    const el = document.getElementById('mentionPicker');
+    const rect = range.getBoundingClientRect();
+    const inputArea = document.getElementById('inputArea');
+    const areaRect = inputArea.getBoundingClientRect();
+    // Anchor the picker above the caret, clamped to the input-area's width.
+    const maxW = 280;
+    let left = rect.left - areaRect.left;
+    left = Math.max(8, Math.min(left, areaRect.width - maxW - 8));
+    el.style.left = left + 'px';
+    // Put it *above* the input row since there's no space below it.
+    el.style.bottom = (window.innerHeight - rect.top + 4) + 'px';
+    el.style.top = 'auto';
+}
+
+function hideMentionPicker() {
+    mentionPickerState.open = false;
+    mentionPickerState.triggerRange = null;
+    const el = document.getElementById('mentionPicker');
+    if (el) el.classList.add('hidden');
+}
+
+function handleMentionPickerKey(e) {
+    const { filtered } = mentionPickerState;
+    if (!filtered.length) return false;
+    if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        mentionPickerState.activeIdx = (mentionPickerState.activeIdx + 1) % filtered.length;
+        renderMentionPicker();
+        return true;
+    }
+    if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        mentionPickerState.activeIdx = (mentionPickerState.activeIdx - 1 + filtered.length) % filtered.length;
+        renderMentionPicker();
+        return true;
+    }
+    if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault();
+        selectMentionPickerItem(mentionPickerState.activeIdx);
+        return true;
+    }
+    if (e.key === 'Escape') {
+        e.preventDefault();
+        hideMentionPicker();
+        return true;
+    }
+    return false;
+}
+
+/**
+ * Replace the `@query` placeholder text with a styled mention pill, then
+ * move the caret to just after the pill (with a single trailing space so
+ * the user doesn't have to manually break out of the pill's inline style).
+ */
+function selectMentionPickerItem(idx) {
+    const item = mentionPickerState.filtered[idx];
+    const range = mentionPickerState.triggerRange;
+    if (!item || !range) {
+        hideMentionPicker();
+        return;
+    }
+    const input = document.getElementById('messageInput');
+    input.focus();
+
+    range.deleteContents();
+
+    const pill = document.createElement('span');
+    pill.className = 'mention-tag';
+    pill.dataset.userId = item.id;
+    pill.contentEditable = 'false';
+    pill.textContent = '@' + item.label;
+
+    const space = document.createTextNode('\u00a0');
+
+    // Insert pill + trailing space as a single fragment so `insertNode` only
+    // runs once — avoids the ambiguity of how Range.start moves after each
+    // insertion. After insert, position the caret AFTER the space so
+    // continued typing doesn't extend the pill.
+    const frag = document.createDocumentFragment();
+    frag.appendChild(pill);
+    frag.appendChild(space);
+    range.insertNode(frag);
+
+    const newRange = document.createRange();
+    newRange.setStartAfter(space);
+    newRange.collapse(true);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(newRange);
+
+    hideMentionPicker();
+}
+
+/**
+ * Insert a plain-text string at the current caret position (used by the
+ * paste handler). Multi-line text is broken on `\n` boundaries with `<br>`
+ * elements so the rendered layout matches the pasted shape.
+ */
+function insertPlainTextAtCaret(text) {
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return;
+    const range = sel.getRangeAt(0);
+    range.deleteContents();
+
+    const frag = document.createDocumentFragment();
+    const lines = text.split('\n');
+    lines.forEach((line, i) => {
+        if (i > 0) frag.appendChild(document.createElement('br'));
+        if (line) frag.appendChild(document.createTextNode(line));
+    });
+    range.insertNode(frag);
+    range.collapse(false);
+    sel.removeAllRanges();
+    sel.addRange(range);
 }
 
 function hasImageFiles(e) {
@@ -729,6 +1117,7 @@ async function removeMember(groupId, userId) {
     if (!confirm('确定要移除该成员吗？')) return;
     const res = await fetch(`/api/groups/${groupId}/members/${userId}`, { method: 'DELETE' });
     if (res.ok) {
+        invalidateMentionMembers();
         await renderMembersPanel();
     } else {
         const data = await res.json();
@@ -785,6 +1174,7 @@ async function addMember(groupId, userId, btn) {
 
         // Refresh both the right-hand members panel and the sidebar preview
         // (new member may change badge counts / last-message previews).
+        invalidateMentionMembers();
         await Promise.all([renderMembersPanel(), loadChats()]);
     } catch (e) {
         btn.disabled = false;
@@ -1007,7 +1397,22 @@ function formatTime(ts) {
 function previewText(msg) {
     if (!msg) return '';
     const typeMap = { image: '[图片]', audio: '[语音]', video: '[视频]', file: '[文件]' };
-    const text = typeMap[msg.content_type] || (msg.content || '').replace(/\n/g, ' ').slice(0, 30);
+    let text = typeMap[msg.content_type];
+    if (!text) {
+        // Collapse `<at user_id="uid">name</at>` → `@name` for the sidebar
+        // preview so mentions don't render as raw XML next to the chat name.
+        const raw = (msg.content || '').replace(
+            /<at user_id="(?:[^"]+)">([^<]*)<\/at>/g,
+            (_, name) => {
+                const decoded = name
+                    .replace(/&lt;/g, '<')
+                    .replace(/&gt;/g, '>')
+                    .replace(/&amp;/g, '&');
+                return `@${decoded || '所有人'}`;
+            },
+        );
+        text = raw.replace(/\n/g, ' ').slice(0, 30);
+    }
     return msg.sender_name ? `${msg.sender_name}: ${text}` : text;
 }
 

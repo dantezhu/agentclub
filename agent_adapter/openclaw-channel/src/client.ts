@@ -145,6 +145,44 @@ export class AgentClubClient {
     this.socket.emit("mark_read", { message_ids: ids });
   }
 
+  /**
+   * Fetch the member roster for a group chat (token-authenticated mirror of
+   * the web endpoint). Used by the channel to resolve display-name ↔ user-id
+   * pairs for the @mention protocol. Returns empty list on any failure so
+   * callers can degrade gracefully (no mention autocomplete is strictly
+   * better than a crash).
+   */
+  async listGroupMembers(groupId: string): Promise<
+    Array<{
+      id: string;
+      display_name: string;
+      is_agent: boolean;
+      role: string;
+    }>
+  > {
+    try {
+      const resp = await fetch(
+        `${this.serverUrl}/api/agent/groups/${encodeURIComponent(groupId)}/members`,
+        { headers: { Authorization: `Bearer ${this.agentToken}` } },
+      );
+      if (!resp.ok) {
+        this.logger.warn(
+          `listGroupMembers(${groupId}) → HTTP ${resp.status}`,
+        );
+        return [];
+      }
+      return (await resp.json()) as Array<{
+        id: string;
+        display_name: string;
+        is_agent: boolean;
+        role: string;
+      }>;
+    } catch (err) {
+      this.logger.warn(`listGroupMembers(${groupId}) failed: ${err}`);
+      return [];
+    }
+  }
+
   async uploadFile(fileBuffer: Uint8Array, fileName: string): Promise<UploadResponse> {
     const ab = fileBuffer.buffer.slice(
       fileBuffer.byteOffset,

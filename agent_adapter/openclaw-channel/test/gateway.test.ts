@@ -88,6 +88,46 @@ describe("createInboundGateway", () => {
 
     handle(makeMsg({ chat_type: "group", mentions: [AGENT_ID] }));
     expect(received).toHaveLength(1);
+    expect(received[0].mentionedBot).toBe(true);
+  });
+
+  it("treats @all as a mention of the bot in requireMention groups", () => {
+    const received: InboundMessage[] = [];
+    const handle = createInboundGateway({
+      agentUserId: AGENT_ID,
+      account: makeAccount({ requireMention: true }),
+      onInbound: (msg) => received.push(msg),
+    });
+
+    handle(makeMsg({ chat_type: "group", mentions: ["all"] }));
+    expect(received).toHaveLength(1);
+    expect(received[0].mentionedBot).toBe(true);
+  });
+
+  it("marks direct messages as always mentioned", () => {
+    const received: InboundMessage[] = [];
+    const handle = createInboundGateway({
+      agentUserId: AGENT_ID,
+      account: makeAccount({ requireMention: true }),
+      onInbound: (msg) => received.push(msg),
+    });
+
+    handle(makeMsg({ chat_type: "direct", mentions: [] }));
+    expect(received).toHaveLength(1);
+    expect(received[0].mentionedBot).toBe(true);
+  });
+
+  it("marks group messages without mention as not mentioned (when requireMention off)", () => {
+    const received: InboundMessage[] = [];
+    const handle = createInboundGateway({
+      agentUserId: AGENT_ID,
+      account: makeAccount({ requireMention: false }),
+      onInbound: (msg) => received.push(msg),
+    });
+
+    handle(makeMsg({ chat_type: "group", mentions: [] }));
+    expect(received).toHaveLength(1);
+    expect(received[0].mentionedBot).toBe(false);
   });
 
   it("forwards group messages without mention when requireMention is false", () => {

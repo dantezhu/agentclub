@@ -57,6 +57,15 @@ import { startAgentClubMonitor } from "../src/monitor.js";
 import { setRuntime } from "../src/runtime.js";
 import type { ResolvedAccount } from "../src/types.js";
 
+// Stub the global fetch used by client.listGroupMembers / attachment DL.
+// Individual tests can override per-test by replacing the mock.
+const fetchMock = vi.fn(async () => new Response("[]", { status: 200 }));
+vi.stubGlobal("fetch", fetchMock);
+beforeEach(() => {
+  fetchMock.mockReset();
+  fetchMock.mockResolvedValue(new Response("[]", { status: 200 }));
+});
+
 function makeAccount(overrides: Partial<ResolvedAccount> = {}): ResolvedAccount {
   return {
     accountId: null,
@@ -163,6 +172,18 @@ function makeInboundMsg(overrides: Record<string, unknown> = {}) {
     created_at: Date.now() / 1000,
     ...overrides,
   };
+}
+
+function lastFinalizeCtx(runtime: ReturnType<typeof makeRuntime>): any {
+  const calls = (runtime as any).__finalizeCalls as unknown[];
+  return calls[calls.length - 1];
+}
+
+function lastSendMessage(): any {
+  const calls = mockSocket.emit.mock.calls.filter(
+    (c: unknown[]) => c[0] === "send_message",
+  );
+  return calls.length ? calls[calls.length - 1][1] : null;
 }
 
 describe("startAgentClubMonitor", () => {
@@ -336,6 +357,155 @@ describe("startAgentClubMonitor", () => {
       (c: unknown[]) => c[0] === "send_message",
     );
     expect(sendCalls).toHaveLength(0);
+
+    abortController.abort();
+    await monitorPromise;
+  });
+
+  it("injects roster + mention hint for group messages so the LLM can @back", async () => {
+    // Mock the group-members fetch to return a small roster.
+    fetchMock.mockImplementation(async (input: any) => {
+      const url = typeof input === "string" ? input : input.url;
+      if (url.includes("/api/agent/groups/") && url.includes("/members")) {
+        return new Response(
+          JSON.stringify([
+            { id: "agent-1", display_name: "ClawBot", is_agent: true, role: "agent" },
+            { id: "user-1", display_name: "Alice", is_agent: false, role: "user" },
+            { id: "user-2", display_name: "Bob", is_agent: false, role: "user" },
+          ]),
+          { status: 200 },
+        );
+      }
+      return new Response("", { status: 404 });
+    });
+
+    const runtime = makeRuntime();
+    const log = makeLogger();
+    setRuntime(runtime as any);
+    const monitorPromise = startAgentClubMonitor({
+      account: makeAccount(),
+      cfg: {} as any,
+      abortSignal: abortController.signal,
+      log,
+    });
+
+    triggerSocketEvent("auth_ok", AUTH_OK);
+    await new Promise((r) => setTimeout(r, 50));
+
+    triggerSocketEvent(
+      "new_message",
+      makeInboundMsg({
+        chat_type: "group",
+        chat_id: "group-7",
+        content:
+          'Hey <at user_id="agent-1">ClawBot</at> please help Bob',
+        mentions: ["agent-1"],
+      }),
+    );
+    await new Promise((r) => setTimeout(r, 150));
+
+    const ctx = lastFinalizeCtx(runtime);
+    expect(ctx.Body).toContain('<at user_id="agent-1">ClawBot</at>');
+    expect(ctx.Body).toContain("[System:");
+    // The roster line for each member should be present.
+    expect(ctx.Body).toContain('user_id="agent-1"');
+    expect(ctx.Body).toContain('user_id="user-1"');
+    expect(ctx.Body).toContain('user_id="user-2"');
+    // Self-reference hint.
+    expect(ctx.Body).toMatch(/"agent-1".+refers to you/);
+    // Mentioned flag propagates to the SDK.
+    expect(ctx.WasMentioned).toBe(true);
+
+    abortController.abort();
+    await monitorPromise;
+  });
+
+  it("does not attach roster hint in direct chats", async () => {
+    const runtime = makeRuntime();
+    const log = makeLogger();
+    setRuntime(runtime as any);
+    const monitorPromise = startAgentClubMonitor({
+      account: makeAccount(),
+      cfg: {} as any,
+      abortSignal: abortController.signal,
+      log,
+    });
+
+    triggerSocketEvent("auth_ok", AUTH_OK);
+    await new Promise((r) => setTimeout(r, 50));
+
+    triggerSocketEvent("new_message", makeInboundMsg());
+    await new Promise((r) => setTimeout(r, 150));
+
+    const ctx = lastFinalizeCtx(runtime);
+    expect(ctx.Body).toBe("Hello agent");
+    expect(ctx.Body).not.toContain("[System:");
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      expect.stringContaining("/members"),
+      expect.anything(),
+    );
+
+    abortController.abort();
+    await monitorPromise;
+  });
+
+  it("extracts mentions from agent reply into outbound send payload", async () => {
+    const runtime = makeRuntime({
+      replyPayload: {
+        text: 'Sure <at user_id="user-1">Alice</at>, here you go! <at user_id="all">所有人</at>',
+      },
+    });
+    const log = makeLogger();
+    setRuntime(runtime as any);
+    const monitorPromise = startAgentClubMonitor({
+      account: makeAccount(),
+      cfg: {} as any,
+      abortSignal: abortController.signal,
+      log,
+    });
+
+    triggerSocketEvent("auth_ok", AUTH_OK);
+    await new Promise((r) => setTimeout(r, 50));
+
+    triggerSocketEvent(
+      "new_message",
+      makeInboundMsg({
+        chat_type: "group",
+        chat_id: "group-7",
+        mentions: ["agent-1"],
+      }),
+    );
+    await new Promise((r) => setTimeout(r, 150));
+
+    const sent = lastSendMessage();
+    expect(sent).toBeTruthy();
+    expect(sent.content).toContain('<at user_id="user-1">Alice</at>');
+    expect(sent.mentions).toEqual(["user-1", "all"]);
+
+    abortController.abort();
+    await monitorPromise;
+  });
+
+  it("omits mentions field when agent reply has no @tags", async () => {
+    const runtime = makeRuntime({ replyPayload: { text: "Hello" } });
+    const log = makeLogger();
+    setRuntime(runtime as any);
+    const monitorPromise = startAgentClubMonitor({
+      account: makeAccount(),
+      cfg: {} as any,
+      abortSignal: abortController.signal,
+      log,
+    });
+
+    triggerSocketEvent("auth_ok", AUTH_OK);
+    await new Promise((r) => setTimeout(r, 50));
+
+    triggerSocketEvent("new_message", makeInboundMsg());
+    await new Promise((r) => setTimeout(r, 150));
+
+    const sent = lastSendMessage();
+    expect(sent).toBeTruthy();
+    expect(sent.mentions).toBeUndefined();
 
     abortController.abort();
     await monitorPromise;

@@ -71,9 +71,14 @@
                         </label>
                     </div>
                     <div class="input-row">
-                        <textarea id="messageInput" placeholder="输入消息... (Enter 发送, Shift+Enter 换行, 可粘贴/拖拽图片)"></textarea>
+                        <div id="messageInput"
+                             contenteditable="true"
+                             role="textbox"
+                             aria-multiline="true"
+                             data-placeholder="输入消息... (Enter 发送, Shift+Enter 换行, @ 提到成员)"></div>
                         <button class="send-btn" onclick="sendMessage()">发送</button>
                     </div>
+                    <div class="mention-picker hidden" id="mentionPicker"></div>
                 </div>
             </div>
 

@@ -476,6 +476,22 @@ def agent_list_chats():
     return jsonify({"groups": groups, "directs": directs})
 
 
+# Mirror of `/api/groups/<id>/members` but authenticated via agent token so
+# channel plugins can resolve display-name ↔ user-id for @mention handling
+# without needing a browser session.
+@api.route("/api/agent/groups/<group_id>/members")
+def agent_group_members(group_id):
+    token = request.headers.get("Authorization", "").replace("Bearer ", "")
+    if not token:
+        return jsonify({"error": "缺少认证"}), 401
+    user = models.get_user_by_agent_token(token)
+    if not user:
+        return jsonify({"error": "无效的 Token"}), 401
+    if not models.is_group_member(group_id, user["id"]):
+        return jsonify({"error": "不在该群组中"}), 403
+    return jsonify(models.get_group_members(group_id))
+
+
 @api.route("/static/uploads/<filename>")
 def serve_upload(filename):
     return send_from_directory(Config.UPLOAD_FOLDER, filename)

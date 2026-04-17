@@ -12,6 +12,12 @@ export interface InboundMessage {
   attachmentName?: string;
   contentType: string;
   rawPayload: NewMessagePayload;
+  /**
+   * True when this message explicitly @mentions the agent (by user_id)
+   * or @all. Derived from the `mentions` array. Direct messages are
+   * always considered "mentioned" — the recipient is implicit.
+   */
+  mentionedBot: boolean;
 }
 
 export interface InboundGatewayOptions {
@@ -88,12 +94,20 @@ export function createInboundGateway(opts: InboundGatewayOptions) {
       return;
     }
 
-    if (msg.chat_type === "group" && account.requireMention) {
-      const mentioned = Array.isArray(msg.mentions) && msg.mentions.includes(agentUserId);
-      if (!mentioned) {
-        ack(msg.id);
-        return;
-      }
+    // Group chats with requireMention: only forward messages that @mention
+    // the agent by user_id OR @all the room. Direct messages bypass this
+    // filter (a DM is always "directed" at the recipient).
+    const mentionsArr = Array.isArray(msg.mentions) ? msg.mentions : [];
+    const mentionsBot =
+      mentionsArr.includes(agentUserId) || mentionsArr.includes("all");
+
+    if (msg.chat_type === "group" && account.requireMention && !mentionsBot) {
+      logger.info(
+        `Skipped group message from ${msg.sender_name} (requireMention=on, ` +
+          `mentions=${JSON.stringify(mentionsArr)}, bot_id=${agentUserId})`,
+      );
+      ack(msg.id);
+      return;
     }
 
     let text = msg.content || "";
@@ -131,6 +145,7 @@ export function createInboundGateway(opts: InboundGatewayOptions) {
       attachmentName: msg.file_name || undefined,
       contentType: msg.content_type,
       rawPayload: msg,
+      mentionedBot: msg.chat_type === "direct" ? true : mentionsBot,
     });
   };
 }

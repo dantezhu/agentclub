@@ -11,6 +11,46 @@ const CHANNEL_ID = "agent-club";
 const MEDIA_SUBDIR = "media";
 
 /**
+ * Wire format for @mentions, mirrored from the feishu channel:
+ *   <at user_id="uuid-or-all">display name</at>
+ *
+ * - `user_id` is authoritative (a uuid, or the literal "all" for @everyone).
+ * - The display name is for human rendering only.
+ *
+ * The agent sees the tags verbatim in its prompt; we additionally supply a
+ * system hint listing the group roster so the LLM knows whose user_id maps
+ * to which name. When the agent wants to @ someone back, it emits the tag
+ * itself in its reply text, and we parse it out (see `extractMentionsFromReply`).
+ */
+const AT_TAG_RE = /<at user_id="([^"]+)">([^<]*)<\/at>/g;
+
+function hasAtTag(text: string): boolean {
+  AT_TAG_RE.lastIndex = 0;
+  return AT_TAG_RE.test(text);
+}
+
+/**
+ * Pull unique user_ids out of agent-emitted `<at user_id="...">` tags so we
+ * can forward them in the outbound `mentions` field. The tags themselves
+ * stay embedded in the content — the web frontend renders them as pills,
+ * and other agents/channels can pattern-match off the same literal.
+ */
+function extractMentionsFromReply(text: string): string[] {
+  if (!text) return [];
+  AT_TAG_RE.lastIndex = 0;
+  const out: string[] = [];
+  const seen = new Set<string>();
+  let m: RegExpExecArray | null;
+  while ((m = AT_TAG_RE.exec(text)) !== null) {
+    const uid = (m[1] || "").trim();
+    if (!uid || seen.has(uid)) continue;
+    seen.add(uid);
+    out.push(uid);
+  }
+  return out;
+}
+
+/**
  * Map a workspace-local filename to a best-effort MIME type, used to populate
  * `MediaType` / `MediaTypes` on the inbound context. OpenClaw's media
  * autorouter reads this to decide whether to dispatch the attachment through
@@ -270,6 +310,7 @@ async function processInbound(
 ): Promise<void> {
   const runtime = getRuntime();
   const workspaceDir = runtime.agent.resolveAgentWorkspaceDir(cfg);
+  const agentUserId = client.agentUserId || "";
 
   // 1. If the user attached a file, download it to the agent workspace.
   //    Keep the on-disk absolute path — that's what the SDK's media
@@ -324,13 +365,52 @@ async function processInbound(
 
   const toField = msg.chatType === "group" ? `chat:${msg.chatId}` : `user:${msg.senderId}`;
 
-  // 3. Build the inbound context payload. The SDK reads these fields to
+  // 3. For group chats, fetch the current roster so we can (a) teach the
+  //    LLM whose user_id maps to which display name and (b) let it mention
+  //    people back by emitting the same `<at user_id="...">name</at>` tag.
+  //    Direct chats skip this — there's only one peer and `@` is moot.
+  let roster: Array<{ id: string; display_name: string; is_agent: boolean }> = [];
+  if (msg.chatType === "group") {
+    roster = await client.listGroupMembers(msg.chatId);
+  }
+
+  // Append a system hint describing the mention protocol when either the
+  // inbound message already contains `<at>` tags or we supplied a roster
+  // the agent could reference. Mirrors feishu's hint injected in
+  // `monitor-Bq9OdXVi.js:1381`.
+  const inboundHasAtTags = hasAtTag(prompt);
+  if (inboundHasAtTags || roster.length > 0) {
+    const hints: string[] = [];
+    hints.push(
+      'The content may include mention tags of the form <at user_id="...">name</at>. ' +
+        "Treat these as real mentions of Agent Club users (or bots).",
+    );
+    if (agentUserId) {
+      hints.push(`If user_id is "${agentUserId}", that mention refers to you.`);
+    }
+    if (roster.length > 0) {
+      const lines = roster.map(
+        (m) =>
+          `- ${m.display_name}: user_id="${m.id}"${
+            m.id === agentUserId ? " (you)" : m.is_agent ? " (bot)" : ""
+          }`,
+      );
+      hints.push(
+        "To @mention someone in your reply, emit the same tag: " +
+          '<at user_id="UUID">name</at>. Use user_id="all" for @everyone. ' +
+          "Room roster:\n" +
+          lines.join("\n"),
+      );
+    }
+    prompt = `${prompt}\n\n[System: ${hints.join(" ")}]`;
+  }
+
+  // 4. Build the inbound context payload. The SDK reads these fields to
   //    construct the agent envelope, so they must follow the convention
   //    established by existing channel plugins (feishu, slack, etc.).
-  //    `WasMentioned` is true for DMs (always engaged) and for groups it
-  //    is true by the time we reach here — the gateway already filtered
-  //    out group messages that did not mention us when `requireMention`
-  //    is on.
+  //    `WasMentioned` tracks whether the human actually addressed us —
+  //    feishu uses the same field to differentiate silent overhearing
+  //    from a direct prompt.
   const ctxPayload = runtime.channel.reply.finalizeInboundContext({
     ...mediaPayload,
     Body: prompt,
@@ -351,7 +431,7 @@ async function processInbound(
     Timestamp: msg.rawPayload.created_at
       ? msg.rawPayload.created_at * 1000
       : Date.now(),
-    WasMentioned: true,
+    WasMentioned: msg.mentionedBot,
     OriginatingChannel: CHANNEL_ID,
     OriginatingTo: toField,
   });
@@ -383,11 +463,20 @@ async function processInbound(
           if (text === "NO_REPLY" && mediaUrls.length === 0) return;
 
           if (text && text !== "NO_REPLY") {
+            // If the agent emitted `<at user_id="...">...</at>` tags, lift
+            // the user_ids into the `mentions` field so the IM server can
+            // push unread-badge updates to the mentioned users (and so
+            // other channels that consume the message can treat them as
+            // real mentions without re-parsing the text).
+            const outboundMentions = extractMentionsFromReply(text);
             client.sendMessage({
               chat_type: msg.chatType as "group" | "direct",
               chat_id: msg.chatId,
               content: text,
               content_type: "text",
+              ...(outboundMentions.length
+                ? { mentions: outboundMentions }
+                : {}),
             });
           }
           for (const url of mediaUrls) {

@@ -61,7 +61,26 @@ def register_events(socketio):
         content_type = data.get("content_type", "text")
         file_url = data.get("file_url", "")
         file_name = data.get("file_name", "")
-        mentions = json.dumps(data.get("mentions", []))
+
+        # `mentions` travels the wire as an array of user_ids (uuid strings)
+        # plus the special literal "all" for @everyone. We normalize here so
+        # downstream (DB, channel plugins) can trust the shape.
+        raw_mentions = data.get("mentions", [])
+        if not isinstance(raw_mentions, list):
+            raw_mentions = []
+        mentions_list = []
+        seen = set()
+        for item in raw_mentions:
+            if not isinstance(item, str):
+                continue
+            item = item.strip()
+            if not item or item in seen:
+                continue
+            seen.add(item)
+            mentions_list.append(item)
+            if len(mentions_list) >= 100:
+                break
+        mentions = json.dumps(mentions_list)
 
         if not chat_id:
             return
@@ -88,7 +107,7 @@ def register_events(socketio):
             "content_type": content_type,
             "file_url": file_url,
             "file_name": file_name,
-            "mentions": data.get("mentions", []),
+            "mentions": mentions_list,
             "created_at": result["created_at"],
         }
 
