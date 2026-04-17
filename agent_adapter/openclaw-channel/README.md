@@ -38,7 +38,7 @@ openclaw plugins install ./
       "serverUrl": "https://your-im-server:5555",
       "agentToken": "从 IM 管理后台获取的 agent token",
       "requireMention": true,
-      "allowFrom": []
+      "allowFrom": ["*"]
     }
   }
 }
@@ -49,13 +49,13 @@ openclaw plugins install ./
 | `serverUrl` | string | 是 | IM 服务器 URL |
 | `agentToken` | string | 是 | Agent 认证 token |
 | `requireMention` | boolean | 否 | 群聊中是否需要 @提及才回复（默认 true）|
-| `allowFrom` | string[] | 否 | 允许交互的用户 ID 列表（空 = 允许所有）|
+| `allowFrom` | string[] | 否 | 允许交互的用户 ID 列表（`["*"]` = 允许所有，空数组 = 拒绝所有，默认安全）|
 
 ## 工作流程
 
 1. **连接**：插件通过 Socket.IO 连接到 IM 服务器，使用 `agentToken` 认证
 2. **接收消息**：通过 `new_message` / `offline_messages` 事件接收消息
-3. **过滤**：跳过自己发的消息、不在 allowFrom 中的用户、未 @提及的群消息
+3. **过滤**：跳过自己发的消息、不在 allowFrom 中的用户（空数组拒绝所有，`["*"]` 放行所有）、未 @提及的群消息
 4. **处理**：调用 `runEmbeddedAgent` 将消息交给 OpenClaw agent 处理
 5. **回复**：将 agent 的回复（文本 / 媒体）发送回 IM 服务器
 

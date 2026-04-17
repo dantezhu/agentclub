@@ -26,7 +26,7 @@
           "allowFrom": {
             "type": "array",
             "items": { "type": "string" },
-            "description": "User IDs allowed to interact with this agent (empty = allow all)"
+            "description": "User IDs allowed to interact with this agent. Use [\"*\"] to allow all; empty array rejects everyone (default-deny)"
           }
         },
         "required": ["serverUrl", "agentToken"]

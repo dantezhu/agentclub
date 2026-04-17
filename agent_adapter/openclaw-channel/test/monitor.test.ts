@@ -72,7 +72,7 @@ function makeAccount(overrides: Partial<ResolvedAccount> = {}): ResolvedAccount 
     serverUrl: "http://localhost:5555",
     agentToken: "test-token",
     requireMention: false,
-    allowFrom: [],
+    allowFrom: ["*"],
     dmPolicy: undefined,
     ...overrides,
   };

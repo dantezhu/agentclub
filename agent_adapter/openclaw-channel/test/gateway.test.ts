@@ -28,7 +28,7 @@ function makeAccount(overrides: Partial<ResolvedAccount> = {}): ResolvedAccount 
     serverUrl: "http://localhost:5555",
     agentToken: "test-token",
     requireMention: true,
-    allowFrom: [],
+    allowFrom: ["*"],
     dmPolicy: undefined,
     ...overrides,
   };
@@ -142,7 +142,35 @@ describe("createInboundGateway", () => {
     expect(received).toHaveLength(1);
   });
 
-  it("filters by allowFrom when configured", () => {
+  it("rejects all messages when allowFrom is empty (default-deny)", () => {
+    const received: InboundMessage[] = [];
+    const acked: string[] = [];
+    const handle = createInboundGateway({
+      agentUserId: AGENT_ID,
+      account: makeAccount({ allowFrom: [] }),
+      onInbound: (msg) => received.push(msg),
+      onAck: (id) => acked.push(id),
+    });
+
+    handle(makeMsg({ id: "x1", sender_id: "user-1" }));
+    expect(received).toHaveLength(0);
+    expect(acked).toContain("x1");
+  });
+
+  it("allows all messages when allowFrom contains '*'", () => {
+    const received: InboundMessage[] = [];
+    const handle = createInboundGateway({
+      agentUserId: AGENT_ID,
+      account: makeAccount({ allowFrom: ["*"] }),
+      onInbound: (msg) => received.push(msg),
+    });
+
+    handle(makeMsg({ sender_id: "user-1" }));
+    handle(makeMsg({ sender_id: "user-2" }));
+    expect(received).toHaveLength(2);
+  });
+
+  it("filters by allowFrom when configured with specific user IDs", () => {
     const received: InboundMessage[] = [];
     const handle = createInboundGateway({
       agentUserId: AGENT_ID,

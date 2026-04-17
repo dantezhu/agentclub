@@ -42,7 +42,8 @@ export interface InboundGatewayOptions {
  *
  * Filtering rules:
  * 1. Skip messages sent by the agent itself.
- * 2. If allowFrom is configured, skip messages from unlisted senders.
+ * 2. allowFrom must include "*" (allow all) or the sender's user ID.
+ *    An empty allowFrom rejects everyone (default-deny).
  * 3. In group chats with requireMention, skip messages without @mention.
  * 4. Direct chats always pass through.
  */
@@ -88,7 +89,7 @@ export function createInboundGateway(opts: InboundGatewayOptions) {
       return;
     }
 
-    if (account.allowFrom.length > 0 && !account.allowFrom.includes(msg.sender_id)) {
+    if (!account.allowFrom.includes("*") && !account.allowFrom.includes(msg.sender_id)) {
       logger.warn(`Ignored message from ${msg.sender_name} (not in allowFrom)`);
       ack(msg.id);
       return;
