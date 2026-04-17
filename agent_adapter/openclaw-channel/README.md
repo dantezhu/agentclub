@@ -38,7 +38,7 @@ openclaw plugins install ./
       "serverUrl": "https://your-im-server:5555",
       "agentToken": "从 IM 管理后台获取的 agent token",
       "requireMention": true,
-      "allowFrom": ["*"]
+      "allowFrom": []
     }
   }
 }
@@ -49,7 +49,7 @@ openclaw plugins install ./
 | `serverUrl` | string | 是 | IM 服务器 URL |
 | `agentToken` | string | 是 | Agent 认证 token |
 | `requireMention` | boolean | 否 | 群聊中是否需要 @提及才回复（默认 true）|
-| `allowFrom` | string[] | 否 | 允许交互的用户 ID 列表（`["*"]` = 允许所有，空数组 = 拒绝所有，默认安全）|
+| `allowFrom` | string[] | 否 | 允许交互的用户 ID 列表。默认 `[]`（拒绝所有，默认安全）；填入具体 user_id 放行指定用户；填 `["*"]` 放行所有 |
 
 ## 工作流程
 
