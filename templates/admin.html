@@ -79,6 +79,15 @@
         .btn:hover { opacity: 0.9; }
         .btn.danger { background: #ff4757; }
         .btn.sm { padding: 6px 14px; font-size: 13px; }
+        /* Inline avatar picker inside the "create Agent" form: the label
+           toggles between a plain "🖼 头像" prompt and a thumbnail once a
+           file has been selected, so admins get immediate visual
+           confirmation their upload went through. */
+        .avatar-picker { display: inline-flex; align-items: center; gap: 6px; }
+        .avatar-picker img {
+            width: 22px; height: 22px; border-radius: 50%;
+            object-fit: cover; display: block;
+        }
         .agent-item {
             display: flex;
             align-items: center;
@@ -146,8 +155,10 @@
             <div class="inline-form">
                 <input type="text" id="newAgentUsername" placeholder="用户名">
                 <input type="text" id="newAgentDisplayName" placeholder="显示名称（选填）">
-                <label class="btn" style="cursor:pointer">
-                    🖼 头像 <input type="file" accept="image/*" id="agentAvatarFile" style="display:none" onchange="handleAgentAvatarSelect(event)">
+                <label class="btn avatar-picker" id="agentAvatarLabel" style="cursor:pointer">
+                    <img id="agentAvatarPreview" style="display:none" alt="">
+                    <span id="agentAvatarLabelText">🖼 头像</span>
+                    <input type="file" accept="image/*" id="agentAvatarFile" style="display:none" onchange="handleAgentAvatarSelect(event)">
                 </label>
                 <button class="btn" onclick="createAgent()">创建 Agent</button>
             </div>
@@ -196,15 +207,43 @@
         document.getElementById('agentList').innerHTML = html;
     }
 
+    function resetAgentAvatarPicker() {
+        document.getElementById('agentAvatarUrl').value = '';
+        // Clearing the file input's value is important: otherwise picking
+        // the *same* file a second time doesn't fire ``onchange`` and the
+        // preview silently goes stale.
+        document.getElementById('agentAvatarFile').value = '';
+        const preview = document.getElementById('agentAvatarPreview');
+        preview.style.display = 'none';
+        preview.src = '';
+        document.getElementById('agentAvatarLabelText').textContent = '🖼 头像';
+    }
+
     async function handleAgentAvatarSelect(event) {
         const file = event.target.files[0];
         if (!file) return;
-        const formData = new FormData();
-        formData.append('file', file);
-        const res = await fetch('/api/upload', { method: 'POST', body: formData });
-        if (res.ok) {
+        const labelText = document.getElementById('agentAvatarLabelText');
+        const preview = document.getElementById('agentAvatarPreview');
+        // Immediate feedback while the upload is in flight — before this
+        // fix the label stayed on "🖼 头像" through the whole request and
+        // admins couldn't tell whether the file had even been registered.
+        labelText.textContent = '⏳ 上传中';
+        try {
+            const formData = new FormData();
+            formData.append('file', file);
+            const res = await fetch('/api/upload', { method: 'POST', body: formData });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                throw new Error(err.error || '上传失败');
+            }
             const data = await res.json();
             document.getElementById('agentAvatarUrl').value = data.url;
+            preview.src = data.url;
+            preview.style.display = '';
+            labelText.textContent = '已选';
+        } catch (err) {
+            alert(err.message);
+            resetAgentAvatarPicker();
         }
     }
 
@@ -223,7 +262,7 @@
             showTokenDialog(data.agent_token);
             document.getElementById('newAgentUsername').value = '';
             document.getElementById('newAgentDisplayName').value = '';
-            document.getElementById('agentAvatarUrl').value = '';
+            resetAgentAvatarPicker();
             loadAgents();
         } else {
             const data = await res.json();
