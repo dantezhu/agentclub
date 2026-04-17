@@ -4,9 +4,11 @@ version = "1.0.0"
 description = "Nanobot channel plugin for Agent Club IM"
 requires-python = ">=3.10"
 dependencies = [
+    "nanobot-ai>=0.1.5",
     "python-socketio[asyncio_client]>=5.10",
     "aiohttp>=3.9",
     "loguru>=0.7",
+    "pydantic>=2.5",
 ]
 
 [project.optional-dependencies]
@@ -21,3 +23,6 @@ agentclub = "nanobot_channel_agentclub:AgentClubChannel"
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

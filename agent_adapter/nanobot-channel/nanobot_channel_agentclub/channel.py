@@ -1,334 +1,638 @@
-"""
-Nanobot channel plugin for Agent Club IM.
+"""Agent Club channel implementation for Nanobot.
 
-Connects to the Agent Club IM server over Socket.IO, receives messages
-from users/groups, and sends AI-generated replies back.
+Connects a Nanobot agent to the Agent Club IM server via Socket.IO
+(auth = agent token) and a small HTTP surface for file upload and group
+roster lookup.
+
+Feature parity with the OpenClaw channel of the same server:
+
+* ``mark_read`` ACK per inbound message — advances the server-side read
+  cursor so messages aren't re-delivered via ``offline_messages`` on the
+  next reconnect.
+* ``<at user_id="…">name</at>`` @mention wire format, both inbound
+  (preserved + system hint injected with the group roster) and outbound
+  (parsed out of the agent's reply text to populate the ``mentions``
+  field of ``send_message``).
+* Recent-id dedup so duplicate deliveries (e.g. ACK raced a reconnect)
+  don't produce duplicate agent runs.
+* ``allow_from`` inherits the ``BaseChannel`` semantics: empty list
+  denies everyone (default-deny); ``["*"]`` allows anyone; otherwise
+  explicit user-id allowlist.
+
+``streaming`` is intentionally not implemented yet — the IM server has
+no "edit message" event, so every chunk would become a separate
+message. If/when a streaming protocol is added server-side, override
+``send_delta`` here.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import os
+import re
+import tempfile
+from collections import OrderedDict
+from pathlib import Path
 from typing import Any
+from urllib.parse import urljoin
 
 import aiohttp
 import socketio
 from loguru import logger
+from pydantic import BaseModel, Field
 
-try:
-    from nanobot.channels.base import BaseChannel
-    from nanobot.bus.events import OutboundMessage
-except ImportError:
-    # Allow importing outside nanobot for testing
-    BaseChannel = object  # type: ignore[assignment,misc]
-    OutboundMessage = None  # type: ignore[assignment,misc]
+from nanobot.bus.events import OutboundMessage
+from nanobot.bus.queue import MessageBus
+from nanobot.channels.base import BaseChannel
 
 
-class AgentClubChannel(BaseChannel):  # type: ignore[misc]
-    """Nanobot ↔ Agent Club IM bridge via Socket.IO."""
+# Max inbound message ids to remember for dedup. 1024 matches the
+# OpenClaw-channel gateway's dedup window.
+_DEDUP_CAPACITY = 1024
+
+# Wire format for @mentions, mirrored byte-for-byte from the OpenClaw
+# channel so messages round-trip unchanged between the two adapters.
+#   <at user_id="uuid-or-all">display name</at>
+_AT_TAG_RE = re.compile(r'<at user_id="([^"]+)">([^<]*)</at>')
+
+
+def _extract_mention_user_ids(text: str) -> list[str]:
+    """Pull unique user_ids out of ``<at user_id="…">`` tags."""
+    if not text:
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for match in _AT_TAG_RE.finditer(text):
+        uid = (match.group(1) or "").strip()
+        if not uid or uid in seen:
+            continue
+        seen.add(uid)
+        out.append(uid)
+    return out
+
+
+def _has_mention_tag(text: str) -> bool:
+    return bool(text) and bool(_AT_TAG_RE.search(text))
+
+
+def _build_roster_hint(
+    roster: list[dict[str, Any]],
+    inbound_has_at_tags: bool,
+    agent_user_id: str | None,
+) -> str | None:
+    """Return a system hint describing the mention protocol, or None.
+
+    Mirrors the hint injected by the OpenClaw channel so the agent gets
+    the same guidance regardless of which adapter is running.
+    """
+    if not inbound_has_at_tags and not roster:
+        return None
+
+    parts: list[str] = [
+        'The content may include mention tags of the form '
+        '<at user_id="...">name</at>. '
+        'Treat these as real mentions of Agent Club users (or bots).'
+    ]
+    if agent_user_id:
+        parts.append(f'If user_id is "{agent_user_id}", that mention refers to you.')
+    if roster:
+        lines = []
+        for member in roster:
+            uid = member.get("id", "")
+            name = member.get("display_name") or uid
+            suffix = ""
+            if uid and uid == agent_user_id:
+                suffix = " (you)"
+            elif member.get("is_agent"):
+                suffix = " (bot)"
+            lines.append(f'- {name}: user_id="{uid}"{suffix}')
+        parts.append(
+            'To @mention someone in your reply, emit the same tag: '
+            '<at user_id="UUID">name</at>. Use user_id="all" for '
+            '@everyone. Room roster:\n' + "\n".join(lines)
+        )
+    return " ".join(parts)
+
+
+class AgentClubConfig(BaseModel):
+    """Agent Club channel configuration (stored under ``channels.agentclub``).
+
+    Environment variables ``AGENTCLUB_SERVER_URL`` and
+    ``AGENTCLUB_AGENT_TOKEN`` take precedence over the JSON values so
+    secrets don't have to be committed to ``nanobot.json``.
+    """
+
+    enabled: bool = False
+    server_url: str = ""
+    agent_token: str = ""
+    # ``allow_from`` is consumed by ``BaseChannel.is_allowed``: an empty
+    # list denies everyone (default-deny, matching feishu/openclaw).
+    allow_from: list[str] = Field(default_factory=list)
+    require_mention: bool = True
+    streaming: bool = False
+
+
+class AgentClubChannel(BaseChannel):
+    """Agent Club IM channel for Nanobot.
+
+    Single-socket, single-agent: one plugin instance represents one
+    agent identity on the IM server. Multi-agent setups should spin up
+    multiple nanobot processes (or someday multiple accounts).
+    """
 
     name = "agentclub"
     display_name = "Agent Club"
 
-    def __init__(self, config: dict[str, Any], bus: Any) -> None:
-        super().__init__(config, bus)
-        self._sio: socketio.AsyncClient | None = None
-        self._agent_user_id: str | None = None
-        self._agent_display_name: str | None = None
-        self._http_session: aiohttp.ClientSession | None = None
-
-    # -- Config --------------------------------------------------------------
-
     @classmethod
     def default_config(cls) -> dict[str, Any]:
-        return {
-            "enabled": False,
-            "server_url": "http://localhost:5555",
-            "agent_token": "",
-            "require_mention": True,
-            "allow_from": ["*"],
-            "streaming": False,
-        }
+        return AgentClubConfig().model_dump(by_alias=True)
 
-    @property
-    def _server_url(self) -> str:
-        return (
-            self.config.get("server_url")
-            or os.environ.get("AGENTCLUB_SERVER_URL")
-            or "http://localhost:5555"
-        )
+    def __init__(self, config: Any, bus: MessageBus):
+        if isinstance(config, dict):
+            config = AgentClubConfig.model_validate(config)
+        super().__init__(config, bus)
+        self.config: AgentClubConfig = config
 
-    @property
-    def _agent_token(self) -> str:
-        return (
-            self.config.get("agent_token")
-            or os.environ.get("AGENTCLUB_AGENT_TOKEN")
+        # Environment overrides win over JSON so secrets can stay out of
+        # the config file.
+        self._server_url: str = (
+            os.environ.get("AGENTCLUB_SERVER_URL")
+            or self.config.server_url
             or ""
+        ).rstrip("/")
+        self._agent_token: str = (
+            os.environ.get("AGENTCLUB_AGENT_TOKEN") or self.config.agent_token or ""
         )
 
-    @property
-    def _require_mention(self) -> bool:
-        return self.config.get("require_mention", True)
+        self._sio: socketio.AsyncClient | None = None
+        self._http: aiohttp.ClientSession | None = None
+        self._tmp_dir: str | None = None
+        self._stop_event: asyncio.Event | None = None
 
-    # -- Lifecycle -----------------------------------------------------------
+        # Populated on ``auth_ok``
+        self._agent_user_id: str | None = None
+        self._display_name: str | None = None
+
+        # Second-layer dedup. The IM server won't re-emit a message once
+        # we ACK it via ``mark_read``, but an ACK that raced a
+        # reconnect can still produce a duplicate — this catches it.
+        self._seen_message_ids: OrderedDict[str, None] = OrderedDict()
+
+        # Best-effort in-memory cache of group rosters, keyed by
+        # ``group_id``. Invalidated passively: if an agent sees a
+        # mention it doesn't recognize the cache will just look stale;
+        # a restart refreshes it. Kept on the instance so unit tests
+        # can inspect/seed it.
+        self._roster_cache: dict[str, list[dict[str, Any]]] = {}
+
+    # ----------------------------------------------------------------
+    # BaseChannel lifecycle
+    # ----------------------------------------------------------------
 
     async def start(self) -> None:
-        """Connect to the IM server and block until stop() is called."""
+        if not self._server_url:
+            logger.error("[agentclub] server_url is not configured")
+            return
         if not self._agent_token:
             logger.error("[agentclub] agent_token is not configured")
             return
 
-        self._running = True
+        self._tmp_dir = tempfile.mkdtemp(prefix="agentclub_")
+        self._stop_event = asyncio.Event()
+        self._http = aiohttp.ClientSession(
+            headers={"Authorization": f"Bearer {self._agent_token}"}
+        )
+
         self._sio = socketio.AsyncClient(
             reconnection=True,
+            reconnection_attempts=0,  # infinite
             reconnection_delay=1,
             reconnection_delay_max=30,
         )
-        self._register_handlers()
+        self._register_sio_handlers(self._sio)
 
-        logger.info("[agentclub] Connecting to {}", self._server_url)
-        await self._sio.connect(
-            self._server_url,
-            auth={"agent_token": self._agent_token},
-            transports=["websocket", "polling"],
-        )
+        logger.info("[agentclub] connecting to {}", self._server_url)
+        try:
+            await self._sio.connect(
+                self._server_url,
+                auth={"agent_token": self._agent_token},
+                transports=["websocket", "polling"],
+            )
+        except Exception as exc:
+            logger.error("[agentclub] connect failed: {}", exc)
+            await self._cleanup()
+            return
 
-        while self._running:
-            await asyncio.sleep(1)
-
-        if self._sio and self._sio.connected:
-            await self._sio.disconnect()
-        if self._http_session and not self._http_session.closed:
-            await self._http_session.close()
-
-        logger.info("[agentclub] Channel stopped")
+        self._running = True
+        logger.info("[agentclub] started")
+        try:
+            await self._stop_event.wait()
+        finally:
+            await self._cleanup()
 
     async def stop(self) -> None:
         self._running = False
+        if self._stop_event is not None:
+            self._stop_event.set()
 
-    # -- Outbound (AI → IM) --------------------------------------------------
-
-    async def send(self, msg: Any) -> None:
-        """Send an OutboundMessage to the Agent Club IM server."""
-        if not self._sio or not self._sio.connected:
-            logger.warning("[agentclub] Not connected, dropping outbound message")
-            return
-
-        # Skip progress/tool-hint metadata messages
-        metadata = getattr(msg, "metadata", {}) or {}
-        if metadata.get("_progress") or metadata.get("_tool_hint"):
-            return
-
-        chat_id = getattr(msg, "chat_id", None)
-        content = getattr(msg, "content", "") or ""
-        media_list: list[str] = getattr(msg, "media", []) or []
-
-        if not chat_id:
-            logger.warning("[agentclub] OutboundMessage has no chat_id")
-            return
-
-        chat_type, resolved_chat_id = self._parse_chat_id(chat_id)
-
-        # Upload and send media files
-        for file_path in media_list:
+    async def _cleanup(self) -> None:
+        """Tear down in a fixed order: sio first, then http, then tmp dir."""
+        if self._sio is not None:
             try:
-                upload = await self._upload_file(file_path)
-                await self._sio.emit("send_message", {
-                    "chat_type": chat_type,
-                    "chat_id": resolved_chat_id,
-                    "content": "",
-                    "content_type": upload["content_type"],
-                    "file_url": upload["url"],
-                    "file_name": upload["filename"],
-                })
-            except Exception:
-                logger.exception("[agentclub] Failed to upload {}", file_path)
+                if self._sio.connected:
+                    await self._sio.disconnect()
+            except Exception as exc:
+                logger.warning("[agentclub] disconnect error: {}", exc)
+            self._sio = None
+        if self._http is not None:
+            try:
+                await self._http.close()
+            except Exception as exc:
+                logger.warning("[agentclub] http close error: {}", exc)
+            self._http = None
+        if self._tmp_dir and os.path.isdir(self._tmp_dir):
+            try:
+                for name in os.listdir(self._tmp_dir):
+                    try:
+                        os.remove(os.path.join(self._tmp_dir, name))
+                    except OSError:
+                        pass
+                os.rmdir(self._tmp_dir)
+            except OSError:
+                pass
+        self._tmp_dir = None
+        logger.info("[agentclub] stopped")
 
-        # Send text content
-        if content.strip():
-            await self._sio.emit("send_message", {
-                "chat_type": chat_type,
-                "chat_id": resolved_chat_id,
-                "content": content,
-                "content_type": "text",
-            })
-            logger.info(
-                "[agentclub] Sent [{}:{}]: {}",
-                chat_type,
-                resolved_chat_id[:8],
-                content[:80],
-            )
+    # ----------------------------------------------------------------
+    # Socket.IO event wiring
+    # ----------------------------------------------------------------
 
-    # -- Socket.IO event handlers --------------------------------------------
+    def _register_sio_handlers(self, sio: socketio.AsyncClient) -> None:
+        @sio.event
+        async def connect() -> None:
+            logger.info("[agentclub] socket connected")
 
-    def _register_handlers(self) -> None:
-        sio = self._sio
-        assert sio is not None
+        @sio.event
+        async def disconnect() -> None:
+            logger.warning("[agentclub] socket disconnected")
 
         @sio.on("auth_ok")
-        async def on_auth_ok(data: dict[str, Any]) -> None:
-            self._agent_user_id = data["user_id"]
-            self._agent_display_name = data.get("display_name", "")
+        async def _on_auth_ok(data: dict[str, Any]) -> None:
+            self._agent_user_id = data.get("user_id")
+            self._display_name = data.get("display_name")
             logger.info(
-                "[agentclub] Authenticated as {} ({})",
-                self._agent_display_name,
+                "[agentclub] authenticated as {} ({})",
+                self._display_name,
                 self._agent_user_id,
             )
 
+        @sio.on("error")
+        async def _on_error(data: dict[str, Any]) -> None:
+            logger.warning("[agentclub] server error: {}", data)
+
         @sio.on("new_message")
-        async def on_new_message(data: dict[str, Any]) -> None:
+        async def _on_new_message(data: dict[str, Any]) -> None:
             await self._process_inbound(data)
 
         @sio.on("offline_messages")
-        async def on_offline_messages(msgs: list[dict[str, Any]]) -> None:
-            logger.info("[agentclub] Received {} offline message(s)", len(msgs))
+        async def _on_offline_messages(msgs: list[dict[str, Any]]) -> None:
+            logger.info("[agentclub] received {} offline message(s)", len(msgs))
             for msg in msgs:
                 await self._process_inbound(msg)
 
-        @sio.on("error")
-        async def on_error(data: dict[str, Any]) -> None:
-            logger.error("[agentclub] Server error: {}", data.get("message"))
+    # ----------------------------------------------------------------
+    # Inbound pipeline
+    # ----------------------------------------------------------------
 
-        @sio.on("connect")
-        async def on_connect() -> None:
-            logger.info("[agentclub] Socket.IO connected")
-
-        @sio.on("disconnect")
-        async def on_disconnect() -> None:
-            logger.warning("[agentclub] Socket.IO disconnected")
-
-    # -- Inbound (IM → Agent) ------------------------------------------------
-
-    async def _ack(self, message_id: str | None) -> None:
-        """Advance the server-side read cursor to this message. Tells the IM
-        server the agent has processed everything in this chat up through
-        (and including) this message. Safe on a disconnected socket (no-op)."""
-        if not message_id or not self._sio:
-            return
+    async def _process_inbound(self, msg: dict[str, Any]) -> None:
+        """Filter + normalize a raw ``new_message`` payload and hand to the bus."""
         try:
-            await self._sio.emit("mark_read", {"message_ids": [message_id]})
-        except Exception as e:
-            logger.warning("[agentclub] mark_read failed for {}: {}", message_id, e)
+            message_id = msg.get("id") or ""
+            sender_id = msg.get("sender_id") or ""
+            sender_name = msg.get("sender_name") or sender_id
+            chat_type = msg.get("chat_type") or "direct"
+            chat_id = msg.get("chat_id") or ""
+            content = msg.get("content") or ""
+            content_type = msg.get("content_type") or "text"
+            file_url = msg.get("file_url") or ""
+            file_name = msg.get("file_name") or ""
+            mentions_raw = msg.get("mentions") or []
+            mentions: list[str] = [m for m in mentions_raw if isinstance(m, str)]
 
-    async def _process_inbound(self, data: dict[str, Any]) -> None:
-        """Filter and forward an incoming IM message to the nanobot agent."""
-        sender_id = data.get("sender_id", "")
-        message_id = data.get("id")
+            # Skip the agent's own echo-back
+            if sender_id and sender_id == self._agent_user_id:
+                return
 
-        # Never process our own messages. Our own messages are not in our
-        # unread list, so no ACK either.
-        if sender_id == self._agent_user_id:
-            return
+            # Dedup — second layer of defense on top of server-side
+            # mark_read. OrderedDict keeps FIFO eviction O(1).
+            if message_id:
+                if message_id in self._seen_message_ids:
+                    # Re-ACK in case the previous ACK was lost in flight.
+                    await self._ack(message_id)
+                    return
+                self._seen_message_ids[message_id] = None
+                while len(self._seen_message_ids) > _DEDUP_CAPACITY:
+                    self._seen_message_ids.popitem(last=False)
 
-        chat_type = data.get("chat_type", "direct")
-        chat_id = data.get("chat_id", "")
-        content = data.get("content", "")
-        content_type = data.get("content_type", "text")
-        mentions: list[str] = data.get("mentions", [])
-
-        # Group mention filter
-        if chat_type == "group" and self._require_mention:
-            if self._agent_user_id not in mentions:
+            # Access control (default-deny via BaseChannel.is_allowed)
+            if not self.is_allowed(sender_id):
+                logger.info(
+                    "[agentclub] denied message from {} (not in allow_from)",
+                    sender_name,
+                )
                 await self._ack(message_id)
                 return
 
-        # Build text for non-text content
-        if content_type != "text" and data.get("file_url"):
-            label = data.get("file_name") or data.get("file_url", "")
-            file_desc = f"[{content_type}: {label}]"
-            content = f"{content}\n{file_desc}" if content else file_desc
+            # Group-chat @mention gate
+            mentions_bot = (
+                bool(self._agent_user_id) and self._agent_user_id in mentions
+            ) or ("all" in mentions)
+            if (
+                chat_type == "group"
+                and self.config.require_mention
+                and not mentions_bot
+            ):
+                logger.debug(
+                    "[agentclub] skipping group message from {} (no @mention)",
+                    sender_name,
+                )
+                await self._ack(message_id)
+                return
 
-        if not content.strip():
+            # Attachments: download to a temp file so the agent can read them
+            media_paths: list[str] = []
+            if file_url and content_type != "text":
+                local_path = await self._download_attachment(
+                    file_url, file_name or message_id or "attachment"
+                )
+                if local_path:
+                    media_paths.append(local_path)
+
+            # Compose the text surface. For file-only payloads we still
+            # emit a description so the LLM knows *something* arrived.
+            text = content
+            if file_url and content_type != "text":
+                label = file_name or file_url
+                bracket = f"[{content_type}: {label}]"
+                text = f"{text}\n{bracket}" if text else bracket
+
+            if not text.strip() and not media_paths:
+                await self._ack(message_id)
+                return
+
+            # System hint: teach the LLM about the @mention wire format
+            # and (for groups) the current roster. Only injected when
+            # there's something to gain (roster available or message
+            # already contains tags).
+            roster: list[dict[str, Any]] = []
+            if chat_type == "group" and chat_id:
+                roster = await self._list_group_members(chat_id)
+            hint = _build_roster_hint(
+                roster=roster,
+                inbound_has_at_tags=_has_mention_tag(text),
+                agent_user_id=self._agent_user_id,
+            )
+            prompt = f"{text}\n\n[System: {hint}]" if hint else text
+
+            # Log AFTER all filter decisions so grepping logs gives an
+            # honest "these are the messages that actually reached the
+            # agent" answer.
+            logger.info(
+                "[agentclub] inbound [{}:{}] from {}: {}",
+                chat_type,
+                chat_id,
+                sender_name,
+                text[:80],
+            )
+
+            # ACK immediately on accept — "plugin has taken
+            # responsibility". Matches the semantics used by the
+            # OpenClaw channel and prevents reply storms when the
+            # socket reconnects mid-run.
             await self._ack(message_id)
+
+            session_key = f"{chat_type}:{chat_id}"
+            reply_to = chat_id if chat_type == "group" else sender_id
+
+            await self._handle_message(
+                sender_id=sender_id,
+                chat_id=reply_to,
+                content=prompt,
+                media=media_paths,
+                metadata={
+                    "message_id": message_id,
+                    "chat_type": chat_type,
+                    "chat_id": chat_id,
+                    "sender_name": sender_name,
+                    "content_type": content_type,
+                    "inbound_mentions": mentions,
+                    "mentioned_bot": chat_type == "direct" or mentions_bot,
+                },
+                session_key=session_key,
+            )
+        except Exception as exc:  # defensive: one bad message must not kill the loop
+            logger.exception("[agentclub] error processing inbound: {}", exc)
+
+    async def _ack(self, message_id: str) -> None:
+        """Advance the server-side read cursor for ``message_id``.
+
+        No-op when the id is empty or we're disconnected — the server
+        will just re-deliver via ``offline_messages`` on reconnect,
+        which is the desired at-least-once fallback.
+        """
+        if not message_id or self._sio is None or not self._sio.connected:
+            return
+        try:
+            await self._sio.emit("mark_read", {"message_ids": [message_id]})
+        except Exception as exc:
+            logger.warning("[agentclub] mark_read failed for {}: {}", message_id, exc)
+
+    # ----------------------------------------------------------------
+    # Outbound pipeline
+    # ----------------------------------------------------------------
+
+    async def send(self, msg: OutboundMessage) -> None:
+        """Dispatch one outbound agent message to the IM server."""
+        if self._sio is None or not self._sio.connected:
+            logger.warning("[agentclub] not connected; dropping outbound")
             return
 
-        # ACK immediately on accept: we've taken responsibility for this
-        # message. Prevents reply storms on transient reconnects.
-        await self._ack(message_id)
+        meta = msg.metadata or {}
 
-        # Compose the chat_id nanobot uses (includes type prefix for routing)
-        composite_chat_id = f"{chat_type}:{chat_id}"
+        # We don't implement streaming yet — collapse progress / tool
+        # hints / stream events to no-ops so the channel manager's
+        # dispatcher doesn't spam the IM with partial text.
+        if (
+            meta.get("_progress")
+            or meta.get("_tool_hint")
+            or meta.get("_stream_delta")
+            or meta.get("_stream_end")
+        ):
+            return
 
-        sender_name = data.get("sender_name", sender_id)
-        logger.info(
-            "[agentclub] Inbound [{}:{}] from {}: {}",
-            chat_type,
-            chat_id[:8],
-            sender_name,
-            content[:80],
-        )
+        chat_type, chat_id = self._resolve_chat_target(msg, meta)
+        if not chat_id:
+            logger.warning("[agentclub] outbound missing chat_id; dropping")
+            return
 
-        # Download media files for the agent
-        media: list[str] = []
-        if data.get("file_url") and content_type in ("image", "audio", "video", "file"):
-            try:
-                local_path = await self._download_file(data["file_url"])
-                if local_path:
-                    media.append(local_path)
-            except Exception:
-                logger.exception("[agentclub] Failed to download {}", data.get("file_url"))
+        # Upload any attachments first. Each one becomes its own
+        # ``send_message`` call so the IM UI renders file bubbles
+        # separately from the reply text.
+        media_paths: list[str] = list(getattr(msg, "media", None) or [])
+        for path in media_paths:
+            uploaded = await self._upload_attachment(path)
+            if not uploaded:
+                continue
+            await self._emit_send_message(
+                {
+                    "chat_type": chat_type,
+                    "chat_id": chat_id,
+                    "content": "",
+                    "content_type": self._guess_content_bucket(uploaded["content_type"]),
+                    "file_url": uploaded["url"],
+                    "file_name": uploaded["filename"],
+                }
+            )
 
-        await self._handle_message(
-            sender_id=sender_id,
-            chat_id=composite_chat_id,
-            content=content,
-            media=media,
-            metadata={
-                "sender_name": sender_name,
-                "chat_type": chat_type,
-                "raw_chat_id": chat_id,
-            },
-        )
+        content = (msg.content or "").strip()
+        if not content:
+            return
 
-    # -- Helpers -------------------------------------------------------------
+        # Extract @mention user_ids from the reply text so the IM
+        # server can push unread-badge updates to the mentioned users
+        # without re-parsing the text itself.
+        payload: dict[str, Any] = {
+            "chat_type": chat_type,
+            "chat_id": chat_id,
+            "content": content,
+            "content_type": "text",
+        }
+        mentions = _extract_mention_user_ids(content)
+        if mentions:
+            payload["mentions"] = mentions
+        await self._emit_send_message(payload)
+
+    def _resolve_chat_target(
+        self, msg: OutboundMessage, meta: dict[str, Any]
+    ) -> tuple[str, str]:
+        """Figure out ``(chat_type, chat_id)`` for the outbound envelope.
+
+        Order of preference:
+        1. Inbound metadata (same-thread reply to the triggering message).
+        2. ``session_key`` of the form ``<chat_type>:<chat_id>``.
+        3. Raw ``msg.chat_id`` as a direct chat id.
+        """
+        if meta.get("chat_type") and meta.get("chat_id"):
+            return str(meta["chat_type"]), str(meta["chat_id"])
+
+        raw = msg.chat_id or ""
+        if ":" in raw:
+            kind, _, rest = raw.partition(":")
+            if kind in ("direct", "group") and rest:
+                return kind, rest
+        return "direct", raw
+
+    async def _emit_send_message(self, payload: dict[str, Any]) -> None:
+        if self._sio is None or not self._sio.connected:
+            logger.warning("[agentclub] send_message skipped: not connected")
+            return
+        await self._sio.emit("send_message", payload)
 
     @staticmethod
-    def _parse_chat_id(composite: str) -> tuple[str, str]:
-        """Split 'type:id' back into (chat_type, chat_id)."""
-        if ":" in composite:
-            chat_type, chat_id = composite.split(":", 1)
-            if chat_type in ("group", "direct"):
-                return chat_type, chat_id
-        return "direct", composite
+    def _guess_content_bucket(mime: str | None) -> str:
+        """Map an upload mime type to the IM ``content_type`` bucket."""
+        if not mime:
+            return "file"
+        mime = mime.lower()
+        if mime.startswith("image/"):
+            return "image"
+        if mime.startswith("audio/"):
+            return "audio"
+        if mime.startswith("video/"):
+            return "video"
+        return "file"
 
-    async def _get_http_session(self) -> aiohttp.ClientSession:
-        if self._http_session is None or self._http_session.closed:
-            self._http_session = aiohttp.ClientSession()
-        return self._http_session
+    # ----------------------------------------------------------------
+    # HTTP helpers (upload / download / roster)
+    # ----------------------------------------------------------------
 
-    async def _upload_file(self, file_path: str) -> dict[str, str]:
-        """Upload a local file to the IM server via agent upload API."""
-        session = await self._get_http_session()
-        url = f"{self._server_url}/api/agent/upload"
-        headers = {"Authorization": f"Bearer {self._agent_token}"}
-
-        data = aiohttp.FormData()
-        data.add_field(
-            "file",
-            open(file_path, "rb"),  # noqa: SIM115
-            filename=os.path.basename(file_path),
-        )
-
-        async with session.post(url, headers=headers, data=data) as resp:
-            resp.raise_for_status()
-            return await resp.json()
-
-    async def _download_file(self, file_url: str) -> str | None:
-        """Download a file from the IM server to a temp location."""
-        if not file_url:
+    async def _upload_attachment(self, local_path: str) -> dict[str, Any] | None:
+        """POST ``file`` to ``/api/agent/upload``; return ``{url, filename, content_type}``."""
+        if self._http is None:
+            return None
+        path = Path(local_path)
+        if not path.is_file():
+            logger.warning("[agentclub] upload skipped; not a file: {}", local_path)
+            return None
+        url = urljoin(self._server_url + "/", "api/agent/upload")
+        try:
+            with path.open("rb") as fh:
+                data = aiohttp.FormData()
+                data.add_field(
+                    "file", fh, filename=path.name, content_type="application/octet-stream"
+                )
+                async with self._http.post(url, data=data) as resp:
+                    if resp.status != 200:
+                        body = await resp.text()
+                        logger.warning(
+                            "[agentclub] upload failed HTTP {}: {}", resp.status, body[:200]
+                        )
+                        return None
+                    return await resp.json()
+        except Exception as exc:
+            logger.warning("[agentclub] upload error for {}: {}", local_path, exc)
             return None
 
-        # file_url is a relative path like /static/uploads/xxx
-        full_url = f"{self._server_url}{file_url}"
-        session = await self._get_http_session()
+    async def _download_attachment(
+        self, file_url: str, file_name: str
+    ) -> str | None:
+        """GET an inbound attachment URL and save it under the plugin's temp dir."""
+        if not self._tmp_dir or self._http is None:
+            return None
+        absolute_url = (
+            file_url if re.match(r"^https?://", file_url) else urljoin(self._server_url + "/", file_url.lstrip("/"))
+        )
+        # Sanitize filename: strip any directory component.
+        safe_name = Path(file_name).name or "attachment"
+        local_path = os.path.join(self._tmp_dir, safe_name)
+        try:
+            async with self._http.get(absolute_url) as resp:
+                if resp.status != 200:
+                    logger.warning(
+                        "[agentclub] download failed HTTP {}: {}", resp.status, absolute_url
+                    )
+                    return None
+                data = await resp.read()
+            with open(local_path, "wb") as fh:
+                fh.write(data)
+            return local_path
+        except Exception as exc:
+            logger.warning("[agentclub] download error for {}: {}", absolute_url, exc)
+            return None
 
-        async with session.get(full_url) as resp:
-            if resp.status != 200:
-                return None
-            filename = file_url.rsplit("/", 1)[-1]
-            import tempfile
-            tmp_dir = tempfile.mkdtemp(prefix="agentclub_")
-            tmp_path = os.path.join(tmp_dir, filename)
-            with open(tmp_path, "wb") as f:
-                f.write(await resp.read())
-            return tmp_path
+    async def _list_group_members(self, group_id: str) -> list[dict[str, Any]]:
+        """GET the roster for ``group_id``; empty list on any failure."""
+        if self._http is None or not group_id:
+            return []
+        if group_id in self._roster_cache:
+            return self._roster_cache[group_id]
+        url = urljoin(
+            self._server_url + "/", f"api/agent/groups/{group_id}/members"
+        )
+        try:
+            async with self._http.get(url) as resp:
+                if resp.status != 200:
+                    logger.debug(
+                        "[agentclub] listGroupMembers({}) → HTTP {}",
+                        group_id,
+                        resp.status,
+                    )
+                    return []
+                data = await resp.json()
+                roster = data if isinstance(data, list) else []
+                self._roster_cache[group_id] = roster
+                return roster
+        except Exception as exc:
+            logger.debug("[agentclub] listGroupMembers({}) error: {}", group_id, exc)
+            return []
