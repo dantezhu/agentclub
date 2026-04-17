@@ -42,9 +42,8 @@ def _safe_filename(filename):
 
 @api.route("/api/register", methods=["POST"])
 def register():
-    # Allow first user even if registration is disabled
     users = models.list_users()
-    if users and models.get_setting("allow_registration") != "true":
+    if users and not Config.ALLOW_REGISTRATION:
         return jsonify({"error": "注册功能已关闭"}), 403
 
     data = request.get_json()
@@ -73,7 +72,7 @@ def register():
 @api.route("/api/registration-status")
 def registration_status():
     users = models.list_users()
-    allow = not users or models.get_setting("allow_registration") == "true"
+    allow = not users or Config.ALLOW_REGISTRATION
     return jsonify({"allow_registration": allow})
 
 

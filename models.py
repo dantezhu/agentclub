@@ -72,9 +72,7 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 """
 
-_DEFAULT_SETTINGS = {
-    "allow_registration": "true",
-}
+_DEFAULT_SETTINGS = {}
 
 
 def get_db():

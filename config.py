@@ -15,5 +15,6 @@ class Config:
         "file": {"pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "zip", "tar", "gz"},
     }
     MESSAGE_RETENTION_DAYS = int(os.environ.get("MESSAGE_RETENTION_DAYS", "30"))
+    ALLOW_REGISTRATION = os.environ.get("ALLOW_REGISTRATION", "true").lower() == "true"
     # How many history messages to load per page
     MESSAGE_PAGE_SIZE = 50

@@ -45,42 +45,6 @@
             border-bottom: 1px solid #eee;
             color: #333;
         }
-        .setting-row {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 12px 0;
-        }
-        .setting-row + .setting-row { border-top: 1px solid #f5f5f5; }
-        .setting-label { font-size: 14px; }
-        .setting-desc { font-size: 12px; color: #999; margin-top: 2px; }
-        .toggle {
-            position: relative;
-            width: 44px;
-            height: 24px;
-        }
-        .toggle input { display: none; }
-        .toggle .slider {
-            position: absolute;
-            inset: 0;
-            background: #ccc;
-            border-radius: 24px;
-            cursor: pointer;
-            transition: background 0.2s;
-        }
-        .toggle .slider::before {
-            content: "";
-            position: absolute;
-            width: 18px;
-            height: 18px;
-            left: 3px;
-            top: 3px;
-            background: #fff;
-            border-radius: 50%;
-            transition: transform 0.2s;
-        }
-        .toggle input:checked + .slider { background: #667eea; }
-        .toggle input:checked + .slider::before { transform: translateX(20px); }
         .inline-form {
             display: flex;
             gap: 8px;
@@ -162,21 +126,6 @@
     </div>
 
     <div class="container">
-        <!-- System Settings -->
-        <div class="card">
-            <h2>系统设置</h2>
-            <div class="setting-row">
-                <div>
-                    <div class="setting-label">开放注册</div>
-                    <div class="setting-desc">关闭后新用户将无法注册，管理员仍可在此创建账号</div>
-                </div>
-                <label class="toggle">
-                    <input type="checkbox" id="allowRegistration" onchange="saveSetting('allow_registration', this.checked)">
-                    <span class="slider"></span>
-                </label>
-            </div>
-        </div>
-
         <!-- Agent Management -->
         <div class="card">
             <h2>Agent 管理</h2>
@@ -204,23 +153,7 @@
             document.querySelector('.container').innerHTML = '<div class="card"><p style="text-align:center;padding:40px;color:#999">需要管理员权限</p></div>';
             return;
         }
-        await Promise.all([loadSettings(), loadAgents()]);
-    }
-
-    async function loadSettings() {
-        const res = await fetch('/api/settings');
-        const settings = await res.json();
-        document.getElementById('allowRegistration').checked = settings.allow_registration === 'true';
-    }
-
-    async function saveSetting(key, value) {
-        const body = {};
-        body[key] = value ? 'true' : 'false';
-        await fetch('/api/settings', {
-            method: 'PUT',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify(body),
-        });
+        await loadAgents();
     }
 
     async function loadAgents() {
