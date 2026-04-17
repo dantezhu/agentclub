@@ -2,9 +2,9 @@ import type { ChatType } from "./types.js";
 
 /**
  * Separator used in the OpenClaw session key.
- * Format: "agent-club:{chatType}:{chatId}"
+ * Format: "agentclub:{chatType}:{chatId}"
  */
-const CHANNEL_PREFIX = "agent-club";
+const CHANNEL_PREFIX = "agentclub";
 const SEP = ":";
 
 export interface ParsedSession {
@@ -15,7 +15,7 @@ export interface ParsedSession {
 /**
  * Build an OpenClaw session key from IM chat coordinates.
  *
- * @example toSessionKey("direct", "abc123") => "agent-club:direct:abc123"
+ * @example toSessionKey("direct", "abc123") => "agentclub:direct:abc123"
  */
 export function toSessionKey(chatType: ChatType, chatId: string): string {
   return `${CHANNEL_PREFIX}${SEP}${chatType}${SEP}${chatId}`;

@@ -5,8 +5,8 @@ import type { AgentClubClient } from "./client.js";
 // -- Plugin runtime store ---------------------------------------------------
 
 const store = createPluginRuntimeStore<PluginRuntime>({
-  pluginId: "agent-club",
-  errorMessage: "agent-club runtime not initialized",
+  pluginId: "agentclub",
+  errorMessage: "agentclub runtime not initialized",
 });
 
 export const setRuntime = store.setRuntime;

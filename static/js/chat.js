@@ -434,7 +434,7 @@ function seekAudio(event, id) {
  *   - <br> / block boundaries → \n
  *
  * The returned `content` preserves the exact `<at user_id="...">name</at>`
- * token used by the agent-club/feishu mention protocol, and `mentions` is
+ * token used by the agentclub/feishu mention protocol, and `mentions` is
  * the dedup'd array of user_ids (uuid or the literal "all") we saw.
  */
 function serializeInput(root) {

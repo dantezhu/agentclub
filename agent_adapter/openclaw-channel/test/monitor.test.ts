@@ -111,7 +111,7 @@ function makeRuntime(options: {
     channel: {
       routing: {
         resolveAgentRoute: vi.fn((params: any) => ({
-          sessionKey: `agent-club:${params.accountId}:${params.peer.kind}:${params.peer.id}`,
+          sessionKey: `agentclub:${params.accountId}:${params.peer.kind}:${params.peer.id}`,
           accountId: params.accountId,
           agentId: "main",
         })),
@@ -241,7 +241,7 @@ describe("startAgentClubMonitor", () => {
     // Route resolution forwarded the peer correctly.
     expect(runtime.channel.routing.resolveAgentRoute).toHaveBeenCalledWith(
       expect.objectContaining({
-        channel: "agent-club",
+        channel: "agentclub",
         peer: { kind: "direct", id: "user-1" },
       }),
     );
@@ -254,9 +254,9 @@ describe("startAgentClubMonitor", () => {
         BodyForAgent: "Hello agent",
         ChatType: "direct",
         SenderId: "user-1",
-        From: "agent-club:user-1",
+        From: "agentclub:user-1",
         To: "user:user-1",
-        Provider: "agent-club",
+        Provider: "agentclub",
       }),
     );
 

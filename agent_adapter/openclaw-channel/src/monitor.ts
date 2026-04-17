@@ -4,7 +4,7 @@ import { AgentClubClient } from "./client.js";
 import { createInboundGateway, type InboundMessage } from "./gateway.js";
 import { setActiveClient, getRuntime } from "./runtime.js";
 
-const CHANNEL_ID = "agent-club";
+const CHANNEL_ID = "agentclub";
 
 // Matches the upload limit of the Agent Club IM server (see backend
 // `config.py` MAX_CONTENT_LENGTH). `saveMediaBuffer` defaults to 5MB which
@@ -103,7 +103,7 @@ function inferMimeType(filename: string, bucket: string | undefined): string | u
  * OpenClaw's plugin logger appears to treat only the first argument as the
  * log message (additional args are silently dropped or interpreted as
  * structured metadata). It also already prefixes each line with the plugin
- * namespace (e.g. `[agent-club]`), so we must NOT add our own prefix or pass
+ * namespace (e.g. `[agentclub]`), so we must NOT add our own prefix or pass
  * multiple positional args — otherwise the visible message collapses to just
  * the namespace tag with an empty body.
  *

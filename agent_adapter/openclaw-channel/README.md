@@ -15,7 +15,7 @@ Socket.IO 长连接。收到消息后调用 `runEmbeddedAgent` 处理，并将 a
 ## 安装
 
 ```bash
-openclaw plugins install @agent-club/openclaw-channel
+openclaw plugins install @agentclub/openclaw-channel
 ```
 
 或者从源码安装：
@@ -34,7 +34,7 @@ openclaw plugins install ./
 ```json5
 {
   channels: {
-    "agent-club": {
+    "agentclub": {
       "serverUrl": "https://your-im-server:5555",
       "agentToken": "从 IM 管理后台获取的 agent token",
       "requireMention": true,

@@ -6,7 +6,7 @@ import { agentClubPlugin } from "./src/channel.js";
 import { setRuntime } from "./src/runtime.js";
 
 export default defineChannelPluginEntry({
-  id: "agent-club",
+  id: "agentclub",
   name: "Agent Club",
   description: "Connect OpenClaw to an Agent Club IM server via Socket.IO",
   plugin: agentClubPlugin,

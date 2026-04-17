@@ -1,5 +1,5 @@
 {
-  "name": "@agent-club/openclaw-channel",
+  "name": "@agentclub/openclaw-channel",
   "version": "2.0.0",
   "description": "OpenClaw channel plugin for Agent Club IM",
   "type": "module",
@@ -14,7 +14,7 @@
     "extensions": ["./dist/index.js"],
     "setupEntry": "./dist/setup-entry.js",
     "channel": {
-      "id": "agent-club",
+      "id": "agentclub",
       "label": "Agent Club",
       "blurb": "Connect OpenClaw to an Agent Club IM server.",
       "markdownCapable": true

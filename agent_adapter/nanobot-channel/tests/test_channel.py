@@ -66,7 +66,7 @@ _base_mod.BaseChannel = _FakeBaseChannel  # type: ignore[attr-defined]
 sys.modules.setdefault("nanobot.channels.base", _base_mod)
 
 # Now import the channel implementation
-from nanobot_channel_agent_club.channel import AgentClubChannel  # noqa: E402
+from nanobot_channel_agentclub.channel import AgentClubChannel  # noqa: E402
 
 
 # -- Helpers -----------------------------------------------------------------
@@ -213,7 +213,7 @@ class TestSend:
         ch._sio = sio
 
         msg = OutboundMessage(
-            channel="agent_club",
+            channel="agentclub",
             chat_id="group:chat-99",
             content="Hi there!",
         )
@@ -232,7 +232,7 @@ class TestSend:
         ch._sio = None
 
         msg = OutboundMessage(
-            channel="agent_club",
+            channel="agentclub",
             chat_id="direct:chat-1",
             content="Should not send",
         )
@@ -246,7 +246,7 @@ class TestSend:
         ch._sio = sio
 
         msg = OutboundMessage(
-            channel="agent_club",
+            channel="agentclub",
             chat_id="direct:chat-1",
             content="typing...",
             metadata={"_progress": True},
@@ -261,6 +261,6 @@ class TestSend:
         sio.connected = True
         ch._sio = sio
 
-        msg = OutboundMessage(channel="agent_club", content="no target")
+        msg = OutboundMessage(channel="agentclub", content="no target")
         await ch.send(msg)
         sio.emit.assert_not_called()

@@ -1,7 +1,7 @@
 import type { AgentClubConfig, ResolvedAccount } from "./types.js";
 
 /**
- * Extract and validate the agent-club channel config from the top-level
+ * Extract and validate the agentclub channel config from the top-level
  * OpenClaw configuration object.
  */
 export function resolveAccount(
@@ -9,10 +9,10 @@ export function resolveAccount(
   accountId?: string | null,
 ): ResolvedAccount {
   const channels = cfg.channels as Record<string, unknown> | undefined;
-  const section = channels?.["agent-club"] as AgentClubConfig | undefined;
+  const section = channels?.["agentclub"] as AgentClubConfig | undefined;
 
-  if (!section?.serverUrl) throw new Error("agent-club: serverUrl is required");
-  if (!section?.agentToken) throw new Error("agent-club: agentToken is required");
+  if (!section?.serverUrl) throw new Error("agentclub: serverUrl is required");
+  if (!section?.agentToken) throw new Error("agentclub: agentToken is required");
 
   return {
     accountId: accountId ?? null,
@@ -29,7 +29,7 @@ export function inspectAccount(
   _accountId?: string | null,
 ): { enabled: boolean; configured: boolean; tokenStatus: string } {
   const channels = cfg.channels as Record<string, unknown> | undefined;
-  const section = channels?.["agent-club"] as AgentClubConfig | undefined;
+  const section = channels?.["agentclub"] as AgentClubConfig | undefined;
 
   return {
     enabled: Boolean(section?.serverUrl && section?.agentToken),

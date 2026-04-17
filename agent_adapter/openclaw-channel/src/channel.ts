@@ -28,7 +28,7 @@ function getAgentClubSection(cfg: OpenClawConfig | Record<string, unknown>): Age
   const channels = (cfg as Record<string, unknown>).channels as
     | Record<string, unknown>
     | undefined;
-  const section = channels?.["agent-club"] as AgentClubConfig | undefined;
+  const section = channels?.["agentclub"] as AgentClubConfig | undefined;
   return section ?? null;
 }
 
@@ -64,13 +64,13 @@ const agentClubConfigAdapter = {
   }),
 
   unconfiguredReason: (_account: ResolvedAccount, _cfg: OpenClawConfig): string =>
-    "agent-club: serverUrl and agentToken are required",
+    "agentclub: serverUrl and agentToken are required",
 };
 
 export const agentClubPlugin = createChatChannelPlugin<ResolvedAccount>({
   base: {
     ...createChannelPluginBase({
-      id: "agent-club",
+      id: "agentclub",
       setup: { resolveAccount, inspectAccount },
     }),
 
@@ -107,15 +107,15 @@ export const agentClubPlugin = createChatChannelPlugin<ResolvedAccount>({
       },
 
       targetResolver: {
-        looksLikeId: (raw: string) => raw.startsWith("agent-club:"),
-        hint: "agent-club:direct:<id> or agent-club:group:<id>",
+        looksLikeId: (raw: string) => raw.startsWith("agentclub:"),
+        hint: "agentclub:direct:<id> or agentclub:group:<id>",
       },
     },
   },
 
   security: {
     dm: {
-      channelKey: "agent-club",
+      channelKey: "agentclub",
       resolvePolicy: (account) => account.dmPolicy,
       resolveAllowFrom: (account) => account.allowFrom,
       defaultPolicy: "open",
@@ -126,7 +126,7 @@ export const agentClubPlugin = createChatChannelPlugin<ResolvedAccount>({
 
   outbound: {
     attachedResults: {
-      channel: "agent-club",
+      channel: "agentclub",
 
       async sendText(params) {
         const parsed = parseSessionKey(params.to);

@@ -52,8 +52,8 @@ const SEEN_MESSAGE_CAPACITY = 1024;
 export function createInboundGateway(opts: InboundGatewayOptions) {
   const { agentUserId, account, onInbound, onAck } = opts;
   const logger = opts.logger ?? {
-    info: (...args: unknown[]) => console.log("[agent-club:gw]", ...args),
-    warn: (...args: unknown[]) => console.warn("[agent-club:gw]", ...args),
+    info: (...args: unknown[]) => console.log("[agentclub:gw]", ...args),
+    warn: (...args: unknown[]) => console.warn("[agentclub:gw]", ...args),
   };
 
   // Second layer of defense: dedupe recently-seen message ids within this

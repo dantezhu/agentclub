@@ -1,14 +1,14 @@
 {
-  "id": "agent-club",
+  "id": "agentclub",
   "kind": "channel",
-  "channels": ["agent-club"],
+  "channels": ["agentclub"],
   "name": "Agent Club",
   "description": "Connect OpenClaw to an Agent Club IM server via Socket.IO",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
     "properties": {
-      "agent-club": {
+      "agentclub": {
         "type": "object",
         "properties": {
           "serverUrl": {

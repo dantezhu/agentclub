@@ -49,7 +49,7 @@ describe("createInboundGateway", () => {
 
     expect(received).toHaveLength(1);
     expect(received[0].text).toBe("Hello");
-    expect(received[0].sessionKey).toBe("agent-club:direct:chat-1");
+    expect(received[0].sessionKey).toBe("agentclub:direct:chat-1");
     expect(received[0].chatType).toBe("direct");
     expect(received[0].chatId).toBe("chat-1");
   });

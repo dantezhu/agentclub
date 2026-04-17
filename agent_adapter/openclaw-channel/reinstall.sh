@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 
-openclaw plugins uninstall agent-club --force
-rm /root/.openclaw/extensions/agent-club -rf
+openclaw plugins uninstall agentclub --force
+rm /root/.openclaw/extensions/agentclub -rf
 
 npm run build
 openclaw plugins install .

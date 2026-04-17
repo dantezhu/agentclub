@@ -19,9 +19,9 @@ export interface AgentClubClientOptions {
 }
 
 const DEFAULT_LOGGER = {
-  info: (...args: unknown[]) => console.log("[agent-club]", ...args),
-  warn: (...args: unknown[]) => console.warn("[agent-club]", ...args),
-  error: (...args: unknown[]) => console.error("[agent-club]", ...args),
+  info: (...args: unknown[]) => console.log("[agentclub]", ...args),
+  warn: (...args: unknown[]) => console.warn("[agentclub]", ...args),
+  error: (...args: unknown[]) => console.error("[agentclub]", ...args),
 };
 
 /**

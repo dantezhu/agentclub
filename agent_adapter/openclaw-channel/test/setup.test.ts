@@ -5,7 +5,7 @@ describe("resolveAccount", () => {
   it("resolves a valid config", () => {
     const cfg = {
       channels: {
-        "agent-club": {
+        "agentclub": {
           serverUrl: "https://im.example.com:5555",
           agentToken: "my-secret-token",
           requireMention: false,
@@ -25,7 +25,7 @@ describe("resolveAccount", () => {
   it("defaults requireMention to true", () => {
     const cfg = {
       channels: {
-        "agent-club": {
+        "agentclub": {
           serverUrl: "https://im.example.com",
           agentToken: "token",
         },
@@ -37,12 +37,12 @@ describe("resolveAccount", () => {
   });
 
   it("throws when serverUrl is missing", () => {
-    const cfg = { channels: { "agent-club": { agentToken: "token" } } };
+    const cfg = { channels: { "agentclub": { agentToken: "token" } } };
     expect(() => resolveAccount(cfg)).toThrow("serverUrl is required");
   });
 
   it("throws when agentToken is missing", () => {
-    const cfg = { channels: { "agent-club": { serverUrl: "https://im.example.com" } } };
+    const cfg = { channels: { "agentclub": { serverUrl: "https://im.example.com" } } };
     expect(() => resolveAccount(cfg)).toThrow("agentToken is required");
   });
 });
@@ -51,7 +51,7 @@ describe("inspectAccount", () => {
   it("reports configured when both fields present", () => {
     const cfg = {
       channels: {
-        "agent-club": {
+        "agentclub": {
           serverUrl: "https://im.example.com",
           agentToken: "token",
         },
@@ -71,7 +71,7 @@ describe("inspectAccount", () => {
   });
 
   it("reports not configured when token is missing", () => {
-    const cfg = { channels: { "agent-club": { serverUrl: "https://im.example.com" } } };
+    const cfg = { channels: { "agentclub": { serverUrl: "https://im.example.com" } } };
     const result = inspectAccount(cfg);
     expect(result.configured).toBe(false);
   });

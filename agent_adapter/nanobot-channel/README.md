@@ -32,7 +32,7 @@ pip install -e .
 pip install ./agent_adapter/nanobot-channel
 ```
 
-安装后，Nanobot 会通过 entry point 自动发现 `agent_club` channel。
+安装后，Nanobot 会通过 entry point 自动发现 `agentclub` channel。
 
 ## 配置
 
@@ -41,7 +41,7 @@ pip install ./agent_adapter/nanobot-channel
 ```json
 {
   "channels": {
-    "agent_club": {
+    "agentclub": {
       "enabled": true,
       "server_url": "https://your-im-server.com:5555",
       "agent_token": "从 Agent Club /admin 面板创建 Agent 后获取的 Token",
@@ -55,8 +55,8 @@ pip install ./agent_adapter/nanobot-channel
 也可以通过环境变量覆盖：
 
 ```bash
-export AGENT_CLUB_SERVER_URL="https://your-im-server.com:5555"
-export AGENT_CLUB_AGENT_TOKEN="your-token-here"
+export AGENTCLUB_SERVER_URL="https://your-im-server.com:5555"
+export AGENTCLUB_AGENT_TOKEN="your-token-here"
 ```
 
 ### 配置项说明
@@ -111,7 +111,7 @@ pytest tests/ -v
 
 ```
 nanobot-channel/
-├── nanobot_channel_agent_club/
+├── nanobot_channel_agentclub/
 │   ├── __init__.py       # 导出 AgentClubChannel
 │   └── channel.py        # BaseChannel 实现
 ├── tests/

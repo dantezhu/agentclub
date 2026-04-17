@@ -27,7 +27,7 @@ except ImportError:
 class AgentClubChannel(BaseChannel):  # type: ignore[misc]
     """Nanobot ↔ Agent Club IM bridge via Socket.IO."""
 
-    name = "agent_club"
+    name = "agentclub"
     display_name = "Agent Club"
 
     def __init__(self, config: dict[str, Any], bus: Any) -> None:
@@ -54,7 +54,7 @@ class AgentClubChannel(BaseChannel):  # type: ignore[misc]
     def _server_url(self) -> str:
         return (
             self.config.get("server_url")
-            or os.environ.get("AGENT_CLUB_SERVER_URL")
+            or os.environ.get("AGENTCLUB_SERVER_URL")
             or "http://localhost:5555"
         )
 
@@ -62,7 +62,7 @@ class AgentClubChannel(BaseChannel):  # type: ignore[misc]
     def _agent_token(self) -> str:
         return (
             self.config.get("agent_token")
-            or os.environ.get("AGENT_CLUB_AGENT_TOKEN")
+            or os.environ.get("AGENTCLUB_AGENT_TOKEN")
             or ""
         )
 
@@ -75,7 +75,7 @@ class AgentClubChannel(BaseChannel):  # type: ignore[misc]
     async def start(self) -> None:
         """Connect to the IM server and block until stop() is called."""
         if not self._agent_token:
-            logger.error("[agent_club] agent_token is not configured")
+            logger.error("[agentclub] agent_token is not configured")
             return
 
         self._running = True
@@ -86,7 +86,7 @@ class AgentClubChannel(BaseChannel):  # type: ignore[misc]
         )
         self._register_handlers()
 
-        logger.info("[agent_club] Connecting to {}", self._server_url)
+        logger.info("[agentclub] Connecting to {}", self._server_url)
         await self._sio.connect(
             self._server_url,
             auth={"agent_token": self._agent_token},
@@ -101,7 +101,7 @@ class AgentClubChannel(BaseChannel):  # type: ignore[misc]
         if self._http_session and not self._http_session.closed:
             await self._http_session.close()
 
-        logger.info("[agent_club] Channel stopped")
+        logger.info("[agentclub] Channel stopped")
 
     async def stop(self) -> None:
         self._running = False
@@ -111,7 +111,7 @@ class AgentClubChannel(BaseChannel):  # type: ignore[misc]
     async def send(self, msg: Any) -> None:
         """Send an OutboundMessage to the Agent Club IM server."""
         if not self._sio or not self._sio.connected:
-            logger.warning("[agent_club] Not connected, dropping outbound message")
+            logger.warning("[agentclub] Not connected, dropping outbound message")
             return
 
         # Skip progress/tool-hint metadata messages
@@ -124,7 +124,7 @@ class AgentClubChannel(BaseChannel):  # type: ignore[misc]
         media_list: list[str] = getattr(msg, "media", []) or []
 
         if not chat_id:
-            logger.warning("[agent_club] OutboundMessage has no chat_id")
+            logger.warning("[agentclub] OutboundMessage has no chat_id")
             return
 
         chat_type, resolved_chat_id = self._parse_chat_id(chat_id)
@@ -142,7 +142,7 @@ class AgentClubChannel(BaseChannel):  # type: ignore[misc]
                     "file_name": upload["filename"],
                 })
             except Exception:
-                logger.exception("[agent_club] Failed to upload {}", file_path)
+                logger.exception("[agentclub] Failed to upload {}", file_path)
 
         # Send text content
         if content.strip():
@@ -153,7 +153,7 @@ class AgentClubChannel(BaseChannel):  # type: ignore[misc]
                 "content_type": "text",
             })
             logger.info(
-                "[agent_club] Sent [{}:{}]: {}",
+                "[agentclub] Sent [{}:{}]: {}",
                 chat_type,
                 resolved_chat_id[:8],
                 content[:80],
@@ -170,7 +170,7 @@ class AgentClubChannel(BaseChannel):  # type: ignore[misc]
             self._agent_user_id = data["user_id"]
             self._agent_display_name = data.get("display_name", "")
             logger.info(
-                "[agent_club] Authenticated as {} ({})",
+                "[agentclub] Authenticated as {} ({})",
                 self._agent_display_name,
                 self._agent_user_id,
             )
@@ -181,21 +181,21 @@ class AgentClubChannel(BaseChannel):  # type: ignore[misc]
 
         @sio.on("offline_messages")
         async def on_offline_messages(msgs: list[dict[str, Any]]) -> None:
-            logger.info("[agent_club] Received {} offline message(s)", len(msgs))
+            logger.info("[agentclub] Received {} offline message(s)", len(msgs))
             for msg in msgs:
                 await self._process_inbound(msg)
 
         @sio.on("error")
         async def on_error(data: dict[str, Any]) -> None:
-            logger.error("[agent_club] Server error: {}", data.get("message"))
+            logger.error("[agentclub] Server error: {}", data.get("message"))
 
         @sio.on("connect")
         async def on_connect() -> None:
-            logger.info("[agent_club] Socket.IO connected")
+            logger.info("[agentclub] Socket.IO connected")
 
         @sio.on("disconnect")
         async def on_disconnect() -> None:
-            logger.warning("[agent_club] Socket.IO disconnected")
+            logger.warning("[agentclub] Socket.IO disconnected")
 
     # -- Inbound (IM → Agent) ------------------------------------------------
 
@@ -208,7 +208,7 @@ class AgentClubChannel(BaseChannel):  # type: ignore[misc]
         try:
             await self._sio.emit("mark_read", {"message_ids": [message_id]})
         except Exception as e:
-            logger.warning("[agent_club] mark_read failed for {}: {}", message_id, e)
+            logger.warning("[agentclub] mark_read failed for {}: {}", message_id, e)
 
     async def _process_inbound(self, data: dict[str, Any]) -> None:
         """Filter and forward an incoming IM message to the nanobot agent."""
@@ -251,7 +251,7 @@ class AgentClubChannel(BaseChannel):  # type: ignore[misc]
 
         sender_name = data.get("sender_name", sender_id)
         logger.info(
-            "[agent_club] Inbound [{}:{}] from {}: {}",
+            "[agentclub] Inbound [{}:{}] from {}: {}",
             chat_type,
             chat_id[:8],
             sender_name,
@@ -266,7 +266,7 @@ class AgentClubChannel(BaseChannel):  # type: ignore[misc]
                 if local_path:
                     media.append(local_path)
             except Exception:
-                logger.exception("[agent_club] Failed to download {}", data.get("file_url"))
+                logger.exception("[agentclub] Failed to download {}", data.get("file_url"))
 
         await self._handle_message(
             sender_id=sender_id,
@@ -327,7 +327,7 @@ class AgentClubChannel(BaseChannel):  # type: ignore[misc]
                 return None
             filename = file_url.rsplit("/", 1)[-1]
             import tempfile
-            tmp_dir = tempfile.mkdtemp(prefix="agent_club_")
+            tmp_dir = tempfile.mkdtemp(prefix="agentclub_")
             tmp_path = os.path.join(tmp_dir, filename)
             with open(tmp_path, "wb") as f:
                 f.write(await resp.read())

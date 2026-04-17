@@ -1,4 +1,4 @@
-/** Plugin configuration stored in openclaw config under channels.agent-club */
+/** Plugin configuration stored in openclaw config under channels.agentclub */
 export interface AgentClubConfig {
   serverUrl: string;
   agentToken: string;
