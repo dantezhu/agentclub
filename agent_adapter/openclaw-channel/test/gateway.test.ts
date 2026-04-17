@@ -2,9 +2,10 @@ import { describe, it, expect } from "vitest";
 import { createInboundGateway, type InboundMessage } from "../src/gateway.js";
 import type { NewMessagePayload, ResolvedAccount } from "../src/types.js";
 
+let _msgSeq = 0;
 function makeMsg(overrides: Partial<NewMessagePayload> = {}): NewMessagePayload {
   return {
-    id: "msg-1",
+    id: `msg-${++_msgSeq}`,
     chat_type: "direct",
     chat_id: "chat-1",
     sender_id: "user-1",
@@ -113,6 +114,41 @@ describe("createInboundGateway", () => {
     expect(received).toHaveLength(0);
 
     handle(makeMsg({ sender_id: "user-99" }));
+    expect(received).toHaveLength(1);
+  });
+
+  it("invokes onAck for accepted, filtered, and duplicate messages", () => {
+    const received: InboundMessage[] = [];
+    const acked: string[] = [];
+    const handle = createInboundGateway({
+      agentUserId: AGENT_ID,
+      account: makeAccount({ requireMention: true, allowFrom: ["user-99"] }),
+      onInbound: (msg) => received.push(msg),
+      onAck: (id) => acked.push(id),
+    });
+
+    handle(makeMsg({ id: "a", sender_id: AGENT_ID }));
+    handle(makeMsg({ id: "b", sender_id: "user-1" }));
+    handle(makeMsg({ id: "c", sender_id: "user-99", chat_type: "group", mentions: [] }));
+    handle(makeMsg({ id: "d", sender_id: "user-99" }));
+    handle(makeMsg({ id: "d", sender_id: "user-99" }));
+
+    expect(received.map((m) => m.rawPayload.id)).toEqual(["d"]);
+    expect(acked).toEqual(["b", "c", "d", "d"]);
+  });
+
+  it("dedupes messages with the same id (replayed offline_messages)", () => {
+    const received: InboundMessage[] = [];
+    const handle = createInboundGateway({
+      agentUserId: AGENT_ID,
+      account: makeAccount({ requireMention: false }),
+      onInbound: (msg) => received.push(msg),
+    });
+
+    const replayed = makeMsg({ id: "dup-1" });
+    handle(replayed);
+    handle(replayed);
+    handle({ ...replayed });
     expect(received).toHaveLength(1);
   });
 

@@ -23,7 +23,7 @@ def setup_db():
     yield
     # Clean tables after each test
     with models.get_db_ctx() as db:
-        for table in ["unread_messages", "messages", "group_members", "direct_chats", "groups", "users"]:
+        for table in ["read_cursors", "messages", "group_members", "direct_chats", "groups", "users"]:
             db.execute(f"DELETE FROM {table}")
 
 
@@ -373,21 +373,42 @@ class TestFileUpload:
 # ── Model Tests ──
 
 class TestModels:
-    def test_unread_messages(self):
+    def test_unread_read_cursor(self):
+        """Read cursor model: unread = messages after the cursor by others.
+
+        - Joining a chat does not flag history as unread.
+        - Marking read by message id advances per-chat cursor.
+        - Own messages never appear in the user's own unread.
+        """
         uid = models.create_user("u1", hash_password("pass"), "User1")
         uid2 = models.create_user("u2", hash_password("pass"), "User2")
         gid = models.create_group("G1", uid)
         models.add_group_member(gid, uid2)
 
-        result = models.save_message("group", gid, uid, "hello")
-        models.add_unread(uid2, result["id"])
+        m1 = models.save_message("group", gid, uid, "hello")
+        m2 = models.save_message("group", gid, uid, "world")
+        m3 = models.save_message("group", gid, uid2, "reply")
 
         unread = models.get_unread_messages(uid2)
-        assert len(unread) == 1
-        assert unread[0]["content"] == "hello"
+        assert [m["content"] for m in unread] == ["hello", "world"]
+        counts = models.get_unread_counts(uid2)
+        assert counts.get(f"group_{gid}") == 2
 
-        models.clear_unread(uid2)
-        assert len(models.get_unread_messages(uid2)) == 0
+        # uid sees only uid2's reply as unread
+        assert [m["content"] for m in models.get_unread_messages(uid)] == ["reply"]
+
+        # Advance uid2's cursor up to m1 → only "world" remains unread
+        models.mark_read_up_to_messages(uid2, [m1["id"]])
+        assert [m["content"] for m in models.get_unread_messages(uid2)] == ["world"]
+
+        # Bulk clear by chat → everything read
+        models.clear_unread(uid2, "group", gid)
+        assert models.get_unread_messages(uid2) == []
+        assert models.get_unread_counts(uid2).get(f"group_{gid}") is None
+
+        # Future message is unread again
+        m4 = models.save_message("group", gid, uid, "again")
+        assert [m["content"] for m in models.get_unread_messages(uid2)] == ["again"]
 
     def test_direct_chat(self):
         uid1 = models.create_user("u1", hash_password("pass"), "User1")

@@ -1,4 +1,5 @@
 import * as path from "node:path";
+import * as fs from "node:fs/promises";
 import * as crypto from "node:crypto";
 import type { PluginLogger, OpenClawConfig } from "openclaw/plugin-sdk/channel-core";
 import type { ResolvedAccount, EmbeddedRunResult, NewMessagePayload } from "./types.js";
@@ -110,7 +111,8 @@ export async function startAgentClubMonitor(ctx: MonitorContext): Promise<void> 
   gateway = createInboundGateway({
     agentUserId: authResult.user_id,
     account,
-    onInbound: (msg) => processInbound(msg, client, cfg, log),
+    onInbound: (msg) => processInbound(msg, client, cfg, log, account),
+    onAck: (id) => client.markRead(id),
     logger: {
       info: (...args: unknown[]) => log.info(...args),
       warn: (...args: unknown[]) => log.warn(...args),
@@ -140,11 +142,73 @@ export async function startAgentClubMonitor(ctx: MonitorContext): Promise<void> 
 // Inbound message processing
 // ---------------------------------------------------------------------------
 
+/**
+ * Sanitize an arbitrary inbound filename so it is safe to write into the
+ * agent workspace. We strip path separators and known-nasty characters but
+ * keep the original extension so downstream tools (image/file) can detect
+ * type by suffix.
+ */
+function sanitizeFilename(raw: string, fallback: string): string {
+  const base = (raw || "").replace(/[\\/]/g, "").replace(/[\x00-\x1f]/g, "").trim();
+  if (!base) return fallback;
+  return base.length > 200 ? base.slice(-200) : base;
+}
+
+/**
+ * Download an inbound attachment from the IM server and write it into the
+ * agent workspace. Returns the absolute on-disk path when successful.
+ *
+ * We intentionally preserve the filename the sender used (when possible) so
+ * the agent's `[image: foo.jpg]` / `[file: foo.pdf]` prompt references
+ * resolve via the image / file tool's default workspace-relative lookup.
+ */
+async function downloadAttachmentToWorkspace(params: {
+  serverUrl: string;
+  fileUrl: string;
+  fileName?: string;
+  workspaceDir: string;
+  log: PluginLogger;
+}): Promise<{ filePath: string; fileName: string } | null> {
+  const { serverUrl, fileUrl, fileName, workspaceDir, log } = params;
+  if (!fileUrl) return null;
+
+  const absoluteUrl = /^https?:\/\//i.test(fileUrl)
+    ? fileUrl
+    : new URL(fileUrl, serverUrl).toString();
+
+  try {
+    const res = await fetch(absoluteUrl);
+    if (!res.ok) {
+      log.warn(`[agent-club] Failed to download attachment ${absoluteUrl}: HTTP ${res.status}`);
+      return null;
+    }
+    const buf = Buffer.from(await res.arrayBuffer());
+
+    await fs.mkdir(workspaceDir, { recursive: true });
+
+    // Prefer sender-supplied name; fall back to URL basename, then random hex.
+    const urlBasename = path.basename(new URL(absoluteUrl).pathname) || "";
+    const finalName = sanitizeFilename(
+      fileName || urlBasename,
+      `inbound-${crypto.randomBytes(4).toString("hex")}.bin`,
+    );
+
+    const filePath = path.join(workspaceDir, finalName);
+    await fs.writeFile(filePath, buf);
+    log.info(`[agent-club] Saved inbound attachment to ${filePath} (${buf.length} bytes)`);
+    return { filePath, fileName: finalName };
+  } catch (err) {
+    log.error(`[agent-club] Attachment download failed (${absoluteUrl}):`, err);
+    return null;
+  }
+}
+
 async function processInbound(
   msg: InboundMessage,
   client: AgentClubClient,
   cfg: OpenClawConfig,
   log: PluginLogger,
+  account: ResolvedAccount,
 ): Promise<void> {
   const runtime = getRuntime();
   const agentDir = runtime.agent.resolveAgentDir(cfg);
@@ -154,6 +218,25 @@ async function processInbound(
   const safeSessionId = msg.sessionKey.replace(/[^a-zA-Z0-9_-]/g, "_");
   const agentId = DEFAULT_AGENT_ID;
   const primary = resolvePrimaryModel(cfg, agentId);
+
+  // If the inbound message carries a file, download it into the workspace so
+  // the agent's built-in image/file tools can resolve the filename referenced
+  // in the prompt (e.g. "[image: photo.jpg]").
+  let prompt = msg.text;
+  if (msg.attachmentUrl) {
+    const saved = await downloadAttachmentToWorkspace({
+      serverUrl: account.serverUrl,
+      fileUrl: msg.attachmentUrl,
+      fileName: msg.attachmentName,
+      workspaceDir,
+      log,
+    });
+    if (saved && saved.fileName !== msg.attachmentName) {
+      // Keep the prompt in sync with the actual on-disk filename so the
+      // agent can reference it verbatim.
+      prompt = prompt.replace(msg.attachmentName ?? "", saved.fileName);
+    }
+  }
 
   if (!primary) {
     log.warn(
@@ -176,7 +259,7 @@ async function processInbound(
       runId: crypto.randomUUID(),
       sessionFile: path.join(agentDir, "sessions", `${safeSessionId}.jsonl`),
       workspaceDir,
-      prompt: msg.text,
+      prompt,
       timeoutMs,
       ...(primary ? { provider: primary.provider, model: primary.model } : {}),
     } as Parameters<typeof runtime.agent.runEmbeddedAgent>[0]);

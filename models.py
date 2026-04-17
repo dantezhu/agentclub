@@ -55,15 +55,26 @@ CREATE TABLE IF NOT EXISTS messages (
     created_at REAL NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS unread_messages (
+-- Per-user, per-chat "read cursor". `last_read_at` is a unix timestamp; any
+-- message in the chat with `created_at > last_read_at` and `sender_id !=
+-- user_id` is considered unread. A user's first-time baseline for a chat is
+-- either the chat creation time (direct) or the group membership join time
+-- (group), so joining a chat does not retroactively flag history as unread.
+CREATE TABLE IF NOT EXISTS read_cursors (
     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
-    PRIMARY KEY (user_id, message_id)
+    chat_type TEXT NOT NULL,
+    chat_id TEXT NOT NULL,
+    last_read_at REAL NOT NULL,
+    PRIMARY KEY (user_id, chat_type, chat_id)
 );
+
+-- Legacy table from the per-message unread model; kept as a no-op drop so
+-- upgrading instances don't leave orphan data around.
+DROP TABLE IF EXISTS unread_messages;
 
 CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages(chat_type, chat_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_messages_created ON messages(created_at);
-CREATE INDEX IF NOT EXISTS idx_unread_user ON unread_messages(user_id);
+CREATE INDEX IF NOT EXISTS idx_read_cursors_user ON read_cursors(user_id);
 CREATE INDEX IF NOT EXISTS idx_users_agent_token ON users(agent_token);
 
 CREATE TABLE IF NOT EXISTS settings (
@@ -181,7 +192,7 @@ def list_agents():
 def delete_user(user_id):
     with get_db_ctx() as db:
         db.execute("DELETE FROM group_members WHERE user_id = ?", (user_id,))
-        db.execute("DELETE FROM unread_messages WHERE user_id = ?", (user_id,))
+        # read_cursors cascades via FK
         db.execute("DELETE FROM users WHERE id = ?", (user_id,))
 
 
@@ -269,7 +280,10 @@ def get_user_groups(user_id):
 
 def delete_group(group_id):
     with get_db_ctx() as db:
-        db.execute("DELETE FROM unread_messages WHERE message_id IN (SELECT id FROM messages WHERE chat_type = 'group' AND chat_id = ?)", (group_id,))
+        db.execute(
+            "DELETE FROM read_cursors WHERE chat_type = 'group' AND chat_id = ?",
+            (group_id,),
+        )
         db.execute("DELETE FROM messages WHERE chat_type = 'group' AND chat_id = ?", (group_id,))
         db.execute("DELETE FROM group_members WHERE group_id = ?", (group_id,))
         db.execute("DELETE FROM groups WHERE id = ?", (group_id,))
@@ -291,7 +305,10 @@ def delete_direct_chat(chat_id, user_id):
     with get_db_ctx() as db:
         chat = db.execute("SELECT * FROM direct_chats WHERE id = ? AND (user1_id = ? OR user2_id = ?)", (chat_id, user_id, user_id)).fetchone()
         if chat:
-            db.execute("DELETE FROM unread_messages WHERE message_id IN (SELECT id FROM messages WHERE chat_type = 'direct' AND chat_id = ?)", (chat_id,))
+            db.execute(
+                "DELETE FROM read_cursors WHERE chat_type = 'direct' AND chat_id = ?",
+                (chat_id,),
+            )
             db.execute("DELETE FROM messages WHERE chat_type = 'direct' AND chat_id = ?", (chat_id,))
             db.execute("DELETE FROM direct_chats WHERE id = ?", (chat_id,))
 
@@ -321,12 +338,13 @@ def get_user_direct_chats(user_id):
         "CASE WHEN dc.user1_id = ? THEN u2.id ELSE u1.id END AS peer_id, "
         "CASE WHEN dc.user1_id = ? THEN u2.display_name ELSE u1.display_name END AS peer_name, "
         "CASE WHEN dc.user1_id = ? THEN u2.avatar ELSE u1.avatar END AS peer_avatar, "
-        "CASE WHEN dc.user1_id = ? THEN u2.is_online ELSE u1.is_online END AS peer_online "
+        "CASE WHEN dc.user1_id = ? THEN u2.is_online ELSE u1.is_online END AS peer_online, "
+        "CASE WHEN dc.user1_id = ? THEN u2.is_agent ELSE u1.is_agent END AS peer_is_agent "
         "FROM direct_chats dc "
         "JOIN users u1 ON dc.user1_id = u1.id "
         "JOIN users u2 ON dc.user2_id = u2.id "
         "WHERE dc.user1_id = ? OR dc.user2_id = ?",
-        (user_id, user_id, user_id, user_id, user_id, user_id),
+        (user_id, user_id, user_id, user_id, user_id, user_id, user_id),
     ).fetchall()
     db.close()
     return [dict(r) for r in rows]
@@ -392,50 +410,148 @@ def get_messages(chat_type, chat_id, before=None, limit=50):
     return [dict(r) for r in reversed(rows)]
 
 
-def add_unread(user_id, message_id):
+# ── Read-cursor based unread tracking ──
+#
+# Instead of one row per (user, unread-message), we store a single
+# `last_read_at` timestamp per (user, chat). Unread messages are those with
+# `created_at > last_read_at` authored by someone other than the user.
+#
+# Baseline for users without a cursor row: the chat's creation time for
+# direct chats, or the member's `joined_at` for groups. This way joining a
+# chat never retroactively flags the full history as unread, and we don't
+# need to eagerly insert cursor rows on chat creation.
+
+
+def mark_read(user_id, chat_type, chat_id, up_to_ts=None):
+    """Advance the user's read cursor for this chat. `up_to_ts` is the
+    inclusive ceiling (defaults to now). The cursor only moves forward — a
+    smaller `up_to_ts` is ignored."""
+    ts = float(up_to_ts) if up_to_ts is not None else now()
     with get_db_ctx() as db:
         db.execute(
-            "INSERT OR IGNORE INTO unread_messages (user_id, message_id) VALUES (?, ?)",
-            (user_id, message_id),
+            "INSERT INTO read_cursors (user_id, chat_type, chat_id, last_read_at) "
+            "VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(user_id, chat_type, chat_id) DO UPDATE SET "
+            "last_read_at = MAX(last_read_at, excluded.last_read_at)",
+            (user_id, chat_type, chat_id, ts),
         )
+
+
+def mark_read_up_to_message(user_id, message_id):
+    """Advance the cursor to include the given message (and everything before
+    it in the same chat)."""
+    db = get_db()
+    row = db.execute(
+        "SELECT chat_type, chat_id, created_at FROM messages WHERE id = ?",
+        (message_id,),
+    ).fetchone()
+    db.close()
+    if not row:
+        return False
+    mark_read(user_id, row["chat_type"], row["chat_id"], row["created_at"])
+    return True
+
+
+def mark_read_up_to_messages(user_id, message_ids):
+    """Batch variant: resolve each id to its (chat, created_at) and advance
+    the per-chat cursor to the MAX created_at. Missing ids are silently
+    ignored."""
+    ids = [m for m in (message_ids or []) if m]
+    if not ids:
+        return
+    placeholders = ",".join("?" for _ in ids)
+    db = get_db()
+    rows = db.execute(
+        f"SELECT chat_type, chat_id, MAX(created_at) AS ts FROM messages "
+        f"WHERE id IN ({placeholders}) GROUP BY chat_type, chat_id",
+        ids,
+    ).fetchall()
+    db.close()
+    for r in rows:
+        mark_read(user_id, r["chat_type"], r["chat_id"], r["ts"])
+
+
+# Public alias used by callers that just want to "bulk mark this chat as
+# read up to now". Signature mirrors the historical `clear_unread` for
+# backward compatibility with call sites.
+def clear_unread(user_id, chat_type=None, chat_id=None):
+    if chat_type and chat_id:
+        mark_read(user_id, chat_type, chat_id)
+        return
+    # No chat specified → mark every chat the user participates in.
+    db = get_db()
+    direct = db.execute(
+        "SELECT id FROM direct_chats WHERE user1_id = ? OR user2_id = ?",
+        (user_id, user_id),
+    ).fetchall()
+    groups = db.execute(
+        "SELECT group_id FROM group_members WHERE user_id = ?",
+        (user_id,),
+    ).fetchall()
+    db.close()
+    ts = now()
+    for r in direct:
+        mark_read(user_id, "direct", r["id"], ts)
+    for r in groups:
+        mark_read(user_id, "group", r["group_id"], ts)
+
+
+def _unread_where_clauses():
+    """Shared CTE that enumerates each chat the user is in and joins the
+    per-chat baseline: either the user's cursor, or the chat-creation /
+    group-join timestamp when no cursor has been set yet."""
+    return (
+        "WITH user_chats AS ( "
+        "  SELECT 'direct' AS chat_type, dc.id AS chat_id, dc.created_at AS joined_at "
+        "  FROM direct_chats dc WHERE dc.user1_id = :uid OR dc.user2_id = :uid "
+        "  UNION ALL "
+        "  SELECT 'group', gm.group_id, gm.joined_at "
+        "  FROM group_members gm WHERE gm.user_id = :uid "
+        "), "
+        "chat_since AS ( "
+        "  SELECT uc.chat_type, uc.chat_id, "
+        "         COALESCE(rc.last_read_at, uc.joined_at) AS since "
+        "  FROM user_chats uc "
+        "  LEFT JOIN read_cursors rc "
+        "         ON rc.user_id = :uid AND rc.chat_type = uc.chat_type AND rc.chat_id = uc.chat_id "
+        ") "
+    )
 
 
 def get_unread_counts(user_id):
     db = get_db()
-    rows = db.execute(
-        "SELECT m.chat_type, m.chat_id, COUNT(*) AS count "
-        "FROM unread_messages um JOIN messages m ON um.message_id = m.id "
-        "WHERE um.user_id = ? GROUP BY m.chat_type, m.chat_id",
-        (user_id,),
-    ).fetchall()
+    sql = _unread_where_clauses() + (
+        "SELECT cs.chat_type, cs.chat_id, COUNT(m.id) AS count "
+        "FROM chat_since cs "
+        "LEFT JOIN messages m "
+        "       ON m.chat_type = cs.chat_type AND m.chat_id = cs.chat_id "
+        "      AND m.sender_id != :uid AND m.created_at > cs.since "
+        "GROUP BY cs.chat_type, cs.chat_id "
+        "HAVING count > 0"
+    )
+    rows = db.execute(sql, {"uid": user_id}).fetchall()
     db.close()
     return {f"{r['chat_type']}_{r['chat_id']}": r["count"] for r in rows}
 
 
 def get_unread_messages(user_id):
+    """Return all messages the user has not yet read, across every chat
+    they're in, ordered by creation time. Used for offline-catchup delivery
+    on (re)connect."""
     db = get_db()
-    rows = db.execute(
-        "SELECT m.*, u.display_name AS sender_name, u.avatar AS sender_avatar, u.is_agent AS sender_is_agent "
-        "FROM unread_messages um "
-        "JOIN messages m ON um.message_id = m.id "
+    sql = _unread_where_clauses() + (
+        "SELECT m.*, u.display_name AS sender_name, u.avatar AS sender_avatar, "
+        "       u.is_agent AS sender_is_agent "
+        "FROM chat_since cs "
+        "JOIN messages m "
+        "  ON m.chat_type = cs.chat_type AND m.chat_id = cs.chat_id "
+        " AND m.sender_id != :uid AND m.created_at > cs.since "
         "JOIN users u ON m.sender_id = u.id "
-        "WHERE um.user_id = ? ORDER BY m.created_at",
-        (user_id,),
-    ).fetchall()
+        "ORDER BY m.created_at"
+    )
+    rows = db.execute(sql, {"uid": user_id}).fetchall()
     db.close()
     return [dict(r) for r in rows]
-
-
-def clear_unread(user_id, chat_type=None, chat_id=None):
-    with get_db_ctx() as db:
-        if chat_type and chat_id:
-            db.execute(
-                "DELETE FROM unread_messages WHERE user_id = ? AND message_id IN "
-                "(SELECT id FROM messages WHERE chat_type = ? AND chat_id = ?)",
-                (user_id, chat_type, chat_id),
-            )
-        else:
-            db.execute("DELETE FROM unread_messages WHERE user_id = ?", (user_id,))
 
 
 def cleanup_old_messages(days=None):
@@ -443,7 +559,6 @@ def cleanup_old_messages(days=None):
         days = Config.MESSAGE_RETENTION_DAYS
     cutoff = now() - days * 86400
     with get_db_ctx() as db:
-        db.execute("DELETE FROM unread_messages WHERE message_id IN (SELECT id FROM messages WHERE created_at < ?)", (cutoff,))
         db.execute("DELETE FROM messages WHERE created_at < ?", (cutoff,))
 
 

@@ -94,19 +94,25 @@ def register_events(socketio):
 
         chat_key = f"{chat_type}_{chat_id}"
 
+        # Unread tracking uses a per-(user,chat) read cursor; we don't
+        # insert a row per recipient on send. Just notify recipients whose
+        # counts may have changed (they might be viewing another chat and
+        # want to see the badge update).
         if chat_type == "group":
             socketio.emit("new_message", msg, room=f"group_{chat_id}")
             members = models.get_group_members(chat_id)
             for m in members:
                 if m["id"] == user_id:
                     continue
-                # Check if any of this user's tabs are viewing this chat
                 viewing = any(
                     active_chat.get(sid) == chat_key
                     for sid in user_sids.get(m["id"], set())
                 )
-                if not viewing:
-                    models.add_unread(m["id"], result["id"])
+                if viewing:
+                    # Recipient is actively looking at the chat → advance
+                    # their cursor so the message doesn't linger as unread.
+                    models.mark_read(m["id"], chat_type, chat_id, result["created_at"])
+                else:
                     _notify_unread(socketio, m["id"])
 
         elif chat_type == "direct":
@@ -123,8 +129,9 @@ def register_events(socketio):
                     active_chat.get(sid) == chat_key
                     for sid in user_sids.get(peer_id, set())
                 )
-                if not viewing:
-                    models.add_unread(peer_id, result["id"])
+                if viewing:
+                    models.mark_read(peer_id, chat_type, chat_id, result["created_at"])
+                else:
                     _notify_unread(socketio, peer_id)
             socketio.emit("new_message", msg, room=f"direct_{chat_id}")
 
@@ -170,13 +177,34 @@ def register_events(socketio):
 
     @socketio.on("mark_read")
     def on_mark_read(data):
+        """Advance the user's read cursor for a chat.
+
+        Accepts either:
+          {chat_type, chat_id}              → advance to now (bulk)
+          {chat_type, chat_id, message_id}  → advance to that message's ts
+          {message_id}                      → advance cursor inferred from
+                                              the message's (chat_type, chat_id)
+          {message_ids: [...]}              → batch form of the above
+
+        Humans open a chat to emit the bulk form; agents emit the per-message
+        form after processing each inbound message.
+        """
         user_id = connected_users.get(request.sid)
         if not user_id:
             return
+
+        ids = data.get("message_ids")
+        if not ids and data.get("message_id"):
+            ids = [data["message_id"]]
+
+        if ids:
+            models.mark_read_up_to_messages(user_id, ids)
+            return
+
         chat_type = data.get("chat_type")
         chat_id = data.get("chat_id")
         if chat_type and chat_id:
-            models.clear_unread(user_id, chat_type, chat_id)
+            models.mark_read(user_id, chat_type, chat_id)
 
 
 def _register_connection(user, sid):
@@ -198,13 +226,17 @@ def _register_connection(user, sid):
     for dc in dchats:
         join_room(f"direct_{dc['id']}")
 
-    # Send offline messages
+    # Send any still-unread messages so the recipient can catch up. We do NOT
+    # auto-clear here; the recipient must ACK explicitly (humans ACK by opening
+    # a chat via `join_chat`/`mark_read`, agents ACK per-message via
+    # `ack_message`). This prevents both (a) lost badges on page refresh and
+    # (b) reply storms when an agent's socket reconnects and would otherwise
+    # re-process already-handled messages.
     unread = models.get_unread_messages(user_id)
     if unread:
         for msg in unread:
             msg["mentions"] = json.loads(msg.get("mentions", "[]"))
         emit("offline_messages", unread)
-        models.clear_unread(user_id)
 
     # Broadcast online status
     _broadcast_presence(user, True)

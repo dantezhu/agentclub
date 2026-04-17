@@ -135,10 +135,13 @@ function renderChatList() {
             const dot = d.peer_online ? '<span class="online-dot"></span>' : '';
             const dUnread = unreadCounts[`direct_${d.id}`] || 0;
             const dBadge = dUnread ? `<span class="badge">${dUnread > 99 ? '99+' : dUnread}</span>` : '';
+            const isAgent = !!d.peer_is_agent;
+            const avatarClass = isAgent ? 'avatar agent' : 'avatar';
+            const agentTag = isAgent ? ' <span class="chat-tag agent">Agent</span>' : '';
             html += `<div class="chat-item ${isActive ? 'active' : ''}" onclick="openChat('direct','${d.id}','${escHtml(d.peer_name)}')" oncontextmenu="showChatMenu(event,'direct','${d.id}','delete')">
-                <div class="avatar">${d.peer_avatar ? `<img src="${escHtml(d.peer_avatar)}">` : initial}</div>
+                <div class="${avatarClass}">${d.peer_avatar ? `<img src="${escHtml(d.peer_avatar)}">` : initial}</div>
                 <div class="chat-item-info">
-                    <div class="name">${dot}${escHtml(d.peer_name)}</div>
+                    <div class="name">${dot}${escHtml(d.peer_name)}${agentTag}</div>
                     <div class="preview" id="preview_direct_${d.id}">${escHtml(previewText(lastMessages['direct_' + d.id]))}</div>
                 </div>
                 ${dBadge}
@@ -522,6 +525,10 @@ function setupInputHandlers() {
     const input = document.getElementById('messageInput');
 
     input.addEventListener('keydown', (e) => {
+        // Ignore Enter while an IME composition is active (e.g. selecting a
+        // Chinese/English candidate via Enter). Chromium reports keyCode 229
+        // during composition even when isComposing is momentarily false.
+        if (e.isComposing || e.keyCode === 229) return;
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
             sendMessage();

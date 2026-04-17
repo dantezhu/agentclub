@@ -199,11 +199,24 @@ class AgentClubChannel(BaseChannel):  # type: ignore[misc]
 
     # -- Inbound (IM → Agent) ------------------------------------------------
 
+    async def _ack(self, message_id: str | None) -> None:
+        """Advance the server-side read cursor to this message. Tells the IM
+        server the agent has processed everything in this chat up through
+        (and including) this message. Safe on a disconnected socket (no-op)."""
+        if not message_id or not self._sio:
+            return
+        try:
+            await self._sio.emit("mark_read", {"message_ids": [message_id]})
+        except Exception as e:
+            logger.warning("[agent_club] mark_read failed for {}: {}", message_id, e)
+
     async def _process_inbound(self, data: dict[str, Any]) -> None:
         """Filter and forward an incoming IM message to the nanobot agent."""
         sender_id = data.get("sender_id", "")
+        message_id = data.get("id")
 
-        # Never process our own messages
+        # Never process our own messages. Our own messages are not in our
+        # unread list, so no ACK either.
         if sender_id == self._agent_user_id:
             return
 
@@ -216,6 +229,7 @@ class AgentClubChannel(BaseChannel):  # type: ignore[misc]
         # Group mention filter
         if chat_type == "group" and self._require_mention:
             if self._agent_user_id not in mentions:
+                await self._ack(message_id)
                 return
 
         # Build text for non-text content
@@ -225,7 +239,12 @@ class AgentClubChannel(BaseChannel):  # type: ignore[misc]
             content = f"{content}\n{file_desc}" if content else file_desc
 
         if not content.strip():
+            await self._ack(message_id)
             return
+
+        # ACK immediately on accept: we've taken responsibility for this
+        # message. Prevents reply storms on transient reconnects.
+        await self._ack(message_id)
 
         # Compose the chat_id nanobot uses (includes type prefix for routing)
         composite_chat_id = f"{chat_type}:{chat_id}"

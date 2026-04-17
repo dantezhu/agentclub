@@ -133,6 +133,18 @@ export class AgentClubClient {
     this.socket!.emit("send_message", payload);
   }
 
+  /**
+   * Advance the server-side read cursor. Equivalent to saying "I have
+   * processed everything in this chat up to and including these messages."
+   * Safe to call when disconnected (no-op) — anything unread will be
+   * re-delivered via `offline_messages` on the next reconnect.
+   */
+  markRead(messageIds: string | string[]): void {
+    const ids = Array.isArray(messageIds) ? messageIds : [messageIds];
+    if (!ids.length || !this.socket?.connected) return;
+    this.socket.emit("mark_read", { message_ids: ids });
+  }
+
   async uploadFile(fileBuffer: Uint8Array, fileName: string): Promise<UploadResponse> {
     const ab = fileBuffer.buffer.slice(
       fileBuffer.byteOffset,
