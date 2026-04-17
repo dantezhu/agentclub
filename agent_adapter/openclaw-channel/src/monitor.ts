@@ -1,6 +1,3 @@
-import * as path from "node:path";
-import * as fs from "node:fs/promises";
-import * as crypto from "node:crypto";
 import type { PluginLogger, OpenClawConfig } from "openclaw/plugin-sdk/channel-core";
 import type { ResolvedAccount, NewMessagePayload } from "./types.js";
 import { AgentClubClient } from "./client.js";
@@ -8,7 +5,11 @@ import { createInboundGateway, type InboundMessage } from "./gateway.js";
 import { setActiveClient, getRuntime } from "./runtime.js";
 
 const CHANNEL_ID = "agent-club";
-const MEDIA_SUBDIR = "media";
+
+// Matches the upload limit of the Agent Club IM server (see backend
+// `config.py` MAX_CONTENT_LENGTH). `saveMediaBuffer` defaults to 5MB which
+// would truncate large attachments; we raise it to the IM server's own cap.
+const ATTACHMENT_MAX_BYTES = 50 * 1024 * 1024;
 
 /**
  * Wire format for @mentions, mirrored from the feishu channel:
@@ -208,77 +209,35 @@ export async function startAgentClubMonitor(ctx: MonitorContext): Promise<void> 
 // ---------------------------------------------------------------------------
 
 /**
- * Sanitize an arbitrary inbound filename so it is safe to write into the
- * agent workspace. We strip path separators and known-nasty characters but
- * keep the original extension so downstream tools (image/file) can detect
- * type by suffix.
- */
-function sanitizeFilename(raw: string, fallback: string): string {
-  const base = (raw || "").replace(/[\\/]/g, "").replace(/[\x00-\x1f]/g, "").trim();
-  if (!base) return fallback;
-  return base.length > 200 ? base.slice(-200) : base;
-}
-
-/**
- * Find a non-colliding on-disk path inside `dir` for `desiredName`. If the
- * file already exists we don't want to silently overwrite the previous
- * attachment — two users sending `photo.jpg` should end up with two files,
- * not one. Appends `-1`, `-2`, … between the basename and extension,
- * matching the convention most desktop OSes use for "Save As" collisions.
+ * Download an inbound attachment from the IM server and hand it off to
+ * OpenClaw's shared media store (`~/.openclaw/media/inbound/`), matching the
+ * convention used by the bundled Feishu / Telegram / Matrix channels.
  *
- * Uses `O_EXCL` (`flag: "wx"`) in the caller so the existence check + write
- * is atomic; this helper only computes candidate names.
- */
-async function findAvailableMediaPath(
-  dir: string,
-  desiredName: string,
-): Promise<{ filePath: string; fileName: string }> {
-  const ext = path.extname(desiredName);
-  const stem = desiredName.slice(0, desiredName.length - ext.length);
-
-  for (let i = 0; i < 1000; i++) {
-    const candidate = i === 0 ? desiredName : `${stem}-${i}${ext}`;
-    const candidatePath = path.join(dir, candidate);
-    try {
-      await fs.access(candidatePath);
-    } catch {
-      return { filePath: candidatePath, fileName: candidate };
-    }
-  }
-  // Extremely unlikely: fall back to a random suffix so the write never
-  // silently overwrites even under pathological collision patterns.
-  const random = crypto.randomBytes(4).toString("hex");
-  const name = `${stem}-${random}${ext}`;
-  return { filePath: path.join(dir, name), fileName: name };
-}
-
-/**
- * Download an inbound attachment from the IM server into
- * `<workspaceDir>/media/`.
+ * Using `runtime.channel.media.saveMediaBuffer` instead of rolling our own
+ * write gets us for free:
+ *   - a unified on-disk layout that ops/TTL cleanup already know about,
+ *   - UUID-suffixed filenames (`<name>---<uuid>.<ext>`) so collisions are
+ *     impossible without overwriting anyone else's file, and
+ *   - the original filename preserved in the sanitized prefix, which is
+ *     what `extractOriginalFilename` gives back when the agent refers to
+ *     the file by name.
  *
- * Keeping attachments inside a dedicated `media/` subdir avoids polluting the
- * workspace root (where the agent may keep its own working files) while still
- * being resolvable by the built-in `image` / `file` tools via a relative
- * path like `media/photo.jpg`.
- *
- * Returns both the absolute on-disk path and the workspace-relative path
- * (`media/<filename>`), plus the final filename after sanitization. If the
- * sender-supplied filename had to be sanitized, callers should replace the
- * original filename in the prompt with the workspace-relative path so the
- * agent's tool lookups still resolve.
+ * We return the absolute on-disk path; callers pass that to the SDK as
+ * `MediaPath`/`MediaPaths` so the media autorouter can feed the file into
+ * vision / file-understanding models without the agent having to locate it.
  */
-async function downloadAttachmentToWorkspace(params: {
+async function downloadInboundAttachment(params: {
   serverUrl: string;
   fileUrl: string;
   fileName?: string;
-  workspaceDir: string;
+  contentType?: string;
   log: PluginLogger;
 }): Promise<{
   filePath: string;
   fileName: string;
-  relativePath: string;
+  contentType?: string;
 } | null> {
-  const { serverUrl, fileUrl, fileName, workspaceDir, log } = params;
+  const { serverUrl, fileUrl, fileName, contentType, log } = params;
   if (!fileUrl) return null;
 
   const absoluteUrl = /^https?:\/\//i.test(fileUrl)
@@ -293,42 +252,24 @@ async function downloadAttachmentToWorkspace(params: {
     }
     const buf = Buffer.from(await res.arrayBuffer());
 
-    const mediaDir = path.join(workspaceDir, MEDIA_SUBDIR);
-    await fs.mkdir(mediaDir, { recursive: true });
-
-    // Prefer sender-supplied name; fall back to URL basename, then random hex.
-    const urlBasename = path.basename(new URL(absoluteUrl).pathname) || "";
-    const desiredName = sanitizeFilename(
-      fileName || urlBasename,
-      `inbound-${crypto.randomBytes(4).toString("hex")}.bin`,
+    const runtime = getRuntime();
+    // `saveMediaBuffer(buffer, contentType, subdir, maxBytes, originalFilename)`
+    // writes to `<configDir>/media/<subdir>/<name>---<uuid>.<ext>` and returns
+    // the absolute path + final id. `subdir="inbound"` is what every bundled
+    // channel uses for user-originated media.
+    const saved = await runtime.channel.media.saveMediaBuffer(
+      buf,
+      contentType,
+      "inbound",
+      ATTACHMENT_MAX_BYTES,
+      fileName,
     );
-
-    // Resolve a non-colliding filename, then open with `O_EXCL` so two
-    // concurrent downloads racing on the same name can't both claim it.
-    // If the exclusive-create fails because another writer just won the
-    // race, loop once more to pick a new candidate.
-    let filePath: string;
-    let finalName: string;
-    let attempt = 0;
-    for (;;) {
-      const picked = await findAvailableMediaPath(mediaDir, desiredName);
-      try {
-        await fs.writeFile(picked.filePath, buf, { flag: "wx" });
-        filePath = picked.filePath;
-        finalName = picked.fileName;
-        break;
-      } catch (err: unknown) {
-        // EEXIST = racing writer won, retry with a fresh candidate.
-        if ((err as NodeJS.ErrnoException)?.code === "EEXIST" && attempt < 5) {
-          attempt += 1;
-          continue;
-        }
-        throw err;
-      }
-    }
-    const relativePath = `${MEDIA_SUBDIR}/${finalName}`;
-    log.info(`Saved inbound attachment to ${filePath} (${buf.length} bytes)`);
-    return { filePath, fileName: finalName, relativePath };
+    log.info(`Saved inbound attachment to ${saved.path} (${saved.size} bytes)`);
+    return {
+      filePath: saved.path,
+      fileName: fileName || saved.id,
+      contentType: saved.contentType,
+    };
   } catch (err) {
     log.error(`Attachment download failed (${absoluteUrl}): ${formatLogArg(err)}`);
     return null;
@@ -363,33 +304,38 @@ async function processInbound(
   account: ResolvedAccount,
 ): Promise<void> {
   const runtime = getRuntime();
-  const workspaceDir = runtime.agent.resolveAgentWorkspaceDir(cfg);
   const agentUserId = client.agentUserId || "";
 
-  // 1. If the user attached a file, download it to the agent workspace.
-  //    Keep the on-disk absolute path — that's what the SDK's media
-  //    autorouter passes to the model provider (MiniMax vision, Gemini
-  //    vision, etc.) via MediaPath/MediaPaths. Relative paths like
-  //    `media/foo.jpg` are what the built-in `image` tool scans for
-  //    inside the prompt text, so we also substitute those in.
+  // 1. If the user attached a file, stash it in OpenClaw's shared media
+  //    store (`~/.openclaw/media/inbound/`) via the official SDK helper.
+  //    That's where Feishu/Telegram/Matrix put their inbound files too,
+  //    so ops tooling and TTL cleanup already cover it. The absolute
+  //    path we get back is handed to the SDK via MediaPath/MediaPaths;
+  //    the media autorouter then feeds the file into whichever vision /
+  //    file-understanding model fits (e.g. MiniMax-VL-01 for images on
+  //    a MiniMax text primary).
   let prompt = msg.text;
   let mediaPayload: Record<string, unknown> = {};
   if (msg.attachmentUrl) {
-    const saved = await downloadAttachmentToWorkspace({
+    const saved = await downloadInboundAttachment({
       serverUrl: account.serverUrl,
       fileUrl: msg.attachmentUrl,
       fileName: msg.attachmentName,
-      workspaceDir,
+      contentType: msg.contentType,
       log,
     });
     if (saved) {
-      const originalRef = msg.attachmentName || saved.fileName;
-      if (prompt.includes(originalRef)) {
-        prompt = prompt.replace(originalRef, saved.relativePath);
+      // If the gateway baked the original filename into the prompt
+      // (e.g. `[image: photo.jpg]`), swap it for the absolute path so a
+      // naive `image({"image": ...})` tool call from the agent still
+      // resolves even when the SDK's autorouter hasn't kicked in yet.
+      const originalRef = msg.attachmentName;
+      if (originalRef && prompt.includes(originalRef)) {
+        prompt = prompt.replace(originalRef, saved.filePath);
       } else {
-        prompt = `${prompt}\n(attachment saved at ${saved.relativePath})`;
+        prompt = `${prompt}\n(attachment saved at ${saved.filePath})`;
       }
-      const mime = inferMimeType(saved.fileName, msg.contentType);
+      const mime = inferMimeType(saved.fileName, saved.contentType || msg.contentType);
       mediaPayload = {
         MediaPath: saved.filePath,
         MediaPaths: [saved.filePath],

@@ -106,6 +106,26 @@ declare module "openclaw/plugin-sdk/channel-core" {
           replyOptions?: Record<string, unknown>;
         }) => Promise<unknown>;
       };
+      /**
+       * Shared media store used by the bundled channels (feishu / telegram /
+       * matrix / ...). `saveMediaBuffer` writes to
+       * `<openclawConfigDir>/media/<subdir>/<name>---<uuid>.<ext>` and
+       * returns the absolute on-disk path plus the detected mime.
+       */
+      media: {
+        saveMediaBuffer: (
+          buffer: Buffer,
+          contentType?: string,
+          subdir?: string,
+          maxBytes?: number,
+          originalFilename?: string,
+        ) => Promise<{
+          id: string;
+          path: string;
+          size: number;
+          contentType?: string;
+        }>;
+      };
     };
     config: {
       loadConfig: () => Promise<OpenClawConfig>;
