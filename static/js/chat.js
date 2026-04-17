@@ -1101,9 +1101,14 @@ function toggleSidebar() {
  * the backdrop state in sync with the UI.
  */
 function syncMobileOverlay() {
+    const isMobile = window.matchMedia('(max-width: 768px)').matches;
+    const overlay = document.getElementById('overlay');
+    if (!isMobile) {
+        overlay.classList.add('hidden');
+        return;
+    }
     const sidebarOpen = document.getElementById('sidebar').classList.contains('open');
     const membersOpen = !document.getElementById('membersPanel').classList.contains('hidden');
-    const overlay = document.getElementById('overlay');
     if (sidebarOpen || membersOpen) overlay.classList.remove('hidden');
     else overlay.classList.add('hidden');
 }
@@ -1382,18 +1387,23 @@ function uploadGroupAvatar(groupId) {
     input.click();
 }
 
-function showCreateGroupModal() {
+async function showCreateGroupModal() {
     document.getElementById('sidebarMenu').classList.add('hidden');
     const name = prompt('请输入群组名称');
     if (!name || !name.trim()) return;
-    fetch('/api/groups', {
+    const res = await fetch('/api/groups', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({ name: name.trim() }),
-    }).then(r => {
-        if (r.ok) { loadChats(); }
-        else r.json().then(d => alert(d.error || '创建失败'));
     });
+    if (res.ok) {
+        const group = await res.json();
+        await loadChats();
+        openChat('group', group.id, group.name);
+    } else {
+        const d = await res.json().catch(() => ({}));
+        alert(d.error || '创建失败');
+    }
 }
 
 async function showNewChatModal() {
