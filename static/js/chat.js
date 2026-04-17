@@ -146,7 +146,7 @@ function renderChatList() {
             const isAgent = !!d.peer_is_agent;
             const avatarClass = isAgent ? 'avatar agent' : 'avatar';
             const agentTag = isAgent ? ' <span class="chat-tag agent">Agent</span>' : '';
-            html += `<div class="chat-item ${isActive ? 'active' : ''}" onclick="openChat('direct','${d.id}','${escHtml(d.peer_name)}')" oncontextmenu="showChatMenu(event,'direct','${d.id}','delete')">
+            html += `<div class="chat-item ${isActive ? 'active' : ''}" onclick="openChat('direct','${d.id}','${escHtml(d.peer_name)}',${isAgent})" oncontextmenu="showChatMenu(event,'direct','${d.id}','delete')">
                 <div class="${avatarClass}">${d.peer_avatar ? `<img src="${escHtml(d.peer_avatar)}">` : initial}</div>
                 <div class="chat-item-info">
                     <div class="name">${dot}${escHtml(d.peer_name)}${agentTag}</div>
@@ -165,8 +165,8 @@ function renderChatList() {
 }
 
 /* ── Open Chat ── */
-async function openChat(type, id, name) {
-    currentChat = { type, id, name };
+async function openChat(type, id, name, isAgent = false) {
+    currentChat = { type, id, name, isAgent };
     invalidateMentionMembers();
     hideMentionPicker();
     document.getElementById('emptyState').classList.add('hidden');
@@ -176,7 +176,10 @@ async function openChat(type, id, name) {
     // drawer so the chat view is visible.
     document.getElementById('sidebar').classList.remove('open');
     syncMobileOverlay();
-    document.getElementById('chatTitle').textContent = name;
+    const titleAgentTag = (type === 'direct' && isAgent)
+        ? '<span class="chat-tag agent">Agent</span>'
+        : '';
+    document.getElementById('chatTitle').innerHTML = escHtml(name) + titleAgentTag;
     document.getElementById('messageList').innerHTML = '';
     document.getElementById('loadMoreBtn').classList.add('hidden');
     delete oldestTimestamp[`${type}_${id}`];
@@ -1417,14 +1420,14 @@ async function showNewChatModal() {
         const tag = u.is_agent ? ' <span class="member-tag agent">Agent</span>' : '';
         html += `<div class="add-user-item">
             <span>${dot}${escHtml(u.display_name)}${tag}</span>
-            <button class="btn-sm" onclick="startDirectChat('${u.id}','${escHtml(u.display_name)}')">聊天</button>
+            <button class="btn-sm" onclick="startDirectChat('${u.id}','${escHtml(u.display_name)}',${!!u.is_agent})">聊天</button>
         </div>`;
     }
     document.getElementById('newChatUserList').innerHTML = html || '<div style="color:#999;font-size:13px;padding:12px">暂无其他用户</div>';
     document.getElementById('newChatModal').classList.remove('hidden');
 }
 
-async function startDirectChat(userId, userName) {
+async function startDirectChat(userId, userName, isAgent = false) {
     closeModal('newChatModal');
     const res = await fetch('/api/direct-chats', {
         method: 'POST',
@@ -1434,7 +1437,7 @@ async function startDirectChat(userId, userName) {
     if (!res.ok) { alert('创建对话失败'); return; }
     const chat = await res.json();
     await loadChats();
-    openChat('direct', chat.id, userName);
+    openChat('direct', chat.id, userName, isAgent);
 }
 
 function closeModal(id) {
