@@ -663,12 +663,7 @@ function toggleSidebar() {
 }
 
 /* ── Members panel ── */
-async function toggleMembers() {
-    const panel = document.getElementById('membersPanel');
-    if (!panel.classList.contains('hidden')) {
-        panel.classList.add('hidden');
-        return;
-    }
+async function renderMembersPanel() {
     if (!currentChat || currentChat.type !== 'group') return;
 
     const [membersRes, groupRes] = await Promise.all([
@@ -703,6 +698,16 @@ async function toggleMembers() {
         </div>`;
     }
     document.getElementById('membersList').innerHTML = html;
+}
+
+async function toggleMembers() {
+    const panel = document.getElementById('membersPanel');
+    if (!panel.classList.contains('hidden')) {
+        panel.classList.add('hidden');
+        return;
+    }
+    if (!currentChat || currentChat.type !== 'group') return;
+    await renderMembersPanel();
     panel.classList.remove('hidden');
 }
 
@@ -710,8 +715,7 @@ async function removeMember(groupId, userId) {
     if (!confirm('确定要移除该成员吗？')) return;
     const res = await fetch(`/api/groups/${groupId}/members/${userId}`, { method: 'DELETE' });
     if (res.ok) {
-        toggleMembers(); // close
-        toggleMembers(); // reopen to refresh
+        await renderMembersPanel();
     } else {
         const data = await res.json();
         alert(data.error || '移除失败');
@@ -728,7 +732,7 @@ async function showAddMember(groupId) {
     for (const u of users) {
         if (memberIds.has(u.id)) continue;
         const tag = u.is_agent ? ' <span class="member-tag agent">Agent</span>' : '';
-        html += `<div class="add-user-item">
+        html += `<div class="add-user-item" data-user-id="${u.id}">
             <span>${escHtml(u.display_name)}${tag}</span>
             <button class="btn-sm" onclick="addMember('${groupId}','${u.id}',this)">添加</button>
         </div>`;
@@ -738,14 +742,40 @@ async function showAddMember(groupId) {
 }
 
 async function addMember(groupId, userId, btn) {
-    const res = await fetch(`/api/groups/${groupId}/members`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_id: userId }),
-    });
-    if (res.ok) {
-        btn.parentElement.remove();
-        loadChats();
+    const originalText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '添加中...';
+    try {
+        const res = await fetch(`/api/groups/${groupId}/members`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user_id: userId }),
+        });
+        if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            btn.disabled = false;
+            btn.textContent = originalText;
+            alert(data.error || '添加失败');
+            return;
+        }
+
+        // Swap the button for a subtle "已添加" marker and strike the row.
+        const row = btn.closest('.add-user-item');
+        if (row) {
+            row.style.opacity = '0.5';
+            btn.replaceWith(Object.assign(document.createElement('span'), {
+                textContent: '已添加',
+                style: 'color:#52c41a;font-size:13px',
+            }));
+        }
+
+        // Refresh both the right-hand members panel and the sidebar preview
+        // (new member may change badge counts / last-message previews).
+        await Promise.all([renderMembersPanel(), loadChats()]);
+    } catch (e) {
+        btn.disabled = false;
+        btn.textContent = originalText;
+        alert('添加失败：' + e);
     }
 }
 

@@ -249,16 +249,38 @@ def add_member(group_id):
         return jsonify({"error": "用户不存在"}), 404
     models.add_group_member(group_id, user_id)
 
-    # Notify the added user in real-time
+    # Push the new membership to any open tabs the user has. Two subtleties:
+    #   1. We cannot use `flask_socketio.join_room(...)` here because it tries
+    #      to read `flask.request.namespace`, which only exists inside a
+    #      Socket.IO event handler — HTTP routes don't have it.
+    #   2. `user_sids` can contain stale sids (between a reload's connect and
+    #      the old socket's disconnect, or after an engineio ping timeout).
+    #      `server.enter_room` raises `ValueError: sid is not connected to
+    #      requested namespace` for those, so we guard and skip.
     from socket_events import user_sids
     from app import socketio
-    from flask_socketio import join_room as sio_join_room
-    if user_id in user_sids:
-        for sid in user_sids[user_id]:
-            sio_join_room(f"group_{group_id}", sid=sid)
-            socketio.emit("chat_list_updated", to=sid)
+    _room_transition(socketio, user_sids.get(user_id, set()), f"group_{group_id}", join=True)
 
     return jsonify({"ok": True})
+
+
+def _room_transition(socketio, sids, room, *, join):
+    """Best-effort add/remove sids to a Socket.IO room from an HTTP context.
+    Stale sids are silently skipped; a sidebar-refresh nudge is emitted to
+    every sid we tried, regardless of outcome."""
+    for sid in list(sids):
+        try:
+            if join:
+                socketio.server.enter_room(sid, room, namespace="/")
+            else:
+                socketio.server.leave_room(sid, room, namespace="/")
+        except (KeyError, ValueError):
+            # sid has already disconnected — nothing to do.
+            pass
+        try:
+            socketio.emit("chat_list_updated", to=sid)
+        except Exception:
+            pass
 
 
 @api.route("/api/groups/<group_id>/members/<user_id>", methods=["DELETE"])
@@ -273,6 +295,13 @@ def remove_member(group_id, user_id):
     if user_id == group["created_by"]:
         return jsonify({"error": "不能移除群创建者"}), 400
     models.remove_group_member(group_id, user_id)
+
+    # Kick the removed user out of the Socket.IO room so they stop seeing
+    # new messages immediately, and push a sidebar refresh.
+    from socket_events import user_sids
+    from app import socketio
+    _room_transition(socketio, user_sids.get(user_id, set()), f"group_{group_id}", join=False)
+
     return jsonify({"ok": True})
 
 

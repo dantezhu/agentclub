@@ -269,7 +269,9 @@ body {
     font-weight: 600;
     color: #333;
 }
-.message .msg-sender.agent-name { color: #f5576c; }
+/* Agents used to be highlighted in red inside the chat, but the sidebar/
+   member-list already carry a distinct "Agent" tag — keeping the message
+   sender name in the default color is calmer and more consistent. */
 .message .msg-time {
     font-size: 11px;
     color: #bbb;
