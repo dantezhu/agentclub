@@ -73,6 +73,7 @@ function makeAccount(overrides: Partial<ResolvedAccount> = {}): ResolvedAccount 
     agentToken: "test-token",
     requireMention: false,
     allowFrom: ["*"],
+    allowFromKind: ["*"],
     dmPolicy: undefined,
     ...overrides,
   };

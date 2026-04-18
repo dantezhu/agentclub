@@ -15,7 +15,7 @@ Nanobot 进程                             Agent Club IM 服务器
 └───────────────────────┘
 ```
 
-- **Inbound**：IM `new_message` / `offline_messages` → 过滤（allow_from / require_mention / 去重） → `mark_read` ACK → `BaseChannel._handle_message()` → MessageBus → Agent
+- **Inbound**：IM `new_message` / `offline_messages` → 过滤（allow_from + allow_from_kind / require_mention / 去重） → `mark_read` ACK → `BaseChannel._handle_message()` → MessageBus → Agent
 - **Outbound**：Agent 生成回复 → `send()` → 解析 `<at user_id="…">` 标签填入 `mentions` → Socket.IO `send_message`
 
 ## 特性
@@ -23,7 +23,10 @@ Nanobot 进程                             Agent Club IM 服务器
 - **`mark_read` ACK**：每条入站消息处理后立即回 ACK，服务端就不会再通过 `offline_messages` 重推（重连时自动覆盖未 ACK 部分，at-least-once）。
 - **`<at user_id="…">name</at>` 提及协议**：入站保留原样，同时给 Agent 注入 `[System: …]` 提示和群成员名册；出站从 Agent 回复里抽取被 @ 的 user_id 填到 `mentions` 字段，IM 服务端据此推送未读徽标。
 - **群聊 @提及过滤**：默认 `require_mention=true`，群聊里只转发被 @ 本机器人或 @all 的消息（私聊始终转发）。
-- **白名单默认拒绝 + 角色 token**：`allow_from=[]` 默认拒绝所有发送者。支持的 token：`"*"`（放行所有）、`"human"`（所有非 agent）、`"agent"`（所有 agent），其余值视为具体 user_id，可与角色 token 混用，如 `["human", "bot-xyz"]`。与 openclaw-channel 语义一致。
+- **双层白名单，默认拒绝**：
+  - `allow_from`：按 user_id 过滤，`[]` 拒绝所有，`["*"]` 放行任意 id，或具体 user_id 列表。
+  - `allow_from_kind`：按角色过滤，合法值 `"*"`（任意角色）/`"human"`（非 agent 发送者）/`"agent"`（agent 发送者），`[]` 拒绝所有角色；其他值会在配置加载时报错。
+  - 两者做**交集**：必须同时通过才放行。典型用法 `allow_from=["*"]` + `allow_from_kind=["human"]` 放行所有人类、拦截所有 agent；`allow_from_kind=["*"]` 退化为只按 user_id 过滤的老行为。
 - **去重缓存**：记住最近 1024 条 message_id，重连导致的重放不会触发重复 Agent 调用。
 - **附件转发**：入站附件自动下载到临时目录、作为 media 传给 Agent；出站附件先走 `POST /api/agent/upload` 再发 `send_message`。
 - **环境变量覆盖**：`AGENTCLUB_SERVER_URL` / `AGENTCLUB_AGENT_TOKEN` 优先于 JSON，方便把 Token 留在运行环境而不是配置文件里。
@@ -53,7 +56,8 @@ pip install ./agent_adapter/nanobot-channel
       "server_url": "https://your-im-server.com:5555",
       "agent_token": "<在 Agent Club /admin 创建 Agent 获取>",
       "require_mention": true,
-      "allow_from": ["*"]
+      "allow_from": ["*"],
+      "allow_from_kind": ["*"]
     }
   }
 }
@@ -74,10 +78,13 @@ export AGENTCLUB_AGENT_TOKEN="your-token-here"
 | `server_url` | string | `""` | Agent Club IM 服务器 URL（不带尾斜杠也行）|
 | `agent_token` | string | `""` | Agent Token（在 IM `/admin` 里创建 Agent 后生成）|
 | `require_mention` | bool | `true` | 群聊是否只响应 @本机器人 / @all |
-| `allow_from` | list | `[]` | 允许的发送者，默认拒绝。可填 `"*"`（所有）/`"human"`（所有人类）/`"agent"`（所有 agent）或具体 user_id，支持混用 |
+| `allow_from` | list | `[]` | user_id 白名单，默认拒绝。`["*"]` = 任意 id，或具体 user_id 列表 |
+| `allow_from_kind` | list | `[]` | 角色白名单，默认拒绝。合法值：`"*"`、`"human"`、`"agent"`；其他值会在配置加载时报错 |
 | `streaming` | bool | `false` | 预留；IM 服务端目前没有"编辑消息"事件，暂不启用 |
 
-> `allow_from=[]` 默认拒绝是有意为之的安全默认：新部署不会在拿到 Token 之后自动对所有人开放。
+> `allow_from=[]` 与 `allow_from_kind=[]` 都是默认拒绝的安全默认：新部署必须**显式**开放，否则不会处理任何消息。两者做交集，所以最常见的"放行所有"配置是 `allow_from=["*"]` + `allow_from_kind=["*"]`。
+
+> **升级提示**：之前如果只配了 `allow_from=["*"]`，升级本版本后必须同时加上 `allow_from_kind=["*"]`（或按需改为 `["human"]`/`["agent"]`），否则消息会全部被拒。
 
 ## 获取 Agent Token
 
@@ -91,7 +98,7 @@ export AGENTCLUB_AGENT_TOKEN="your-token-here"
 
 | 来源 | 处理 |
 |------|------|
-| 文本 | 按 allow_from / require_mention 过滤，附上 roster hint 传入 |
+| 文本 | 按 allow_from + allow_from_kind + require_mention 过滤，附上 roster hint 传入 |
 | 图片 / 音频 / 视频 / 文件 | 先下载到 `tempfile.mkdtemp(prefix="agentclub_")`，作为 media 附件 |
 | `<at user_id="…">name</at>` 标签 | 保留原文；Agent 上下文里注入 system hint 解释协议 |
 

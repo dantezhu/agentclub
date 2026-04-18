@@ -93,6 +93,7 @@ def channel(monkeypatch):
         server_url="http://localhost:5555",
         agent_token="tok",
         allow_from=["*"],
+        allow_from_kind=["*"],
         require_mention=True,
     )
     bus = MagicMock()
@@ -206,9 +207,19 @@ class TestInboundFiltering:
         channel.bus.publish_inbound.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_allow_from_human_token_accepts_only_humans(self, channel):
-        """`"human"` token lets any non-agent sender through, and blocks agents."""
-        channel.config.allow_from = ["human"]
+    async def test_empty_allow_from_kind_denies_everyone(self, channel):
+        """Default-deny for the role filter: `[]` rejects every kind."""
+        channel.config.allow_from = ["*"]
+        channel.config.allow_from_kind = []
+        await channel._process_inbound(
+            _inbound(sender_id="user-a", sender_is_agent=False)
+        )
+        channel.bus.publish_inbound.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_allow_from_kind_human_accepts_only_humans(self, channel):
+        channel.config.allow_from = ["*"]
+        channel.config.allow_from_kind = ["human"]
 
         await channel._process_inbound(
             _inbound(id="m-h", sender_id="user-a", sender_is_agent=False)
@@ -222,9 +233,9 @@ class TestInboundFiltering:
         channel.bus.publish_inbound.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_allow_from_agent_token_accepts_only_agents(self, channel):
-        """`"agent"` token lets any agent sender through, and blocks humans."""
-        channel.config.allow_from = ["agent"]
+    async def test_allow_from_kind_agent_accepts_only_agents(self, channel):
+        channel.config.allow_from = ["*"]
+        channel.config.allow_from_kind = ["agent"]
 
         await channel._process_inbound(
             _inbound(id="m-a", sender_id="bot-x", sender_is_agent=True)
@@ -238,22 +249,25 @@ class TestInboundFiltering:
         channel.bus.publish_inbound.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_allow_from_mixes_role_tokens_and_user_ids(self, channel):
-        """Role tokens compose with explicit user_ids (union)."""
-        channel.config.allow_from = ["human", "bot-allowed"]
+    async def test_allow_from_intersects_with_allow_from_kind(self, channel):
+        """Both filters must pass — intersection, not union."""
+        # Whitelist two ids; limit kind to agents only. Only the agent
+        # id should get through; the human id is vetoed by kind filter.
+        channel.config.allow_from = ["user-a", "bot-allowed"]
+        channel.config.allow_from_kind = ["agent"]
 
-        # Human: allowed via "human"
         await channel._process_inbound(
             _inbound(id="h1", sender_id="user-a", sender_is_agent=False)
         )
-        # Whitelisted agent: allowed via explicit id
+        channel.bus.publish_inbound.assert_not_awaited()
+
         await channel._process_inbound(
             _inbound(id="a1", sender_id="bot-allowed", sender_is_agent=True)
         )
-        assert channel.bus.publish_inbound.await_count == 2
+        channel.bus.publish_inbound.assert_awaited_once()
 
         channel.bus.publish_inbound.reset_mock()
-        # Non-whitelisted agent: denied
+        # Agent not in allow_from — id filter vetoes even though kind passes.
         await channel._process_inbound(
             _inbound(id="a2", sender_id="bot-other", sender_is_agent=True)
         )
@@ -292,6 +306,28 @@ class TestInboundFiltering:
             _inbound(chat_type="group", chat_id="grp-1", mentions=[])
         )
         channel.bus.publish_inbound.assert_awaited_once()
+
+
+class TestConfigValidation:
+    """Pydantic-level validation on the config schema itself."""
+
+    def test_allow_from_kind_defaults_to_empty_list(self):
+        cfg = AgentClubConfig()
+        assert cfg.allow_from_kind == []
+
+    def test_allow_from_kind_accepts_valid_tokens(self):
+        cfg = AgentClubConfig(allow_from_kind=["*", "human", "agent"])
+        assert cfg.allow_from_kind == ["*", "human", "agent"]
+
+    def test_allow_from_kind_rejects_invalid_token(self):
+        """Typos / unknown roles must fail loud at load time."""
+        import pydantic
+
+        with pytest.raises(pydantic.ValidationError) as excinfo:
+            AgentClubConfig(allow_from_kind=["human", "admin"])
+        msg = str(excinfo.value)
+        assert "allow_from_kind" in msg
+        assert "admin" in msg
 
 
 class TestInboundMarkRead:

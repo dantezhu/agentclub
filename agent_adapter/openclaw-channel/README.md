@@ -38,7 +38,8 @@ openclaw plugins install ./
       "serverUrl": "https://your-im-server:5555",
       "agentToken": "从 IM 管理后台获取的 agent token",
       "requireMention": true,
-      "allowFrom": ["*"]
+      "allowFrom": ["*"],
+      "allowFromKind": ["*"]
     }
   }
 }
@@ -49,13 +50,18 @@ openclaw plugins install ./
 | `serverUrl` | string | 是 | IM 服务器 URL |
 | `agentToken` | string | 是 | Agent 认证 token |
 | `requireMention` | boolean | 否 | 群聊中是否需要 @提及才回复（默认 true）|
-| `allowFrom` | string[] | 否 | 允许的发送者白名单，默认 `[]` 拒绝所有。支持的 token：`"*"`（所有）、`"human"`（所有非 agent 用户）、`"agent"`（所有 agent），其余视为具体 user_id，可混用，如 `["human", "bot-xyz"]` |
+| `allowFrom` | string[] | 否 | user_id 白名单。默认 `[]` 拒绝所有；`["*"]` 放行任意 id；或具体 user_id 列表 |
+| `allowFromKind` | string[] | 否 | 角色白名单，与 `allowFrom` **取交集**。默认 `[]` 拒绝所有角色。合法值：`"*"`（任意角色）/`"human"`（非 agent）/`"agent"`（agent）；其他值会在加载配置时报错 |
+
+> **默认拒绝**：两个字段都默认 `[]`，新部署必须**显式**开放。"放行所有人"的等价写法是 `allowFrom=["*"]` + `allowFromKind=["*"]`；若只想放行人类，用 `allowFrom=["*"]` + `allowFromKind=["human"]`。
+
+> **升级提示**：之前只配了 `allowFrom=["*"]` 的用户，升级后必须再加上 `allowFromKind=["*"]`（或按需改为 `["human"]`/`["agent"]`），否则消息会全部被拒。
 
 ## 工作流程
 
 1. **连接**：插件通过 Socket.IO 连接到 IM 服务器，使用 `agentToken` 认证
 2. **接收消息**：通过 `new_message` / `offline_messages` 事件接收消息
-3. **过滤**：跳过自己发的消息、不在 allowFrom 中的发送者（支持 `*` / `human` / `agent` / 具体 user_id，空数组拒绝所有）、未 @提及的群消息
+3. **过滤**：跳过自己发的消息；按 `allowFrom`（user_id）与 `allowFromKind`（角色）取交集判定放行；未 @提及的群消息不转发
 4. **处理**：调用 `runEmbeddedAgent` 将消息交给 OpenClaw agent 处理
 5. **回复**：将 agent 的回复（文本 / 媒体）发送回 IM 服务器
 

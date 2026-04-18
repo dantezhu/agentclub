@@ -29,6 +29,7 @@ function makeAccount(overrides: Partial<ResolvedAccount> = {}): ResolvedAccount 
     agentToken: "test-token",
     requireMention: true,
     allowFrom: ["*"],
+    allowFromKind: ["*"],
     dmPolicy: undefined,
     ...overrides,
   };
@@ -185,11 +186,27 @@ describe("createInboundGateway", () => {
     expect(received).toHaveLength(1);
   });
 
-  it("'human' token accepts only non-agent senders", () => {
+  it("rejects all messages when allowFromKind is empty (default-deny)", () => {
+    const received: InboundMessage[] = [];
+    const acked: string[] = [];
+    const handle = createInboundGateway({
+      agentUserId: AGENT_ID,
+      account: makeAccount({ allowFrom: ["*"], allowFromKind: [] }),
+      onInbound: (msg) => received.push(msg),
+      onAck: (id) => acked.push(id),
+    });
+
+    handle(makeMsg({ id: "k1", sender_id: "user-1", sender_is_agent: false }));
+    handle(makeMsg({ id: "k2", sender_id: "bot-1", sender_is_agent: true }));
+    expect(received).toHaveLength(0);
+    expect(acked).toEqual(expect.arrayContaining(["k1", "k2"]));
+  });
+
+  it("allowFromKind='human' accepts only non-agent senders", () => {
     const received: InboundMessage[] = [];
     const handle = createInboundGateway({
       agentUserId: AGENT_ID,
-      account: makeAccount({ allowFrom: ["human"] }),
+      account: makeAccount({ allowFrom: ["*"], allowFromKind: ["human"] }),
       onInbound: (msg) => received.push(msg),
     });
 
@@ -199,11 +216,11 @@ describe("createInboundGateway", () => {
     expect(received[0].senderId).toBe("user-1");
   });
 
-  it("'agent' token accepts only agent senders", () => {
+  it("allowFromKind='agent' accepts only agent senders", () => {
     const received: InboundMessage[] = [];
     const handle = createInboundGateway({
       agentUserId: AGENT_ID,
-      account: makeAccount({ allowFrom: ["agent"] }),
+      account: makeAccount({ allowFrom: ["*"], allowFromKind: ["agent"] }),
       onInbound: (msg) => received.push(msg),
     });
 
@@ -213,18 +230,25 @@ describe("createInboundGateway", () => {
     expect(received[0].senderId).toBe("bot-1");
   });
 
-  it("mixes role tokens with explicit user IDs (union)", () => {
+  it("allowFrom and allowFromKind are intersected (both must pass)", () => {
+    // Only bot-allowed is in allowFrom AND only agents pass allowFromKind.
+    // → user-1 (human): fails kind filter.
+    // → bot-other (agent but not in allowFrom): fails id filter.
+    // → bot-allowed (agent in allowFrom): passes both.
     const received: InboundMessage[] = [];
     const handle = createInboundGateway({
       agentUserId: AGENT_ID,
-      account: makeAccount({ allowFrom: ["human", "bot-allowed"] }),
+      account: makeAccount({
+        allowFrom: ["user-1", "bot-allowed"],
+        allowFromKind: ["agent"],
+      }),
       onInbound: (msg) => received.push(msg),
     });
 
-    handle(makeMsg({ sender_id: "user-1", sender_is_agent: false }));       // via "human"
-    handle(makeMsg({ sender_id: "bot-allowed", sender_is_agent: true }));   // via explicit id
-    handle(makeMsg({ sender_id: "bot-other", sender_is_agent: true }));     // denied
-    expect(received.map((m) => m.senderId)).toEqual(["user-1", "bot-allowed"]);
+    handle(makeMsg({ sender_id: "user-1", sender_is_agent: false }));
+    handle(makeMsg({ sender_id: "bot-other", sender_is_agent: true }));
+    handle(makeMsg({ sender_id: "bot-allowed", sender_is_agent: true }));
+    expect(received.map((m) => m.senderId)).toEqual(["bot-allowed"]);
   });
 
   it("invokes onAck for accepted, filtered, and duplicate messages", () => {

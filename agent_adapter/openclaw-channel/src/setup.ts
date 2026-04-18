@@ -1,4 +1,33 @@
-import type { AgentClubConfig, ResolvedAccount } from "./types.js";
+import {
+  ALLOW_FROM_KIND_TOKENS,
+  type AgentClubConfig,
+  type AllowFromKindToken,
+  type ResolvedAccount,
+} from "./types.js";
+
+/**
+ * Validate the raw `allowFromKind` list. Unknown tokens (e.g. typos like
+ * `"humans"` / `"bot"`) raise at load time — silently dropping them
+ * would look like "default-deny is broken" to an operator.
+ */
+function validateAllowFromKind(raw: unknown): AllowFromKindToken[] {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw)) {
+    throw new Error(
+      `agentclub: allowFromKind must be an array, got ${typeof raw}`,
+    );
+  }
+  const valid = new Set<string>(ALLOW_FROM_KIND_TOKENS);
+  const invalid = raw.filter((t) => !valid.has(t as string));
+  if (invalid.length > 0) {
+    throw new Error(
+      `agentclub: allowFromKind entries must be one of ${JSON.stringify(
+        ALLOW_FROM_KIND_TOKENS,
+      )}; got invalid tokens: ${JSON.stringify(invalid)}`,
+    );
+  }
+  return raw as AllowFromKindToken[];
+}
 
 /**
  * Extract and validate the agentclub channel config from the top-level
@@ -20,6 +49,7 @@ export function resolveAccount(
     agentToken: section.agentToken,
     requireMention: section.requireMention ?? true,
     allowFrom: section.allowFrom ?? [],
+    allowFromKind: validateAllowFromKind(section.allowFromKind),
     dmPolicy: undefined,
   };
 }

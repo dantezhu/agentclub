@@ -3,7 +3,17 @@ export interface AgentClubConfig {
   serverUrl: string;
   agentToken: string;
   requireMention?: boolean;
+  /**
+   * user_id allowlist. Entries are concrete user_ids plus the wildcard
+   * `"*"`. Empty `[]` denies everyone (default-deny).
+   */
   allowFrom?: string[];
+  /**
+   * Role allowlist, intersected with `allowFrom` (both must pass).
+   * Valid entries: `"*"` (any kind), `"human"` (non-agent senders),
+   * `"agent"` (agent senders). Empty `[]` denies every kind.
+   */
+  allowFromKind?: string[];
 }
 
 /** Resolved account after config validation */
@@ -13,8 +23,13 @@ export interface ResolvedAccount {
   agentToken: string;
   requireMention: boolean;
   allowFrom: string[];
+  allowFromKind: AllowFromKindToken[];
   dmPolicy: string | undefined;
 }
+
+/** Legal tokens for `allowFromKind`. Everything else is rejected at load time. */
+export const ALLOW_FROM_KIND_TOKENS = ["*", "human", "agent"] as const;
+export type AllowFromKindToken = (typeof ALLOW_FROM_KIND_TOKENS)[number];
 
 // -- Socket.IO payloads -----------------------------------------------------
 

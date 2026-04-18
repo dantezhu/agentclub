@@ -42,31 +42,35 @@ export interface InboundGatewayOptions {
  *
  * Filtering rules:
  * 1. Skip messages sent by the agent itself.
- * 2. allowFrom must accept the sender. Entries may be:
- *      "*"     → anyone
- *      "human" → any non-agent sender
- *      "agent" → any agent sender
- *      else    → a specific user_id
- *    An empty allowFrom rejects everyone (default-deny).
+ * 2. Two orthogonal allowlists — the sender must pass BOTH (intersection):
+ *      - allowFrom: id-based. `["*"]` = any id, else explicit user_ids.
+ *        `[]` denies everyone.
+ *      - allowFromKind: role-based. `"*"` = any kind, `"human"`, `"agent"`.
+ *        `[]` denies every kind.
  * 3. In group chats with requireMention, skip messages without @mention.
  * 4. Direct chats always pass through.
  */
 
-/**
- * Evaluate `allowFrom` against a concrete sender. Separated out so the
- * 4-case token decision table lives in one place and is easy to unit
- * test.
- */
-export function isSenderAllowed(
+/** Evaluate `allowFrom` (id-based) against a concrete sender. */
+export function isSenderIdAllowed(
   allowFrom: string[],
   senderId: string,
-  senderIsAgent: boolean,
 ): boolean {
   if (allowFrom.includes("*")) return true;
-  if (senderIsAgent && allowFrom.includes("agent")) return true;
-  if (!senderIsAgent && allowFrom.includes("human")) return true;
   return !!senderId && allowFrom.includes(senderId);
 }
+
+/** Evaluate `allowFromKind` (role-based) against a sender's role. */
+export function isSenderKindAllowed(
+  allowFromKind: string[],
+  senderIsAgent: boolean,
+): boolean {
+  if (allowFromKind.includes("*")) return true;
+  return senderIsAgent
+    ? allowFromKind.includes("agent")
+    : allowFromKind.includes("human");
+}
+
 const SEEN_MESSAGE_CAPACITY = 1024;
 
 export function createInboundGateway(opts: InboundGatewayOptions) {
@@ -109,8 +113,15 @@ export function createInboundGateway(opts: InboundGatewayOptions) {
       return;
     }
 
-    if (!isSenderAllowed(account.allowFrom, msg.sender_id, !!msg.sender_is_agent)) {
+    if (!isSenderIdAllowed(account.allowFrom, msg.sender_id)) {
       logger.warn(`Ignored message from ${msg.sender_name} (not in allowFrom)`);
+      ack(msg.id);
+      return;
+    }
+    if (!isSenderKindAllowed(account.allowFromKind, !!msg.sender_is_agent)) {
+      logger.warn(
+        `Ignored message from ${msg.sender_name} (kind not in allowFromKind)`,
+      );
       ack(msg.id);
       return;
     }

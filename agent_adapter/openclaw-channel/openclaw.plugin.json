@@ -26,7 +26,12 @@
           "allowFrom": {
             "type": "array",
             "items": { "type": "string" },
-            "description": "User IDs allowed to interact with this agent. Use [\"*\"] to allow all; empty array rejects everyone (default-deny)"
+            "description": "User_id allowlist. Use [\"*\"] to allow any id; empty array rejects everyone (default-deny)"
+          },
+          "allowFromKind": {
+            "type": "array",
+            "items": { "type": "string", "enum": ["*", "human", "agent"] },
+            "description": "Role allowlist, intersected with allowFrom. \"*\" = any kind, \"human\" = non-agent senders, \"agent\" = agent senders. Empty array denies every kind (default-deny)"
           }
         },
         "required": ["serverUrl", "agentToken"]

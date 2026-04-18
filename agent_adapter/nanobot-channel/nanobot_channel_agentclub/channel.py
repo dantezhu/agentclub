@@ -15,13 +15,19 @@ Feature parity with the OpenClaw channel of the same server:
   field of ``send_message``).
 * Recent-id dedup so duplicate deliveries (e.g. ACK raced a reconnect)
   don't produce duplicate agent runs.
-* ``allow_from`` is an allowlist with support for role tokens. Empty
-  list denies everyone (default-deny). Supported entries:
-    - ``"*"``    — allow anyone
-    - ``"human"`` — allow all non-agent senders
-    - ``"agent"`` — allow all agent senders
-    - any other string — a specific user_id
-  Tokens can be mixed freely, e.g. ``["human", "agent-xyz"]``.
+* Two orthogonal allowlists, intersected (both must pass):
+    - ``allow_from``      — user_id allowlist. Empty = deny everyone.
+                            ``["*"]`` matches any id; otherwise explicit
+                            user_ids.
+    - ``allow_from_kind`` — role allowlist. Empty = deny every kind.
+                            Entries must be ``"*"`` (any kind), ``"human"``
+                            (non-agent senders), or ``"agent"`` (agent
+                            senders); anything else raises at config
+                            validation time.
+  The intersection keeps the id-based and role-based filters independent
+  so either can be tightened without touching the other — e.g.
+  ``allow_from=["*"]`` + ``allow_from_kind=["human"]`` lets every human
+  through but no agents.
 
 ``streaming`` is intentionally not implemented yet — the IM server has
 no "edit message" event, so every chunk would become a separate
@@ -44,7 +50,7 @@ from urllib.parse import urljoin
 import aiohttp
 import socketio
 from loguru import logger
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from nanobot.bus.events import OutboundMessage
 from nanobot.bus.queue import MessageBus
@@ -160,13 +166,33 @@ class AgentClubConfig(BaseModel):
     enabled: bool = False
     server_url: str = ""
     agent_token: str = ""
-    # ``allow_from`` is an allowlist with role tokens. An empty list
-    # denies everyone (default-deny, matching feishu/openclaw). Entries:
-    # ``"*"`` = anyone, ``"human"`` = all non-agent senders,
-    # ``"agent"`` = all agent senders, anything else = a specific user_id.
+    # ``allow_from`` is consumed by ``BaseChannel.is_allowed``: entries
+    # are user_ids, plus the wildcard ``"*"``. An empty list denies
+    # everyone (default-deny, matching feishu/openclaw). Role-based
+    # filtering lives in ``allow_from_kind`` below.
     allow_from: list[str] = Field(default_factory=list)
+    # Role allowlist, intersected with ``allow_from``. Valid entries:
+    # ``"*"`` (any kind), ``"human"`` (non-agent senders), ``"agent"``
+    # (agent senders). Default ``[]`` denies every kind, so you must
+    # opt in explicitly — same default-deny philosophy as ``allow_from``.
+    allow_from_kind: list[str] = Field(default_factory=list)
     require_mention: bool = True
     streaming: bool = False
+
+    @field_validator("allow_from_kind")
+    @classmethod
+    def _validate_allow_from_kind(cls, v: list[str]) -> list[str]:
+        # Fail loud at load time on typos like ``"humans"`` / ``"bot"``
+        # — silently ignoring them would look like "default-deny is
+        # broken" to an operator.
+        allowed = {"*", "human", "agent"}
+        invalid = [k for k in v if k not in allowed]
+        if invalid:
+            raise ValueError(
+                f"allow_from_kind entries must be one of {sorted(allowed)}; "
+                f"got invalid tokens: {invalid}"
+            )
+        return v
 
 
 class AgentClubChannel(BaseChannel):
@@ -418,11 +444,24 @@ class AgentClubChannel(BaseChannel):
                 while len(self._seen_message_ids) > _DEDUP_CAPACITY:
                     self._seen_message_ids.popitem(last=False)
 
-            # Access control — default-deny, with role tokens layered on
-            # top of explicit user-id matches (see `_is_sender_allowed`).
-            if not self._is_sender_allowed(sender_id, sender_is_agent):
+            # Access control, split into two AND'd gates:
+            #   1. id allowlist — BaseChannel.is_allowed (``allow_from``).
+            #   2. role allowlist — our extension (``allow_from_kind``).
+            # Both default-deny. We do the pre-flight here instead of
+            # letting BaseChannel._handle_message do the id check on
+            # its own so we can ACK the message — without the ACK the
+            # server would re-deliver via ``offline_messages`` every
+            # reconnect.
+            if not self.is_allowed(sender_id):
                 logger.info(
                     "[agentclub] denied message from {} (not in allow_from)",
+                    sender_name,
+                )
+                await self._ack(message_id)
+                return
+            if not self._is_sender_kind_allowed(sender_is_agent):
+                logger.info(
+                    "[agentclub] denied message from {} (kind not in allow_from_kind)",
                     sender_name,
                 )
                 await self._ack(message_id)
@@ -525,26 +564,18 @@ class AgentClubChannel(BaseChannel):
         except Exception as exc:  # defensive: one bad message must not kill the loop
             logger.exception("[agentclub] error processing inbound: {}", exc)
 
-    def _is_sender_allowed(self, sender_id: str, sender_is_agent: bool) -> bool:
-        """Evaluate `allow_from` against a concrete sender.
+    def _is_sender_kind_allowed(self, sender_is_agent: bool) -> bool:
+        """Evaluate ``allow_from_kind`` against a sender's role.
 
-        Supported tokens (may be mixed with explicit user_ids):
-          - ``"*"``     → anyone
-          - ``"human"`` → any non-agent sender
-          - ``"agent"`` → any agent sender
-          - anything else → a specific user_id
-
-        An empty list denies everyone (default-deny, consistent with
-        feishu/openclaw). Token matching is O(n) over a small list so
-        we don't bother with a set cache."""
-        allow_from = list(self.config.allow_from or [])
-        if "*" in allow_from:
+        Empty list denies every kind (default-deny). ``"*"`` waves
+        everyone through regardless of role.
+        """
+        kinds = self.config.allow_from_kind or []
+        if "*" in kinds:
             return True
-        if sender_is_agent and "agent" in allow_from:
-            return True
-        if not sender_is_agent and "human" in allow_from:
-            return True
-        return bool(sender_id) and sender_id in allow_from
+        if sender_is_agent:
+            return "agent" in kinds
+        return "human" in kinds
 
     async def _ack(self, message_id: str) -> None:
         """Advance the server-side read cursor for ``message_id``.

@@ -45,6 +45,59 @@ describe("resolveAccount", () => {
     const cfg = { channels: { "agentclub": { serverUrl: "https://im.example.com" } } };
     expect(() => resolveAccount(cfg)).toThrow("agentToken is required");
   });
+
+  it("defaults allowFromKind to [] (default-deny)", () => {
+    const cfg = {
+      channels: {
+        "agentclub": {
+          serverUrl: "https://im.example.com",
+          agentToken: "token",
+        },
+      },
+    };
+    const account = resolveAccount(cfg);
+    expect(account.allowFromKind).toEqual([]);
+  });
+
+  it("accepts valid allowFromKind tokens", () => {
+    const cfg = {
+      channels: {
+        "agentclub": {
+          serverUrl: "https://im.example.com",
+          agentToken: "token",
+          allowFromKind: ["human", "agent"],
+        },
+      },
+    };
+    const account = resolveAccount(cfg);
+    expect(account.allowFromKind).toEqual(["human", "agent"]);
+  });
+
+  it("throws when allowFromKind contains an invalid token", () => {
+    const cfg = {
+      channels: {
+        "agentclub": {
+          serverUrl: "https://im.example.com",
+          agentToken: "token",
+          allowFromKind: ["human", "admin"],
+        },
+      },
+    };
+    expect(() => resolveAccount(cfg)).toThrow(/allowFromKind.*invalid tokens/);
+  });
+
+  it("throws when allowFromKind is not an array", () => {
+    const cfg = {
+      channels: {
+        "agentclub": {
+          serverUrl: "https://im.example.com",
+          agentToken: "token",
+          allowFromKind: "human",
+        },
+      },
+    };
+    expect(() => resolveAccount(cfg)).toThrow(/allowFromKind.*array/);
+  });
 });
 
 describe("inspectAccount", () => {
