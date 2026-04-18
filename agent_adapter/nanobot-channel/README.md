@@ -20,7 +20,7 @@ Nanobot 进程                             Agent Club IM 服务器
 
 ## 特性
 
-- **`mark_read` ACK**：每条入站消息处理后立即回 ACK，服务端就不会再通过 `offline_messages` 重推（重连时自动覆盖未 ACK 部分，at-least-once）。
+- **`mark_read` ACK**：每条入站消息处理后立即回 ACK，推进服务端的读游标（`last_read_at`）。服务端不维护"未 ACK 列表"，只按游标判未读——不 ACK 不会阻塞实时消息，但下次 `connect` 会通过 `offline_messages` 把游标之后的消息再推一遍，at-least-once 语义就是这么来的。
 - **`<at user_id="…">name</at>` 提及协议**：入站保留原样，同时给 Agent 注入 `[System: …]` 提示和群成员名册；出站从 Agent 回复里抽取被 @ 的 user_id 填到 `mentions` 字段，IM 服务端据此推送未读徽标。
 - **群聊 @提及过滤**：默认 `require_mention=true`，群聊里只转发被 @ 本机器人或 @all 的消息（私聊始终转发）。
 - **双层白名单，默认拒绝**：
@@ -146,7 +146,7 @@ nanobot-channel/
 |------|------|------|
 | Socket.IO `connect`，`auth={ agent_token }` | 握手 | 建立长连 |
 | Socket.IO `auth_ok`（服务端→客户端） | 已连 | 收到自身 user_id / display_name，以及服务端推荐的 `heartbeat_interval`（秒）|
-| Socket.IO `new_message` / `offline_messages`（服务端→客户端） | 已连 | 接收消息 / 重连时补发未读 |
+| Socket.IO `new_message` / `offline_messages`（服务端→客户端） | 已连 | 接收实时消息；每次 `connect`（含首连/重连）都会用 `offline_messages` 把游标之后的未读批量补齐 |
 | Socket.IO `send_message`（客户端→服务端） | 已连 | 发送消息（含 `mentions` 字段）|
 | Socket.IO `mark_read`（客户端→服务端） | 已连 | ACK，推进服务端读游标 |
 | Socket.IO `heartbeat` / `heartbeat_ack`（双向） | 已连 | 应用层心跳，按 `heartbeat_interval` 周期发送；服务端用它维护 `last_seen`，驱动真实在线状态 |

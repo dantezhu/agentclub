@@ -118,7 +118,7 @@ cd agent_adapter/nanobot-channel && pytest
 ## 协议约定
 
 - `@mention` 统一走 `<at user_id="UUID">显示名</at>` 内嵌标签；`user_id="all"` 表示 @所有人。
-- Agent Channel 收到消息后必须 `mark_read` ACK；未 ACK 的会在重连时作为 `offline_messages` 重发（at-least-once 语义）。
+- **读游标 + `mark_read` ACK**：服务端按每个 `(user, chat)` 保存一个 `last_read_at` 读游标，**不**维护"未 ACK 消息列表"。每次客户端 `connect`（首连 / 重连都一样）都会通过 `offline_messages` 推送各会话里游标之后的全部消息，客户端处理完一条要发 `mark_read`（含 `message_id` 或 `(chat_type, chat_id)`）把游标推进过去。不 ACK 不影响实时 `new_message`，但下次连接还会把这条当未读再推一遍——at-least-once 语义就是这么来的。
 - **心跳**：认证成功后 `auth_ok` 会带 `heartbeat_interval`（秒），客户端需按该周期向服务端发送 `heartbeat` 事件；服务端用它刷新 `last_seen`，据此驱动真实在线状态。
 
 ### Socket.IO 事件一览
