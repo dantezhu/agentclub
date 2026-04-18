@@ -46,15 +46,19 @@ BASE_DIR = _default_home()
 
 
 class Config:
-    # Fixed constants (not env-tunable).
-    MAX_CONTENT_LENGTH = 50 * 1024 * 1024  # 50MB
+    # Fixed constants (not env-tunable). ALLOWED_EXTENSIONS is a nested
+    # set/dict that doesn't map cleanly to env vars; keep it source-only.
     ALLOWED_EXTENSIONS = {
-        "image": {"png", "jpg", "jpeg", "gif", "webp", "svg"},
+        "image": {"png", "jpg", "jpeg", "gif", "webp"},
         "audio": {"mp3", "wav", "ogg", "m4a"},
         "video": {"mp4", "webm", "mov"},
-        "file": {"pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "zip", "tar", "gz"},
+        "file": {
+            "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx",
+            "txt", "md", "markdown", "log",
+            "json", "yaml", "yml", "toml", "ini", "xml", "csv",
+            "zip", "tar", "gz",
+        },
     }
-    MESSAGE_PAGE_SIZE = 50
 
     # Env-tunable fields are populated by refresh_config() at import
     # time and any time CLI ``apply_env`` runs. Keeping them declared
@@ -65,6 +69,8 @@ class Config:
     SECRET_KEY = None
     DATABASE = None
     UPLOAD_FOLDER = None
+    MAX_CONTENT_LENGTH = None
+    MESSAGE_PAGE_SIZE = None
     ALLOW_REGISTRATION = None
     MESSAGE_RETENTION_DAYS = None
     HEARTBEAT_INTERVAL = None
@@ -98,9 +104,14 @@ def refresh_config():
     Config.DATABASE = os.environ.get("DATABASE") or os.path.join(BASE_DIR, "agentclub.db")
     Config.UPLOAD_FOLDER = os.environ.get("UPLOAD_FOLDER") or os.path.join(BASE_DIR, "media", "uploads")
 
-    # Retention + feature flags
+    # Upload size cap. Unit is bytes (Flask convention). Default 50MB =
+    # 52428800. Remember to keep nginx ``client_max_body_size`` in sync.
+    Config.MAX_CONTENT_LENGTH = int(os.environ.get("MAX_CONTENT_LENGTH", str(50 * 1024 * 1024)))
+
+    # Retention + feature flags + paging
     Config.ALLOW_REGISTRATION = _bool("ALLOW_REGISTRATION", True)
     Config.MESSAGE_RETENTION_DAYS = int(os.environ.get("MESSAGE_RETENTION_DAYS", "30"))
+    Config.MESSAGE_PAGE_SIZE = int(os.environ.get("MESSAGE_PAGE_SIZE", "50"))
 
     # Presence cadences (see README § online status)
     Config.HEARTBEAT_INTERVAL = int(os.environ.get("HEARTBEAT_INTERVAL", "30"))

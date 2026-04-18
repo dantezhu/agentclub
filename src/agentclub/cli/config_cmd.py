@@ -15,12 +15,13 @@ def config_group():
     pass
 
 
-# Fields we surface. Purposely excludes class-level constants
-# (ALLOWED_EXTENSIONS, MAX_CONTENT_LENGTH) that aren't runtime-tunable.
+# Fields we surface. Purposely excludes ALLOWED_EXTENSIONS — it's a
+# nested set/dict that doesn't translate cleanly to env vars and is
+# kept as a source-only constant.
 _EXPOSED = [
     "HOST", "PORT", "DEBUG",
     "SECRET_KEY",
-    "DATABASE", "UPLOAD_FOLDER",
+    "DATABASE", "UPLOAD_FOLDER", "MAX_CONTENT_LENGTH",
     "ALLOW_REGISTRATION", "MESSAGE_RETENTION_DAYS", "MESSAGE_PAGE_SIZE",
     "HEARTBEAT_INTERVAL", "ACTIVE_TIMEOUT", "PRESENCE_POLL_INTERVAL",
 ]

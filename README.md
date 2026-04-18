@@ -167,13 +167,15 @@ cd channels/nanobot-channel && pytest
 | `SECRET_KEY` | `onboard` 时随机生成 | Flask session 密钥，**生产必须是随机值** |
 | `DATABASE` | `${AGENTCLUB_HOME}/agentclub.db` | SQLite 数据库路径 |
 | `UPLOAD_FOLDER` | `${AGENTCLUB_HOME}/media/uploads` | 上传文件物理目录（URL 访问路径 `/media/uploads/<file>`）|
+| `MAX_CONTENT_LENGTH` | `52428800`（50MB） | 上传体积上限（字节）。改了记得同步 nginx 的 `client_max_body_size` |
 | `ALLOW_REGISTRATION` | `true` | 是否开放用户自助注册 |
 | `MESSAGE_RETENTION_DAYS` | `30` | 历史消息保留天数 |
+| `MESSAGE_PAGE_SIZE` | `50` | 历史消息分页大小 |
 | `HEARTBEAT_INTERVAL` | `30` | 客户端心跳周期（秒），服务端通过 `auth_ok` 下发给所有客户端（Web / Agent Channel）统一使用 |
 | `ACTIVE_TIMEOUT` | `90` | 在线判定阈值（秒）；`last_active_at` 距今超过此值即视为离线。建议 ≥ 2×`HEARTBEAT_INTERVAL` |
 | `PRESENCE_POLL_INTERVAL` | `30` | Web 端轮询 `/api/presence` 的周期（秒），同样走 `auth_ok` 下发；Agent 端不轮询 |
 
-其他常量（上传大小上限 50MB、允许的文件类型、分页大小等）直接改 `src/agentclub/config.py`。运行中随时可以用 `agentclub config show` 确认当前生效值。
+允许上传的文件扩展名集合（`ALLOWED_EXTENSIONS`）是嵌套结构，目前仍在源码里维护，未开放为运行时配置；如果你的场景确实需要调整，欢迎提 issue。运行中随时可以用 `agentclub config show` 确认当前生效值。
 
 ## 生产部署
 
