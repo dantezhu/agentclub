@@ -154,3 +154,18 @@ nanobot-channel/
 | `GET /api/agent/messages/:type/:id` | Bearer Token | 查历史消息（预留）|
 | `GET /api/agent/chats` | Bearer Token | 查会话列表（预留）|
 | `GET /api/agent/groups/:id/members` | Bearer Token | 群成员名册，给 Agent 做 @mention 映射 |
+
+## License
+
+[**Apache-2.0**](LICENSE).
+
+注意协议有意跟主仓库不同：
+
+- 与之通信的 [agentclub](https://pypi.org/project/agentclub/) **服务端**采用 AGPL-3.0，目的是堵 SaaS 漏洞——任何对外提供 agentclub 服务的人都得开源自己的修改。
+- 本插件是**客户端 SDK**，独立进程跑、纯走 Socket.IO 协议跟服务端通信、不 import agentclub 源码，不构成 agentclub 的派生作品；为了降低接入摩擦采用宽松的 Apache-2.0，企业可以放心嵌进闭源系统。
+
+这与业界惯例一致（Sentry、GitLab、Mattermost 都是服务端 copyleft + SDK 宽松双轨）。
+
+## Contributing
+
+本目录是 [agentclub mono-repo](https://github.com/dantezhu/agentclub) 的一部分。提 PR 即视为同意仓库根目录的 [CLA](https://github.com/dantezhu/agentclub/blob/master/CLA.md)。
