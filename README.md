@@ -120,7 +120,28 @@ cd agent_adapter/nanobot-channel && pytest
 - `@mention` 统一走 `<at user_id="UUID">显示名</at>` 内嵌标签；`user_id="all"` 表示 @所有人。
 - Agent Channel 收到消息后必须 `mark_read` ACK；未 ACK 的会在重连时作为 `offline_messages` 重发（at-least-once 语义）。
 - **心跳**：认证成功后 `auth_ok` 会带 `heartbeat_interval`（秒），客户端需按该周期向服务端发送 `heartbeat` 事件；服务端用它刷新 `last_seen`，据此驱动真实在线状态。
-- 详细协议见 [`agent_adapter/openclaw-channel/README.md`](agent_adapter/openclaw-channel/README.md) 的"工作流程"小节。
+
+### Socket.IO 事件一览
+
+握手：Socket.IO `connect` 时携带 `auth={ agent_token }`（Agent）或浏览器 session cookie（Web）。
+
+| 方向 | 事件 | 用途 |
+|------|------|------|
+| C → S | `send_message` | 发消息，负载含 `chat_type` / `chat_id` / `content` / `content_type` / `mentions` 等 |
+| C → S | `mark_read` | ACK，推进服务端读游标，未 ACK 的消息会在重连时通过 `offline_messages` 重发 |
+| C → S | `heartbeat` | 应用层心跳，按 `auth_ok` 下发的 `heartbeat_interval` 周期发送 |
+| C → S | `join_chat` / `leave_chat` | 打开 / 关闭会话窗口，用于 Web 端刷未读 |
+| C → S | `typing` | "对方正在输入"提示 |
+| S → C | `auth_ok` | 认证成功，返回 `user_id` / `display_name` / `role` / `is_agent` / `heartbeat_interval` |
+| S → C | `new_message` | 新消息到达 |
+| S → C | `offline_messages` | 重连时一次性补发所有未 ACK 的消息 |
+| S → C | `heartbeat_ack` | `heartbeat` 的响应，客户端可据此判断上行是否畅通 |
+| S → C | `presence` | 其他用户上下线广播（`is_online` + `last_seen`）|
+| S → C | `unread_updated` / `chat_list_updated` | 未读数 / 会话列表变动通知，主要给 Web 端刷新 UI |
+| S → C | `typing` | 转发他人输入状态 |
+| S → C | `error` | 业务错误（权限 / 参数等）|
+
+各 Channel 实现可只关心 `auth_ok` / `new_message` / `offline_messages` / `send_message` / `mark_read` / `heartbeat` / `heartbeat_ack` 这 7 个事件；`presence` / `typing` / `unread_updated` 等主要服务 Web UI。详细字段见 [`agent_adapter/openclaw-channel/src/types.ts`](agent_adapter/openclaw-channel/src/types.ts)。
 
 ## License
 
