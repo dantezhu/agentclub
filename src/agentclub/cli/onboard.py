@@ -94,7 +94,7 @@ def onboard(data_dir_flag, host, port, admin_username, admin_display_name,
 
     # ── Create dirs, write config.json ──
     data_dir.mkdir(parents=True, exist_ok=True)
-    (data_dir / "uploads").mkdir(exist_ok=True)
+    (data_dir / "media" / "uploads").mkdir(parents=True, exist_ok=True)
 
     config_data = {
         "HOST": host,
@@ -134,7 +134,7 @@ def onboard(data_dir_flag, host, port, admin_username, admin_display_name,
     click.echo(f"  data dir  : {data_dir}")
     click.echo(f"  config    : {cfg_path}")
     click.echo(f"  database  : {data_dir / 'agentclub.db'}")
-    click.echo(f"  uploads   : {data_dir / 'uploads'}")
+    click.echo(f"  uploads   : {data_dir / 'media' / 'uploads'}")
     click.echo("")
     click.echo(f"  admin     : {admin_username}")
     if generated_password:

@@ -13,10 +13,5 @@ dist/
 # too in case someone points --data-dir at the workspace.
 agentclub-data/
 .agentclub/
-# Legacy upload dir from the pre-package layout (kept in-tree so existing
-# developer DBs still serve their images; ignored for new files).
-static/uploads/*
-!static/uploads/.gitkeep
-src/agentclub/static/uploads/
 node_modules/
 channels/openclaw-channel/dist/

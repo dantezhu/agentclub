@@ -55,7 +55,7 @@ agentclub onboard
   data dir  : /Users/you/.agentclub
   config    : /Users/you/.agentclub/config.json
   database  : /Users/you/.agentclub/agentclub.db
-  uploads   : /Users/you/.agentclub/uploads
+  uploads   : /Users/you/.agentclub/media/uploads
 
   admin     : admin
   password  : xK7pQ...          ← 请立刻保存
@@ -166,7 +166,7 @@ cd channels/nanobot-channel && pytest
 | `DEBUG` | `false` | Flask debug 开关（仅开发用）|
 | `SECRET_KEY` | `onboard` 时随机生成 | Flask session 密钥，**生产必须是随机值** |
 | `DATABASE` | `${AGENTCLUB_HOME}/agentclub.db` | SQLite 数据库路径 |
-| `UPLOAD_FOLDER` | `${AGENTCLUB_HOME}/uploads` | 上传文件物理目录 |
+| `UPLOAD_FOLDER` | `${AGENTCLUB_HOME}/media/uploads` | 上传文件物理目录（URL 访问路径 `/media/uploads/<file>`）|
 | `ALLOW_REGISTRATION` | `true` | 是否开放用户自助注册 |
 | `MESSAGE_RETENTION_DAYS` | `30` | 历史消息保留天数 |
 | `HEARTBEAT_INTERVAL` | `30` | 客户端心跳周期（秒），服务端通过 `auth_ok` 下发给所有客户端（Web / Agent Channel）统一使用 |
@@ -174,6 +174,66 @@ cd channels/nanobot-channel && pytest
 | `PRESENCE_POLL_INTERVAL` | `30` | Web 端轮询 `/api/presence` 的周期（秒），同样走 `auth_ok` 下发；Agent 端不轮询 |
 
 其他常量（上传大小上限 50MB、允许的文件类型、分页大小等）直接改 `src/agentclub/config.py`。运行中随时可以用 `agentclub config show` 确认当前生效值。
+
+## 生产部署
+
+`agentclub serve` 跑的是 Flask-SocketIO 的 threading 模式，**单进程**。建议生产就这么部署——上多 worker 必须配 sticky session + Redis message queue，否则群消息会跨 worker 丢人，得不偿失。单进程线程模型支撑几百并发用户没问题；用 systemd 让它开机自启 + 崩溃重启就够了。
+
+外面再套一层 nginx 处理 HTTPS、对外暴露 80/443、并把 `/media/` 直接交给 nginx serve（省一跳 Python）。
+
+```nginx
+server {
+    listen 80;
+    server_name agentclub.example.com;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name agentclub.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/agentclub.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/agentclub.example.com/privkey.pem;
+
+    # 上传最大 50MB（与 Flask-SocketIO 的 max_http_buffer_size 对齐）
+    client_max_body_size 50M;
+
+    # 媒体文件 nginx 直发，路径就是 ${AGENTCLUB_HOME}/media/
+    location /media/ {
+        alias /home/youruser/.agentclub/media/;
+        access_log off;
+        expires 7d;
+    }
+
+    # 其余请求（HTTP + Socket.IO 长轮询 / WebSocket）一并代理给 agentclub
+    location / {
+        proxy_pass         http://127.0.0.1:5555;
+        proxy_http_version 1.1;
+
+        # WebSocket 升级
+        proxy_set_header   Upgrade           $http_upgrade;
+        proxy_set_header   Connection        "upgrade";
+        proxy_set_header   Host              $host;
+
+        # 透传客户端真实信息
+        proxy_set_header   X-Real-IP         $remote_addr;
+        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $scheme;
+
+        # 长连接（默认 60s 会断 WebSocket）
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_buffering    off;
+    }
+}
+```
+
+四个容易踩的坑：
+
+1. `Upgrade` + `Connection "upgrade"` 必须透传，否则 WebSocket 握手失败、Socket.IO 一直走 long-polling。
+2. `proxy_read_timeout 3600s`，nginx 默认 60s 会主动断闲置 WebSocket。
+3. `client_max_body_size 50M`，nginx 默认 1M 会先于 Flask 把上传卡住。
+4. `proxy_buffering off`，长轮询 / SSE 类长连接需要。
 
 ## 技术栈
 

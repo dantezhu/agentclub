@@ -96,7 +96,7 @@ def refresh_config():
 
     # Storage (derived from BASE_DIR unless explicitly overridden)
     Config.DATABASE = os.environ.get("DATABASE") or os.path.join(BASE_DIR, "agentclub.db")
-    Config.UPLOAD_FOLDER = os.environ.get("UPLOAD_FOLDER") or os.path.join(BASE_DIR, "uploads")
+    Config.UPLOAD_FOLDER = os.environ.get("UPLOAD_FOLDER") or os.path.join(BASE_DIR, "media", "uploads")
 
     # Retention + feature flags
     Config.ALLOW_REGISTRATION = _bool("ALLOW_REGISTRATION", True)

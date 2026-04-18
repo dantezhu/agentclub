@@ -46,7 +46,7 @@ class TestOnboard:
         assert res.exit_code == 0, res.output
         assert data_dir.exists()
         assert (data_dir / "config.json").exists()
-        assert (data_dir / "uploads").exists()
+        assert (data_dir / "media" / "uploads").exists()
         assert (data_dir / "agentclub.db").exists()
 
         cfg = json.loads((data_dir / "config.json").read_text())
