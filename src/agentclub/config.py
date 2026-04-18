@@ -76,6 +76,10 @@ class Config:
     HEARTBEAT_INTERVAL = None
     ACTIVE_TIMEOUT = None
     PRESENCE_POLL_INTERVAL = None
+    LOG_DIR = None
+    LOG_LEVEL = None
+    LOG_MAX_SIZE_MB = None
+    LOG_BACKUP_COUNT = None
 
 
 def refresh_config():
@@ -117,6 +121,15 @@ def refresh_config():
     Config.HEARTBEAT_INTERVAL = int(os.environ.get("HEARTBEAT_INTERVAL", "30"))
     Config.ACTIVE_TIMEOUT = int(os.environ.get("ACTIVE_TIMEOUT", "90"))
     Config.PRESENCE_POLL_INTERVAL = int(os.environ.get("PRESENCE_POLL_INTERVAL", "30"))
+
+    # Logging — file handler writes to LOG_DIR (defaults to data-dir/logs)
+    # and rotates by size. Disk usage cap = (1 + LOG_BACKUP_COUNT) *
+    # LOG_MAX_SIZE_MB MB. Defaults: 100MB × 5 backups → ~600MB worst case.
+    # stdout always gets a copy too. See agentclub/logging_setup.py.
+    Config.LOG_DIR = os.environ.get("LOG_DIR") or os.path.join(BASE_DIR, "logs")
+    Config.LOG_LEVEL = (os.environ.get("LOG_LEVEL") or "INFO").upper()
+    Config.LOG_MAX_SIZE_MB = int(os.environ.get("LOG_MAX_SIZE_MB", "100"))
+    Config.LOG_BACKUP_COUNT = int(os.environ.get("LOG_BACKUP_COUNT", "5"))
 
 
 # Populate on import so existing ``from .config import Config`` code

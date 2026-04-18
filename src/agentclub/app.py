@@ -6,11 +6,15 @@ which sets ``AGENTCLUB_HOME`` and config env vars BEFORE importing
 this file, then calls ``socketio.run``. Tests and ``python -m
 agentclub.app`` also work for quick local iteration.
 """
+import logging
 import os
-from flask import Flask, send_from_directory
+from flask import Flask, send_from_directory, jsonify, request
+from werkzeug.exceptions import HTTPException
 from flask_socketio import SocketIO
 from .config import Config
 from . import models
+
+log = logging.getLogger(__name__)
 
 
 app = Flask(__name__, static_folder="static", template_folder="templates")
@@ -51,6 +55,18 @@ def ensure_db():
         models.init_db()
         os.makedirs(Config.UPLOAD_FOLDER, exist_ok=True)
         app._db_initialized = True
+
+
+@app.errorhandler(Exception)
+def _log_unhandled(e):
+    """Last-resort logger for anything routes don't catch. HTTPException
+    is returned as-is so Flask still serves the intended 4xx page; only
+    true 5xx-class bugs hit ``log.exception`` and surface a generic 500.
+    """
+    if isinstance(e, HTTPException):
+        return e
+    log.exception("unhandled exception on %s %s", request.method, request.path)
+    return jsonify({"error": "服务器内部错误"}), 500
 
 
 if __name__ == "__main__":

@@ -1,8 +1,11 @@
 import json
+import logging
 from flask import session, request
 from flask_socketio import emit, join_room, leave_room
 from .config import Config
 from . import models
+
+log = logging.getLogger(__name__)
 
 # sid → user_id mapping
 connected_users = {}
@@ -22,18 +25,23 @@ def register_events(socketio):
         if agent_token:
             user = models.get_user_by_agent_token(agent_token)
             if not user:
+                log.warning("socket connect rejected: invalid agent_token sid=%s", request.sid)
                 return False  # reject connection
             _register_connection(user, request.sid)
+            log.info("socket connect: agent=%s (%s) sid=%s", user["username"], user["id"], request.sid)
             return
 
         # Web user session auth
         user_id = session.get("user_id")
         if not user_id:
+            log.debug("socket connect rejected: no session sid=%s", request.sid)
             return False
         user = models.get_user_by_id(user_id)
         if not user:
+            log.warning("socket connect rejected: stale session user_id=%s sid=%s", user_id, request.sid)
             return False
         _register_connection(user, request.sid)
+        log.info("socket connect: user=%s (%s) sid=%s", user["username"], user["id"], request.sid)
 
     @socketio.on("disconnect")
     def on_disconnect():
@@ -52,6 +60,8 @@ def register_events(socketio):
             sids.discard(request.sid)
             if not sids:
                 user_sids.pop(user_id, None)
+            log.info("socket disconnect: user=%s sid=%s remaining_sids=%d",
+                     user_id, request.sid, len(sids))
 
     @socketio.on("send_message")
     def on_send_message(data):

@@ -56,6 +56,7 @@ agentclub onboard
   config    : /Users/you/.agentclub/config.json
   database  : /Users/you/.agentclub/agentclub.db
   uploads   : /Users/you/.agentclub/media/uploads
+  logs      : /Users/you/.agentclub/logs
 
   admin     : admin
   password  : xK7pQ...          ← 请立刻保存
@@ -168,6 +169,10 @@ cd channels/nanobot-channel && pytest
 | `DATABASE` | `${AGENTCLUB_HOME}/agentclub.db` | SQLite 数据库路径 |
 | `UPLOAD_FOLDER` | `${AGENTCLUB_HOME}/media/uploads` | 上传文件物理目录（URL 访问路径 `/media/uploads/<file>`）|
 | `MAX_CONTENT_LENGTH` | `52428800`（50MB） | 上传体积上限（字节）。改了记得同步 nginx 的 `client_max_body_size` |
+| `LOG_DIR` | `${AGENTCLUB_HOME}/logs` | 日志文件目录 |
+| `LOG_LEVEL` | `INFO` | 日志级别（`DEBUG` / `INFO` / `WARNING` / `ERROR`）|
+| `LOG_MAX_SIZE_MB` | `100` | 单个日志文件大小上限（MB），超过则切到下一份 |
+| `LOG_BACKUP_COUNT` | `5` | 保留多少份历史。磁盘占用上限 ≈ `(1 + LOG_BACKUP_COUNT) × LOG_MAX_SIZE_MB` MB |
 | `ALLOW_REGISTRATION` | `true` | 是否开放用户自助注册 |
 | `MESSAGE_RETENTION_DAYS` | `30` | 历史消息保留天数 |
 | `MESSAGE_PAGE_SIZE` | `50` | 历史消息分页大小 |
@@ -176,6 +181,17 @@ cd channels/nanobot-channel && pytest
 | `PRESENCE_POLL_INTERVAL` | `30` | Web 端轮询 `/api/presence` 的周期（秒），同样走 `auth_ok` 下发；Agent 端不轮询 |
 
 允许上传的文件扩展名集合（`ALLOWED_EXTENSIONS`）是嵌套结构，目前仍在源码里维护，未开放为运行时配置；如果你的场景确实需要调整，欢迎提 issue。运行中随时可以用 `agentclub config show` 确认当前生效值。
+
+## 日志
+
+`agentclub serve` 启动时会把日志同时写到两处：
+
+- **stdout** —— `journalctl -u agentclub` / `docker logs` / 前台运行时直接看；
+- **`${LOG_DIR}/agentclub.log`** —— 按大小轮转：单文件达到 `LOG_MAX_SIZE_MB` MB 后切到 `agentclub.log.1`，旧文件依次往后挪，最多保留 `LOG_BACKUP_COUNT` 份历史。默认 100MB × 5 份，磁盘占用上限约 600MB。
+
+业务侧目前已埋的关键事件：登录成功 / 失败（含来源 IP，用于排查爆破和误密码）、Socket.IO connect / disconnect（区分 Web 用户和 Agent）、未捕获异常（自动 stacktrace + 路径）。生产排查问题查 `agentclub.log`；HTTP 请求级 access log 由 nginx 出，我们不接管 Werkzeug / Socket.IO 的访问日志，避免业务日志被淹没。
+
+临时调试可以 `LOG_LEVEL=DEBUG agentclub serve` 把级别拉低，不需要重启系统服务。
 
 ## 生产部署
 

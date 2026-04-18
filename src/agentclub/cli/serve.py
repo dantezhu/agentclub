@@ -30,8 +30,11 @@ def serve(data_dir_flag, host, port, debug):
     data_dir = bootstrap(data_dir_flag, require_exists=True, overrides=overrides)
 
     # Imports must come AFTER bootstrap() so Config reads the right env.
-    from ..app import app, socketio
     from ..config import Config
+    from ..logging_setup import setup_logging
+    log_path = setup_logging()
+
+    from ..app import app, socketio
     from .. import models
 
     models.init_db()
@@ -41,6 +44,7 @@ def serve(data_dir_flag, host, port, debug):
     click.echo(f"  data dir : {data_dir}")
     click.echo(f"  database : {Config.DATABASE}")
     click.echo(f"  uploads  : {Config.UPLOAD_FOLDER}")
+    click.echo(f"  logs     : {log_path}")
     click.echo(f"  listening: http://{Config.HOST}:{Config.PORT}")
     click.echo("")
 

@@ -1,3 +1,4 @@
+import logging
 import os
 import json
 from flask import Blueprint, request, session, jsonify, send_from_directory
@@ -7,6 +8,7 @@ from .auth import hash_password, verify_password, generate_agent_token, login_re
 from . import models
 
 api = Blueprint("api", __name__)
+log = logging.getLogger(__name__)
 
 
 def _get_ext(filename):
@@ -84,9 +86,14 @@ def login():
 
     user = models.get_user_by_username(username)
     if not user or user["is_agent"] or not verify_password(password, user["password_hash"]):
+        # Brute-force / typo investigation needs to know the attempted
+        # username and the source IP, but never the password (don't even
+        # log its length — gives attackers a sidechannel).
+        log.warning("login failed: username=%r ip=%s", username, request.remote_addr)
         return jsonify({"error": "用户名或密码错误"}), 401
 
     session["user_id"] = user["id"]
+    log.info("login ok: user=%s (%s) ip=%s", user["username"], user["id"], request.remote_addr)
     return jsonify(_safe_user(user))
 
 
