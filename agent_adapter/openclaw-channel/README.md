@@ -59,7 +59,7 @@ openclaw plugins install ./
 
 ## 工作流程
 
-1. **连接**：插件通过 Socket.IO 连接到 IM 服务器，使用 `agentToken` 认证
+1. **连接**：插件通过 Socket.IO 连接到 IM 服务器，使用 `agentToken` 认证；从 `auth_ok` 里读出 `heartbeat_interval`，按该周期发送 `heartbeat` 事件以维持在线状态（silent-disconnect 防误判）
 2. **接收消息**：通过 `new_message` / `offline_messages` 事件接收消息
 3. **过滤**：跳过自己发的消息；按 `allowFrom`（user_id）与 `allowFromKind`（角色）取交集判定放行；未 @提及的群消息不转发
 4. **处理**：调用 `runEmbeddedAgent` 将消息交给 OpenClaw agent 处理
