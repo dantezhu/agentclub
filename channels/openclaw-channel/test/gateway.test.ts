@@ -298,14 +298,14 @@ describe("createInboundGateway", () => {
       makeMsg({
         content: "",
         content_type: "image",
-        file_url: "/static/uploads/photo.png",
+        file_url: "/media/uploads/photo.png",
         file_name: "photo.png",
       }),
     );
 
     expect(received).toHaveLength(1);
     expect(received[0].text).toBe("[image: photo.png]");
-    expect(received[0].attachmentUrl).toBe("/static/uploads/photo.png");
+    expect(received[0].attachmentUrl).toBe("/media/uploads/photo.png");
   });
 
   it("skips empty messages", () => {

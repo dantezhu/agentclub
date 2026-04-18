@@ -1,9 +1,22 @@
 venv/
+.venv/
 __pycache__/
 *.pyc
-*.db
+*.pyo
+*.egg-info/
+build/
+dist/
 .pytest_cache/
+*.db
+# Runtime data directory created by `agentclub onboard` / `agentclub serve`
+# defaults to ~/.agentclub (outside the repo). Ignore common in-repo names
+# too in case someone points --data-dir at the workspace.
+agentclub-data/
+.agentclub/
+# Legacy upload dir from the pre-package layout (kept in-tree so existing
+# developer DBs still serve their images; ignored for new files).
 static/uploads/*
 !static/uploads/.gitkeep
+src/agentclub/static/uploads/
 node_modules/
-agent_adapter/openclaw-channel/dist/
+channels/openclaw-channel/dist/

@@ -2,7 +2,7 @@ import sqlite3
 import uuid
 import time
 from contextlib import contextmanager
-from config import Config
+from .config import Config
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (

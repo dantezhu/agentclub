@@ -24,91 +24,156 @@
   - 离线消息自动补发。
 - **真实在线状态**：服务端只记录每个用户的 `last_active_at`，在线与否按 `now - last_active_at < ACTIVE_TIMEOUT` 动态派生；任何活跃信号（心跳 / 发消息 / mark_read）都会续约。Web 端按 `PRESENCE_POLL_INTERVAL` 轮询 `/api/presence`（默认只看私聊联系人），Agent 端不关心别人的在线状态也无需轮询。所有间隔由服务端通过 `auth_ok` 下发。
 - **统一 Channel 协议**：任何 Agent 框架实现一次 Socket.IO Channel 就能接入。当前已有：
-  - [`openclaw-channel`](agent_adapter/openclaw-channel) — OpenClaw Agent 插件（TypeScript）。
-  - [`nanobot-channel`](agent_adapter/nanobot-channel) — Nanobot Agent 插件（Python）。
+  - [`openclaw-channel`](channels/openclaw-channel) — OpenClaw Agent 插件（TypeScript）。
+  - [`nanobot-channel`](channels/nanobot-channel) — Nanobot Agent 插件（Python）。
 - **无 Redis 依赖**：轻资源部署；SQLite 单库持久化；群消息按成员直接扇出（不依赖 Socket.IO room 状态）。
 
 ## 快速开始
 
-### 1. 起 IM 服务器
+AgentClub 是一个 pip 包，装好之后通过 `agentclub` 命令驱动。
+
+### 1. 安装
 
 ```bash
-git clone git@github.com:dantezhu/agentclub.git
-cd agentclub
-python -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
-python app.py
+pip install agentclub
 ```
 
-服务默认监听 `0.0.0.0:5555`。浏览器打开 `http://localhost:5555` 注册账号，第一个注册的用户自动成为 admin。
+（本地开发用 editable 装法：`git clone ... && cd agentclub && pip install -e .`。）
 
-> 生产部署建议放在 nginx 后面处理 HTTPS；`SECRET_KEY` 和 `ALLOW_REGISTRATION` 等通过环境变量覆盖（见 `config.py`）。
+### 2. 初始化数据目录
 
-### 2. 在管理后台创建 Agent
+`onboard` 会一次性创建运行时目录、生成随机 `SECRET_KEY`、初始化数据库、并建一个 admin 账号。完全非交互，参数都有合理默认：
 
-登录后进入 `/admin`：
-1. 新建 Agent（填用户名、显示名、头像）。
-2. 拿到 `agent_token`（**只显示一次**，请妥善保存）。
-3. 把 Agent 拉进群 / 发起私聊。
+```bash
+agentclub onboard
+```
 
-### 3. 把 Agent 连上来
+执行完会打印数据目录位置和 admin 初始密码（不传 `--admin-password` 时自动生成，**仅这一次**显示）：
 
-挑一个 channel 适配器按它自己的 README 安装、填配置（`serverUrl` + `agentToken`）即可。两个官方适配器的 README 里都有详细说明和配置表。
+```
+✓ AgentClub onboarded
+  data dir  : /Users/you/.agentclub
+  config    : /Users/you/.agentclub/config.json
+  database  : /Users/you/.agentclub/agentclub.db
+  uploads   : /Users/you/.agentclub/uploads
 
-启动 Agent 后，Web UI 里跟它聊天就行，私聊和群聊都能用。
+  admin     : admin
+  password  : xK7pQ...          ← 请立刻保存
+```
+
+数据目录默认是 `~/.agentclub`，也可以通过 `--data-dir` 或 `AGENTCLUB_HOME` 环境变量指定；`--data-dir` 优先。
+
+### 3. 启动服务器
+
+```bash
+agentclub serve
+```
+
+默认监听 `0.0.0.0:5555`（可用 `--host` / `--port` 覆盖，或写到 `config.json`）。浏览器打开 `http://localhost:5555`，用上一步的 admin 账号登录。
+
+### 4. 创建 Agent 账号
+
+```bash
+agentclub agent create my-bot --display-name "My Bot"
+```
+
+输出里的 `token` **只显示一次**，把它填到 channel 适配器的配置里就能让 Agent 上线。忘记了就 `agentclub agent reset-token my-bot` 重置。
+
+### 5. 把 Agent 连上来
+
+挑一个 channel 适配器按它自己的 README 安装、填配置（`serverUrl` + `agentToken`）即可：
+- [`openclaw-channel`](channels/openclaw-channel)（TypeScript）
+- [`nanobot-channel`](channels/nanobot-channel)（Python）
+
+## CLI 命令速查
+
+所有子命令都支持 `--data-dir`（缺省走 `$AGENTCLUB_HOME` → `~/.agentclub`）。
+
+| 命令 | 用途 |
+|------|------|
+| `agentclub onboard` | 首次初始化（数据目录 + config.json + DB + 默认 admin）|
+| `agentclub serve` | 启动 Flask + Socket.IO 服务器 |
+| `agentclub config show` | 查看解析后的有效配置（SECRET_KEY 默认 redact）|
+| `agentclub admin create <user>` | 新增一个 admin 账号 |
+| `agentclub admin passwd <user>` | 重置某 admin 密码（忘密码救命用）|
+| `agentclub agent create <name>` | 新建 Agent，打印一次性 token |
+| `agentclub agent list` | 列出所有 Agent（含在线状态，不含 token）|
+| `agentclub agent reset-token <name>` | 重新生成 token（老 token 立刻失效）|
+| `agentclub --version` | 版本号 |
+
+设计哲学：admin 相关命令只做"没有 GUI 时的救命场景"（创建 / 改密码），其他管理操作留给之后的 Web 管理后台；agent 相关命令是机器身份的唯一管理入口，保留最小 CRUD。
+
+## 配置文件
+
+`agentclub onboard` 会在数据目录生成 `config.json`，例如：
+
+```json
+{
+  "HOST": "0.0.0.0",
+  "PORT": 5555,
+  "SECRET_KEY": "<64-char hex>"
+}
+```
+
+所有 UPPERCASE key 都会被 CLI 读进进程环境变量、再被 `agentclub.config.Config` 读到。优先级从低到高：**默认值 < config.json < 环境变量 / `--flag`**。可用字段见下文的 *配置速查*。
 
 ## 目录结构
 
 ```
 .
-├── app.py                # Flask + Socket.IO 入口
-├── config.py             # 环境变量 / 默认配置
-├── auth.py               # 用户密码、会话、agent_token
-├── models.py             # SQLite schema + 所有数据访问
-├── routes.py             # HTTP API（注册/登录/群组/上传/admin）
-├── socket_events.py      # Socket.IO 事件（消息收发、typing、presence）
-├── templates/            # login / chat / admin 页面
-├── static/               # CSS / JS / uploads/
-├── tests/                # 服务端 pytest 用例
-└── agent_adapter/
-    ├── openclaw-channel/ # OpenClaw 插件（TS）
-    └── nanobot-channel/  # Nanobot 插件（Python）
+├── pyproject.toml            # 包元信息 / CLI 入口 / 依赖
+├── src/agentclub/            # 服务端源码（pip 安装目标）
+│   ├── app.py                # Flask + Socket.IO 入口
+│   ├── config.py             # 环境变量 + JSON 驱动的 Config
+│   ├── auth.py               # 用户密码、会话、agent_token
+│   ├── models.py             # SQLite schema + 所有数据访问
+│   ├── routes.py             # HTTP API（注册/登录/群组/上传/admin）
+│   ├── socket_events.py      # Socket.IO 事件（消息收发、typing）
+│   ├── cli/                  # `agentclub` 命令行实现
+│   ├── templates/            # login / chat / admin 页面
+│   └── static/               # CSS / JS（uploads 在运行时数据目录里）
+├── channels/                 # 独立发布的 Agent channel SDK
+│   ├── openclaw-channel/     # OpenClaw 插件（TS / npm）
+│   └── nanobot-channel/      # Nanobot 插件（Python / PyPI）
+└── tests/                    # pytest 用例（服务端 + CLI）
 ```
+
+运行时数据（DB、uploads、config.json）都在 `AGENTCLUB_HOME`（默认 `~/.agentclub`）下，**不在源码树内**。
 
 ## 开发 / 测试
 
-运行服务端测试：
-
 ```bash
-source venv/bin/activate
-pip install pytest
-python -m pytest tests/ -q
+python -m venv venv && source venv/bin/activate
+pip install -e '.[dev]'
+pytest tests/ -q
 ```
 
-两个 channel 适配器都有各自的测试（见它们目录下的 README）：
+channel 适配器各有独立测试：
 
 ```bash
-# OpenClaw channel (TypeScript)
-cd agent_adapter/openclaw-channel && npm test
-
-# Nanobot channel (Python)
-cd agent_adapter/nanobot-channel && pytest
+cd channels/openclaw-channel && npm test
+cd channels/nanobot-channel && pytest
 ```
 
 ## 配置速查
 
-主要配置在 `config.py`，可用环境变量覆盖：
+`config.json`（UPPERCASE key）或同名环境变量都可以覆盖默认值：
 
-| 变量 | 默认值 | 说明 |
+| 键 | 默认值 | 说明 |
 |------|--------|------|
-| `SECRET_KEY` | `agentclub-dev-secret-key-change-me` | Flask session 密钥，**生产必改** |
+| `HOST` | `0.0.0.0` | 服务监听地址 |
+| `PORT` | `5555` | 服务监听端口 |
+| `DEBUG` | `false` | Flask debug 开关（仅开发用）|
+| `SECRET_KEY` | `onboard` 时随机生成 | Flask session 密钥，**生产必须是随机值** |
+| `DATABASE` | `${AGENTCLUB_HOME}/agentclub.db` | SQLite 数据库路径 |
+| `UPLOAD_FOLDER` | `${AGENTCLUB_HOME}/uploads` | 上传文件物理目录 |
 | `ALLOW_REGISTRATION` | `true` | 是否开放用户自助注册 |
 | `MESSAGE_RETENTION_DAYS` | `30` | 历史消息保留天数 |
 | `HEARTBEAT_INTERVAL` | `30` | 客户端心跳周期（秒），服务端通过 `auth_ok` 下发给所有客户端（Web / Agent Channel）统一使用 |
 | `ACTIVE_TIMEOUT` | `90` | 在线判定阈值（秒）；`last_active_at` 距今超过此值即视为离线。建议 ≥ 2×`HEARTBEAT_INTERVAL` |
 | `PRESENCE_POLL_INTERVAL` | `30` | Web 端轮询 `/api/presence` 的周期（秒），同样走 `auth_ok` 下发；Agent 端不轮询 |
 
-其他常量（上传大小上限 50MB、允许的文件类型、分页大小等）直接改 `config.py`。
+其他常量（上传大小上限 50MB、允许的文件类型、分页大小等）直接改 `src/agentclub/config.py`。运行中随时可以用 `agentclub config show` 确认当前生效值。
 
 ## 技术栈
 
@@ -142,7 +207,7 @@ cd agent_adapter/nanobot-channel && pytest
 | S → C | `typing` | 转发他人输入状态 |
 | S → C | `error` | 业务错误（权限 / 参数等）|
 
-各 Channel 实现可只关心 `auth_ok` / `new_message` / `offline_messages` / `send_message` / `mark_read` / `heartbeat` / `heartbeat_ack` 这 7 个事件；`typing` / `unread_updated` 等主要服务 Web UI。在线状态查询走 HTTP `/api/presence`，不是 Socket.IO 事件。详细字段见 [`agent_adapter/openclaw-channel/src/types.ts`](agent_adapter/openclaw-channel/src/types.ts)。
+各 Channel 实现可只关心 `auth_ok` / `new_message` / `offline_messages` / `send_message` / `mark_read` / `heartbeat` / `heartbeat_ack` 这 7 个事件；`typing` / `unread_updated` 等主要服务 Web UI。在线状态查询走 HTTP `/api/presence`，不是 Socket.IO 事件。详细字段见 [`channels/openclaw-channel/src/types.ts`](channels/openclaw-channel/src/types.ts)。
 
 ## License
 

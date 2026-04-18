@@ -487,7 +487,7 @@ class TestOutbound:
 
         channel._upload_attachment = AsyncMock(
             return_value={
-                "url": "/static/uploads/abc_note.txt",
+                "url": "/media/uploads/abc_note.txt",
                 "filename": "note.txt",
                 "content_type": "text/plain",
             }
@@ -506,7 +506,7 @@ class TestOutbound:
         # First: file bubble with URL + filename, no text
         assert emits[0][0] == "send_message"
         assert emits[0][1]["content"] == ""
-        assert emits[0][1]["file_url"] == "/static/uploads/abc_note.txt"
+        assert emits[0][1]["file_url"] == "/media/uploads/abc_note.txt"
         assert emits[0][1]["file_name"] == "note.txt"
         # Second: text bubble
         assert emits[1][1]["content"] == "see attached"

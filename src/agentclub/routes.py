@@ -2,9 +2,9 @@ import os
 import json
 from flask import Blueprint, request, session, jsonify, send_from_directory
 from werkzeug.utils import secure_filename
-from config import Config
-from auth import hash_password, verify_password, generate_agent_token, login_required, admin_required
-import models
+from .config import Config
+from .auth import hash_password, verify_password, generate_agent_token, login_required, admin_required
+from . import models
 
 api = Blueprint("api", __name__)
 
@@ -257,8 +257,8 @@ def add_member(group_id):
     #      the old socket's disconnect, or after an engineio ping timeout).
     #      `server.enter_room` raises `ValueError: sid is not connected to
     #      requested namespace` for those, so we guard and skip.
-    from socket_events import user_sids
-    from app import socketio
+    from .socket_events import user_sids
+    from .app import socketio
     _room_transition(socketio, user_sids.get(user_id, set()), f"group_{group_id}", join=True)
 
     return jsonify({"ok": True})
@@ -298,8 +298,8 @@ def remove_member(group_id, user_id):
 
     # Kick the removed user out of the Socket.IO room so they stop seeing
     # new messages immediately, and push a sidebar refresh.
-    from socket_events import user_sids
-    from app import socketio
+    from .socket_events import user_sids
+    from .app import socketio
     _room_transition(socketio, user_sids.get(user_id, set()), f"group_{group_id}", join=False)
 
     return jsonify({"ok": True})
@@ -314,8 +314,8 @@ def delete_group(group_id):
     if group["created_by"] != request.current_user["id"]:
         return jsonify({"error": "只有创建者可以解散群组"}), 403
     # Notify all online members
-    from socket_events import user_sids
-    from app import socketio
+    from .socket_events import user_sids
+    from .app import socketio
     members = models.get_group_members(group_id)
     for m in members:
         if m["id"] in user_sids:
@@ -433,7 +433,7 @@ def upload_file():
     os.makedirs(Config.UPLOAD_FOLDER, exist_ok=True)
     f.save(filepath)
 
-    url = f"/static/uploads/{unique_name}"
+    url = f"/media/uploads/{unique_name}"
     content_type = _detect_content_type(filename)
     return jsonify({"url": url, "filename": filename, "content_type": content_type})
 
@@ -461,7 +461,7 @@ def agent_upload_file():
     os.makedirs(Config.UPLOAD_FOLDER, exist_ok=True)
     f.save(filepath)
 
-    url = f"/static/uploads/{unique_name}"
+    url = f"/media/uploads/{unique_name}"
     content_type = _detect_content_type(filename)
     return jsonify({"url": url, "filename": filename, "content_type": content_type})
 
@@ -517,7 +517,7 @@ def agent_group_members(group_id):
     return jsonify(models.get_group_members(group_id))
 
 
-@api.route("/static/uploads/<filename>")
+@api.route("/media/uploads/<filename>")
 def serve_upload(filename):
     return send_from_directory(Config.UPLOAD_FOLDER, filename)
 

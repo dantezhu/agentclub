@@ -4,24 +4,31 @@ import json
 import tempfile
 import pytest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-import config
-# Use temp db for tests
+# The installed package is imported as ``agentclub``; for editable
+# installs ``pip install -e .`` puts ``src/`` on sys.path, so these
+# imports resolve whether or not the test suite was invoked from the
+# repo root.
+from agentclub import config
+# Use a temp sqlite + upload dir so tests never touch the developer's
+# real AGENTCLUB_HOME. Must happen BEFORE agentclub.app is imported.
 _tmpdb = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
 config.Config.DATABASE = _tmpdb.name
 config.Config.UPLOAD_FOLDER = tempfile.mkdtemp()
 
-import models
-from app import app, socketio
-from auth import hash_password
+from agentclub import models
+from agentclub.app import app, socketio
+from agentclub.auth import hash_password
 
 
 @pytest.fixture(autouse=True)
 def setup_db():
+    # Re-pin the test DB before each test in case a previous test
+    # (e.g. from test_cli.py) or a CLI bootstrap() call mutated the
+    # Config class attributes.
+    config.Config.DATABASE = _tmpdb.name
+    config.Config.UPLOAD_FOLDER = config.Config.UPLOAD_FOLDER or tempfile.mkdtemp()
     models.init_db()
     yield
-    # Clean tables after each test
     with models.get_db_ctx() as db:
         for table in ["read_cursors", "messages", "group_members", "direct_chats", "groups", "users"]:
             db.execute(f"DELETE FROM {table}")
@@ -386,7 +393,7 @@ class TestFileUpload:
         assert res.status_code == 200
         result = res.get_json()
         assert result["content_type"] == "image"
-        assert result["url"].startswith("/static/uploads/")
+        assert result["url"].startswith("/media/uploads/")
 
     def test_upload_requires_auth(self, client):
         import io

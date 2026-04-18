@@ -21,7 +21,7 @@ openclaw plugins install @agentclub/openclaw-channel
 或者从源码安装：
 
 ```bash
-cd agent_adapter/openclaw-channel
+cd channels/openclaw-channel
 npm install
 npm run build
 openclaw plugins install ./

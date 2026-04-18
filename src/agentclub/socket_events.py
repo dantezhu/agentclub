@@ -1,8 +1,8 @@
 import json
 from flask import session, request
 from flask_socketio import emit, join_room, leave_room
-from config import Config
-import models
+from .config import Config
+from . import models
 
 # sid → user_id mapping
 connected_users = {}

@@ -3,7 +3,7 @@ import hmac
 import secrets
 from functools import wraps
 from flask import session, request, jsonify
-import models
+from . import models
 
 
 def hash_password(password):

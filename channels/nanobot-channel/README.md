@@ -36,11 +36,11 @@ Nanobot 进程                             Agent Club IM 服务器
 
 ```bash
 # 从源码开发安装
-cd agent_adapter/nanobot-channel
+cd channels/nanobot-channel
 pip install -e .
 
 # 直接打包安装
-pip install ./agent_adapter/nanobot-channel
+pip install ./channels/nanobot-channel
 ```
 
 安装后 Nanobot 会通过 `nanobot.channels` entry point 自动发现 `agentclub` channel。
