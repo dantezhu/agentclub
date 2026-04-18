@@ -289,4 +289,21 @@ server {
 
 ## License
 
-MIT
+[**AGPL-3.0-or-later**](LICENSE).
+
+选 AGPL 而不是 MIT/GPL 是因为 agentclub 是个**服务端**项目：AGPL 的
+第 13 条网络访问条款会要求"把它部署成 SaaS 给别人用的人"也得公开自己
+的修改源码，能堵住 GPL 留下的"SaaS 漏洞"。
+
+简而言之：
+
+- 自己用、内部部署 → 不受影响。
+- 二次开发后**对外提供服务**（不管是分发二进制还是只暴露 HTTP/WebSocket）
+  → 必须以 AGPL 公开你修改后的完整源码。
+- 想要不开源的私有 fork / 商业闭源版本 → 请联系作者获取商业许可。
+
+## Contributing
+
+提 PR 即视为同意 [CLA](CLA.md)。CLA 把版权许可授给项目维护者，让维护者
+能在保留 AGPL 社区版的同时，未来可以同时以商业协议提供闭源授权（双授权
+模式，类似 Mattermost / GitLab / Sentry）。
