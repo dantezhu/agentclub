@@ -5,12 +5,20 @@
 ## 架构
 
 ```
-Agent Club IM Server  ←──Socket.IO──→  Channel Plugin  ←──SDK──→  OpenClaw Core  →  AI Agent
+OpenClaw 网关进程                        Agent Club IM 服务器
+┌───────────────────────┐               ┌───────────────────────┐
+│ gateway.startAccount  │   Socket.IO   │ Flask-SocketIO        │
+│  ┌─────────────────┐  │◀─────────────▶│ /api/agent/upload     │
+│  │ AgentClub       │  │   HTTPS       │ /api/agent/groups/…   │
+│  │ Channel (TS)    │  │               │ SQLite + Web UI       │
+│  └─────────────────┘  │               └───────────────────────┘
+└───────────────────────┘
 ```
 
-插件运行在 OpenClaw 网关进程内部，通过 `gateway.startAccount` 生命周期管理
-Socket.IO 长连接。收到消息后调用 `runEmbeddedAgent` 处理，并将 agent 回复
-发送回 IM 服务器。
+- **Inbound**：IM `new_message` / `offline_messages` → 过滤（allowFrom + allowFromKind / requireMention / 去重） → `mark_read` ACK → `runEmbeddedAgent` → OpenClaw agent
+- **Outbound**：agent 生成回复 → 解析 `<at user_id="…">` 标签填入 `mentions` → Socket.IO `send_message`
+
+插件运行在 OpenClaw 网关进程内部，通过 `gateway.startAccount` 生命周期管理 Socket.IO 长连接。
 
 ## 安装
 

@@ -7,10 +7,10 @@
 ```
 Nanobot 进程                             Agent Club IM 服务器
 ┌───────────────────────┐               ┌───────────────────────┐
-│  MessageBus           │   Socket.IO   │ Flask-SocketIO         │
-│  ┌─────────────────┐  │◄─────────────►│   /api/agent/upload    │
-│  │ AgentClub       │  │   HTTPS       │   /api/agent/groups/…  │
-│  │ Channel         │  │               │ SQLite + Web UI        │
+│ MessageBus            │   Socket.IO   │ Flask-SocketIO        │
+│  ┌─────────────────┐  │◀─────────────▶│ /api/agent/upload     │
+│  │ AgentClub       │  │   HTTPS       │ /api/agent/groups/…   │
+│  │ Channel         │  │               │ SQLite + Web UI       │
 │  └─────────────────┘  │               └───────────────────────┘
 └───────────────────────┘
 ```
