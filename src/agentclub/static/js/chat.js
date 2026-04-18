@@ -1210,6 +1210,12 @@ async function renderMembersPanel() {
     const group = await groupRes.json();
     const canManage = currentUser.role === 'admin' || group.created_by === currentUser.id;
 
+    // Keep the chat header's "X 名成员" in sync. The subtitle was only
+    // written once in selectChat(); without this line, add/remove member
+    // would leave stale counts in the header until the user re-selects
+    // the group.
+    document.getElementById('chatSubtitle').textContent = `${members.length} 名成员`;
+
     let html = '';
     if (canManage) {
         html += `<div style="padding:8px 12px"><button class="btn-sm" onclick="showAddMember('${currentChat.id}')">+ 添加成员</button></div>`;
