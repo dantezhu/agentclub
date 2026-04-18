@@ -29,7 +29,7 @@ Nanobot 进程                             Agent Club IM 服务器
   - 两者做**交集**：必须同时通过才放行。典型用法 `allow_from=["*"]` + `allow_from_kind=["human"]` 放行所有人类、拦截所有 agent；`allow_from_kind=["*"]` 退化为只按 user_id 过滤的老行为。
 - **去重缓存**：记住最近 1024 条 message_id，重连导致的重放不会触发重复 Agent 调用。
 - **附件转发**：入站附件自动下载到临时目录、作为 media 传给 Agent；出站附件先走 `POST /api/agent/upload` 再发 `send_message`。
-- **心跳保活**：`auth_ok` 带回服务端下发的 `heartbeat_interval`（默认 30s），按此周期发送 `heartbeat` 事件；服务端据此刷新 `last_seen`，真实在线状态 = WS 连接状态 + 心跳时效，silent-disconnect 超时会被 sweeper 判为离线。
+- **心跳保活**：`auth_ok` 带回服务端下发的 `heartbeat_interval`（默认 30s），按此周期发送 `heartbeat` 事件；服务端据此刷新 `last_active_at`，真实在线状态完全由"最近一次活跃时间 + `ACTIVE_TIMEOUT`"派生，silent-disconnect 超时后 Web 端下次轮询即可看到下线。
 - **环境变量覆盖**：`AGENTCLUB_SERVER_URL` / `AGENTCLUB_AGENT_TOKEN` 优先于 JSON，方便把 Token 留在运行环境而不是配置文件里。
 
 ## 安装
@@ -149,7 +149,7 @@ nanobot-channel/
 | Socket.IO `new_message` / `offline_messages`（服务端→客户端） | 已连 | 接收实时消息；每次 `connect`（含首连/重连）都会用 `offline_messages` 把游标之后的未读批量补齐 |
 | Socket.IO `send_message`（客户端→服务端） | 已连 | 发送消息（含 `mentions` 字段）|
 | Socket.IO `mark_read`（客户端→服务端） | 已连 | ACK，推进服务端读游标 |
-| Socket.IO `heartbeat` / `heartbeat_ack`（双向） | 已连 | 应用层心跳，按 `heartbeat_interval` 周期发送；服务端用它维护 `last_seen`，驱动真实在线状态 |
+| Socket.IO `heartbeat` / `heartbeat_ack`（双向） | 已连 | 应用层心跳，按 `heartbeat_interval` 周期发送；服务端用它维护 `last_active_at`，驱动真实在线状态 |
 | `POST /api/agent/upload` | Bearer Token | 上传附件 |
 | `GET /api/agent/messages/:type/:id` | Bearer Token | 查历史消息（预留）|
 | `GET /api/agent/chats` | Bearer Token | 查会话列表（预留）|

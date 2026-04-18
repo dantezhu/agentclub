@@ -371,6 +371,31 @@ def unread_counts():
     return jsonify(models.get_unread_counts(request.current_user["id"]))
 
 
+@api.route("/api/presence")
+@login_required
+def presence_snapshot():
+    """Return the current online state of a batch of users.
+
+    Default scope (no `user_ids` param): every peer the current user has
+    a direct chat with. Groups are intentionally excluded because the
+    Web UI doesn't display real-time presence for group members — opening
+    the members panel fetches a one-shot snapshot via `/api/groups/.../members`.
+
+    With `?user_ids=a,b,c`: restricted to the given ids that the user can
+    legitimately see. Right now "can see" just means they exist; tighten
+    if we ever add privacy controls.
+
+    Response shape:
+      [{ "user_id": "...", "is_online": 0|1, "last_active_at": 123.4 }]
+    """
+    raw = request.args.get("user_ids", "").strip()
+    if raw:
+        ids = [x for x in (s.strip() for s in raw.split(",")) if x]
+    else:
+        ids = models.get_direct_chat_peers(request.current_user["id"])
+    return jsonify(models.get_presence_snapshot(ids))
+
+
 @api.route("/api/last-messages")
 @login_required
 def last_messages():

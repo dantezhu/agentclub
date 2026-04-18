@@ -6,6 +6,8 @@ let chats = { groups: [], directs: [] };
 let oldestTimestamp = {};
 let typingTimeout = null;
 let heartbeatTimer = null;
+let presencePollTimer = null;
+let presencePollIntervalMs = 30_000;
 let unreadCounts = {};
 let lastMessages = {};
 let pendingImages = []; // Files queued for preview before sending
@@ -53,6 +55,7 @@ function connectSocket() {
     socket.on('auth_ok', (data) => {
         console.log('Authenticated:', data);
         startHeartbeat(data.heartbeat_interval);
+        startPresencePolling(data.presence_poll_interval);
     });
 
     socket.on('new_message', (msg) => {
@@ -85,10 +88,6 @@ function connectSocket() {
         }
     });
 
-    socket.on('presence', (data) => {
-        updatePresence(data);
-    });
-
     socket.on('chat_list_updated', () => {
         loadChats();
     });
@@ -99,12 +98,14 @@ function connectSocket() {
 }
 
 /* ── Heartbeat ── */
-// Application-level heartbeat. The server uses our `last_seen`
-// alongside the ws-connection flag to decide real online-ness, so if
-// we stop heartbeating (tab frozen, TCP silently dead) peers will
-// eventually see us go offline without needing a clean disconnect.
-// The interval comes from the server (`auth_ok.heartbeat_interval`)
-// so a single Config change propagates to all clients on reconnect.
+// Application-level heartbeat. The server records our `last_active_at`
+// on every inbound signal (heartbeat, send_message, mark_read, ...) and
+// derives online-ness from it vs `ACTIVE_TIMEOUT`. If we stop
+// heartbeating (tab frozen, TCP silently dead) peers polling
+// `/api/presence` will see us flip to offline without needing a clean
+// disconnect. The interval comes from the server
+// (`auth_ok.heartbeat_interval`) so a single Config change propagates
+// to all clients on reconnect.
 function startHeartbeat(intervalSeconds) {
     if (heartbeatTimer) clearInterval(heartbeatTimer);
     const sec = Number(intervalSeconds);
@@ -113,6 +114,63 @@ function startHeartbeat(intervalSeconds) {
         if (socket && socket.connected) socket.emit('heartbeat');
     }, ms);
 }
+
+/* ── Presence polling ──
+ *
+ * Online status is NOT pushed over Socket.IO anymore — the server only
+ * records `last_active_at` and derives `is_online` from `ACTIVE_TIMEOUT`.
+ * We poll `/api/presence` on a timer so the sidebar's green dots stay
+ * fresh without relying on an explicit `disconnect` signal from peers
+ * (browser close / network drop often fail to fire one).
+ *
+ * Scope: direct-chat peers only. Group member presence isn't surfaced in
+ * real time — the members panel fetches a one-shot snapshot when opened.
+ *
+ * We suspend polling when the tab is hidden (the UI isn't visible anyway,
+ * and the browser may throttle timers). On visibilitychange back to
+ * visible, we refresh immediately so the user sees accurate state on return.
+ */
+function startPresencePolling(intervalSeconds) {
+    const sec = Number(intervalSeconds);
+    presencePollIntervalMs = (Number.isFinite(sec) && sec > 0 ? sec : 30) * 1000;
+    schedulePresencePoll();
+    refreshPresence();
+}
+
+function schedulePresencePoll() {
+    if (presencePollTimer) clearInterval(presencePollTimer);
+    presencePollTimer = setInterval(() => {
+        if (document.hidden) return;
+        refreshPresence();
+    }, presencePollIntervalMs);
+}
+
+async function refreshPresence() {
+    if (!chats.directs.length) return;
+    try {
+        const res = await fetch('/api/presence');
+        if (!res.ok) return;
+        const rows = await res.json();
+        const byId = new Map(rows.map((r) => [r.user_id, r]));
+        let changed = false;
+        for (const d of chats.directs) {
+            const row = byId.get(d.peer_id);
+            const next = row ? !!row.is_online : false;
+            const prev = !!d.peer_online;
+            if (prev !== next) {
+                d.peer_online = next ? 1 : 0;
+                changed = true;
+            }
+        }
+        if (changed) renderChatList();
+    } catch {
+        // Network blip — ignore; next tick will try again.
+    }
+}
+
+document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) refreshPresence();
+});
 
 /* ── Load Chats ── */
 async function loadChats() {
@@ -1093,12 +1151,6 @@ function showTyping(name) {
     typingTimeout = setTimeout(() => el.classList.add('hidden'), 3000);
 }
 
-/* ── Presence ── */
-function updatePresence(data) {
-    // Re-render chat list to update online dots
-    loadChats();
-}
-
 function updateChatPreview(msg) {
     const key = `${msg.chat_type}_${msg.chat_id}`;
     lastMessages[key] = { sender_name: msg.sender_name, content: msg.content, content_type: msg.content_type };
@@ -1165,7 +1217,10 @@ async function renderMembersPanel() {
     for (const m of members) {
         const initial = (m.display_name || '?').charAt(0);
         const avatarClass = m.is_agent ? 'member-avatar agent' : 'member-avatar';
-        const dot = m.is_online ? '<span class="online-dot"></span>' : '';
+        // Group member presence is intentionally not shown in real time —
+        // the panel is a transient view and we don't poll for it. If you
+        // need to know whether a specific peer is online right now, open
+        // a direct chat with them (the sidebar does poll).
         let tag = '';
         if (m.role === 'admin') tag = '<span class="member-tag admin">管理员</span>';
         else if (m.is_agent) tag = '<span class="member-tag agent">Agent</span>';
@@ -1177,7 +1232,7 @@ async function renderMembersPanel() {
 
         html += `<div class="member-item">
             <div class="${avatarClass}">${initial}</div>
-            <span class="member-name">${dot}${escHtml(m.display_name)}</span>
+            <span class="member-name">${escHtml(m.display_name)}</span>
             ${tag}${removeBtn}
         </div>`;
     }
@@ -1434,10 +1489,12 @@ async function showNewChatModal() {
     let html = '';
     for (const u of users) {
         if (u.id === currentUser.id) continue;
-        const dot = u.is_online ? '<span class="online-dot"></span>' : '';
+        // No online dot here: the "start new chat" picker is a transient
+        // one-shot view, not something we poll. Once the chat is created
+        // it shows up in the sidebar which DOES get presence updates.
         const tag = u.is_agent ? ' <span class="member-tag agent">Agent</span>' : '';
         html += `<div class="add-user-item">
-            <span>${dot}${escHtml(u.display_name)}${tag}</span>
+            <span>${escHtml(u.display_name)}${tag}</span>
             <button class="btn-sm" onclick="startDirectChat('${u.id}','${escHtml(u.display_name)}',${!!u.is_agent})">聊天</button>
         </div>`;
     }

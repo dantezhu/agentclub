@@ -137,9 +137,9 @@ export class AgentClubClient {
   /**
    * (Re)start the application-level heartbeat. Driven off `auth_ok`
    * payload so the IM server's Config (`HEARTBEAT_INTERVAL`) is the
-   * single source of truth across all clients; the server uses our
-   * `last_seen` alongside the ws-connection flag to decide real online
-   * status, so a silently-dead TCP path eventually surfaces as offline.
+   * single source of truth across all clients; the server derives real
+   * online status from our `last_active_at` timestamp, so a silently-dead
+   * TCP path eventually surfaces as offline once this loop stops bumping it.
    */
   private startHeartbeat(intervalSeconds?: number): void {
     this.stopHeartbeat();

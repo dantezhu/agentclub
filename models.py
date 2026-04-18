@@ -14,8 +14,7 @@ CREATE TABLE IF NOT EXISTS users (
     role TEXT DEFAULT 'user',
     is_agent INTEGER DEFAULT 0,
     agent_token TEXT UNIQUE,
-    is_online INTEGER DEFAULT 0,
-    last_seen REAL,
+    last_active_at REAL,
     created_at REAL NOT NULL
 );
 
@@ -86,31 +85,33 @@ CREATE TABLE IF NOT EXISTS settings (
 _DEFAULT_SETTINGS = {}
 
 
-def _apply_online(user_dict):
-    """Reconcile `is_online` with the recorded `last_seen` heartbeat.
+def _is_active(last_active_at):
+    """Decide whether a `last_active_at` timestamp is recent enough to
+    treat the user as online. Used as the single source of truth everywhere
+    the code previously looked at a persisted `is_online` flag."""
+    if not last_active_at:
+        return False
+    return last_active_at >= (time.time() - Config.ACTIVE_TIMEOUT)
 
-    A user only counts as online if BOTH the session flag is set AND a
-    heartbeat has arrived within the last `Config.HEARTBEAT_TIMEOUT`
-    seconds. This protects against stuck-True states where the ws died
-    without cleanly firing `disconnect`. Mutates and returns the dict;
-    safe on None.
-    """
-    if not user_dict or "is_online" not in user_dict:
+
+def _apply_online(user_dict):
+    """Decorate a user row with a derived `is_online` field based on
+    `last_active_at`. The DB no longer stores an `is_online` column — any
+    client activity (heartbeat, send_message, mark_read) bumps
+    `last_active_at`, and `ACTIVE_TIMEOUT` turns that into a boolean. Safe
+    on None / rows missing the column (returned as-is)."""
+    if not user_dict:
         return user_dict
-    ls = user_dict.get("last_seen") or 0
-    fresh = ls >= (time.time() - Config.HEARTBEAT_TIMEOUT)
-    user_dict["is_online"] = 1 if (user_dict.get("is_online") and fresh) else 0
+    user_dict["is_online"] = 1 if _is_active(user_dict.get("last_active_at")) else 0
     return user_dict
 
 
 def _apply_peer_online(row_dict):
-    """Same as `_apply_online` but for the aliased `peer_online` /
-    `peer_last_seen` columns produced by the direct-chat query."""
-    if not row_dict or "peer_online" not in row_dict:
+    """Same as `_apply_online` but for the aliased `peer_last_active_at`
+    column produced by the direct-chat query."""
+    if not row_dict or "peer_last_active_at" not in row_dict:
         return row_dict
-    ls = row_dict.get("peer_last_seen") or 0
-    fresh = ls >= (time.time() - Config.HEARTBEAT_TIMEOUT)
-    row_dict["peer_online"] = 1 if (row_dict.get("peer_online") and fresh) else 0
+    row_dict["peer_online"] = 1 if _is_active(row_dict.get("peer_last_active_at")) else 0
     return row_dict
 
 
@@ -138,6 +139,37 @@ def get_db_ctx():
 def init_db():
     with get_db_ctx() as db:
         db.executescript(SCHEMA)
+        _migrate_presence_columns(db)
+
+
+def _migrate_presence_columns(db):
+    """Upgrade legacy `users` tables to the simplified presence model.
+
+    Old schema had `is_online INTEGER` + `last_seen REAL` and relied on a
+    sweeper to keep them consistent. New schema is a single
+    `last_active_at REAL`; online-ness is derived at read time from
+    `ACTIVE_TIMEOUT`. Migration rules for an existing DB:
+      - If `last_active_at` is missing but `last_seen` exists → rename.
+      - If `is_online` still exists → drop it (SQLite ≥ 3.35).
+      - Fresh install: SCHEMA already has `last_active_at`, nothing to do.
+    All ALTERs are idempotent and safe to run on every startup.
+    """
+    cols = {r["name"] for r in db.execute("PRAGMA table_info(users)").fetchall()}
+    if "last_active_at" not in cols:
+        if "last_seen" in cols:
+            db.execute("ALTER TABLE users RENAME COLUMN last_seen TO last_active_at")
+        else:
+            db.execute("ALTER TABLE users ADD COLUMN last_active_at REAL")
+    elif "last_seen" in cols:
+        # Both columns present (shouldn't happen but be defensive): copy
+        # any fresher `last_seen` forward, then drop the legacy column.
+        db.execute(
+            "UPDATE users SET last_active_at = MAX(COALESCE(last_active_at, 0), "
+            "COALESCE(last_seen, 0)) WHERE last_seen IS NOT NULL"
+        )
+        db.execute("ALTER TABLE users DROP COLUMN last_seen")
+    if "is_online" in cols:
+        db.execute("ALTER TABLE users DROP COLUMN is_online")
 
 
 def now():
@@ -193,52 +225,23 @@ def get_user_by_agent_token(token):
     return _apply_online(dict(row)) if row else None
 
 
-def set_user_online(user_id, online=True):
+def touch_active(user_id):
+    """Refresh a user's `last_active_at` to now.
+
+    Called on every inbound signal that proves the client is alive and
+    kicking: heartbeat, send_message, mark_read, etc. Cheap enough to run
+    per-event (single indexed UPDATE). Derived `is_online` follows
+    automatically — no separate flag to keep in sync."""
+    if not user_id:
+        return
     with get_db_ctx() as db:
-        db.execute(
-            "UPDATE users SET is_online = ?, last_seen = ? WHERE id = ?",
-            (1 if online else 0, now(), user_id),
-        )
-
-
-def touch_last_seen(user_id):
-    """Update the user's heartbeat timestamp without touching `is_online`.
-
-    Called on every incoming heartbeat / ping frame from a connected
-    client. Cheap enough to run per-heartbeat (single indexed UPDATE)."""
-    with get_db_ctx() as db:
-        db.execute("UPDATE users SET last_seen = ? WHERE id = ?", (now(), user_id))
-
-
-def sweep_stale_online():
-    """Flip `is_online` to 0 for any user whose heartbeat has gone stale.
-
-    Returned list contains the users that were just transitioned so the
-    caller can broadcast a presence update. A user appears here at most
-    once per staleness episode — we only select rows that still had
-    `is_online = 1` at sweep time."""
-    threshold = now() - Config.HEARTBEAT_TIMEOUT
-    with get_db_ctx() as db:
-        rows = db.execute(
-            "SELECT id, display_name, is_agent FROM users "
-            "WHERE is_online = 1 AND COALESCE(last_seen, 0) < ?",
-            (threshold,),
-        ).fetchall()
-        if not rows:
-            return []
-        ids = [r["id"] for r in rows]
-        placeholders = ",".join("?" for _ in ids)
-        db.execute(
-            f"UPDATE users SET is_online = 0 WHERE id IN ({placeholders})",
-            ids,
-        )
-    return [dict(r) for r in rows]
+        db.execute("UPDATE users SET last_active_at = ? WHERE id = ?", (now(), user_id))
 
 
 def list_users():
     db = get_db()
     rows = db.execute(
-        "SELECT id, username, display_name, avatar, role, is_agent, is_online, last_seen "
+        "SELECT id, username, display_name, avatar, role, is_agent, last_active_at "
         "FROM users ORDER BY created_at"
     ).fetchall()
     db.close()
@@ -248,7 +251,7 @@ def list_users():
 def list_agents():
     db = get_db()
     rows = db.execute(
-        "SELECT id, username, display_name, avatar, agent_token, is_online, last_seen "
+        "SELECT id, username, display_name, avatar, agent_token, last_active_at "
         "FROM users WHERE is_agent = 1 ORDER BY created_at"
     ).fetchall()
     db.close()
@@ -325,7 +328,7 @@ def get_group_members(group_id):
     db = get_db()
     rows = db.execute(
         "SELECT u.id, u.username, u.display_name, u.avatar, u.role, u.is_agent, "
-        "       u.is_online, u.last_seen "
+        "       u.last_active_at "
         "FROM users u JOIN group_members gm ON u.id = gm.user_id "
         "WHERE gm.group_id = ? ORDER BY gm.joined_at",
         (group_id,),
@@ -405,17 +408,58 @@ def get_user_direct_chats(user_id):
         "CASE WHEN dc.user1_id = ? THEN u2.id ELSE u1.id END AS peer_id, "
         "CASE WHEN dc.user1_id = ? THEN u2.display_name ELSE u1.display_name END AS peer_name, "
         "CASE WHEN dc.user1_id = ? THEN u2.avatar ELSE u1.avatar END AS peer_avatar, "
-        "CASE WHEN dc.user1_id = ? THEN u2.is_online ELSE u1.is_online END AS peer_online, "
-        "CASE WHEN dc.user1_id = ? THEN u2.last_seen ELSE u1.last_seen END AS peer_last_seen, "
+        "CASE WHEN dc.user1_id = ? THEN u2.last_active_at ELSE u1.last_active_at END AS peer_last_active_at, "
         "CASE WHEN dc.user1_id = ? THEN u2.is_agent ELSE u1.is_agent END AS peer_is_agent "
         "FROM direct_chats dc "
         "JOIN users u1 ON dc.user1_id = u1.id "
         "JOIN users u2 ON dc.user2_id = u2.id "
         "WHERE dc.user1_id = ? OR dc.user2_id = ?",
-        (user_id, user_id, user_id, user_id, user_id, user_id, user_id, user_id),
+        (user_id, user_id, user_id, user_id, user_id, user_id, user_id),
     ).fetchall()
     db.close()
     return [_apply_peer_online(dict(r)) for r in rows]
+
+
+def get_direct_chat_peers(user_id):
+    """Return every distinct peer `user_id` (not the chat id) the given
+    user has a direct-chat record with. Used as the default scope for the
+    presence polling endpoint — groups are intentionally excluded because
+    the Web UI doesn't surface real-time presence for group members."""
+    db = get_db()
+    rows = db.execute(
+        "SELECT CASE WHEN user1_id = ? THEN user2_id ELSE user1_id END AS peer_id "
+        "FROM direct_chats WHERE user1_id = ? OR user2_id = ?",
+        (user_id, user_id, user_id),
+    ).fetchall()
+    db.close()
+    return [r["peer_id"] for r in rows]
+
+
+def get_presence_snapshot(user_ids):
+    """Compute the current online state for a batch of users.
+
+    Returns a list of `{user_id, is_online, last_active_at}`. Users that
+    don't exist are silently skipped. Caller is expected to authorize the
+    `user_ids` list (e.g. restrict to the requesting user's direct-chat
+    peers) — this helper is just the DB + timeout math."""
+    ids = [u for u in (user_ids or []) if u]
+    if not ids:
+        return []
+    db = get_db()
+    placeholders = ",".join("?" for _ in ids)
+    rows = db.execute(
+        f"SELECT id, last_active_at FROM users WHERE id IN ({placeholders})",
+        ids,
+    ).fetchall()
+    db.close()
+    result = []
+    for r in rows:
+        result.append({
+            "user_id": r["id"],
+            "is_online": 1 if _is_active(r["last_active_at"]) else 0,
+            "last_active_at": r["last_active_at"],
+        })
+    return result
 
 
 # ── Message operations ──

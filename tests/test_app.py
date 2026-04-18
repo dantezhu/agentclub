@@ -458,6 +458,104 @@ class TestModels:
         chat2 = models.get_or_create_direct_chat(uid2, uid1)
         assert chat2["id"] == chat["id"]  # same chat regardless of order
 
+    def test_presence_derived_from_last_active_at(self):
+        """`is_online` is a pure function of `last_active_at` + ACTIVE_TIMEOUT.
+        No stored flag, no sweeper — bumping `touch_active` flips a user to
+        online; letting it go stale flips them back to offline."""
+        import time as _time
+        uid = models.create_user("presence_u", hash_password("pass"), "P")
+
+        # Fresh user has never been active → offline.
+        assert models.get_user_by_id(uid)["is_online"] == 0
+
+        models.touch_active(uid)
+        assert models.get_user_by_id(uid)["is_online"] == 1
+
+        # Forge a stale `last_active_at` and re-check via the snapshot API.
+        with models.get_db_ctx() as db:
+            db.execute(
+                "UPDATE users SET last_active_at = ? WHERE id = ?",
+                (_time.time() - config.Config.ACTIVE_TIMEOUT - 10, uid),
+            )
+        snap = models.get_presence_snapshot([uid])
+        assert snap == [
+            {"user_id": uid, "is_online": 0, "last_active_at": snap[0]["last_active_at"]}
+        ]
+
+    def test_presence_endpoint_defaults_to_direct_chat_peers(self, admin_client):
+        """`GET /api/presence` without args returns one entry per direct-chat
+        peer — group members are intentionally NOT included."""
+        # Admin + two peers, one via direct chat, one only via a shared group.
+        admin = admin_client.get("/api/me").get_json()
+        direct_peer = models.create_user("dp", hash_password("pass"), "DirectPeer")
+        group_only = models.create_user("gp", hash_password("pass"), "GroupOnly")
+        gid = models.create_group("G", admin["id"])
+        models.add_group_member(gid, group_only)
+        models.get_or_create_direct_chat(admin["id"], direct_peer)
+
+        res = admin_client.get("/api/presence")
+        assert res.status_code == 200
+        ids = {r["user_id"] for r in res.get_json()}
+        assert ids == {direct_peer}
+
+        # Explicit user_ids broadens the scope.
+        res = admin_client.get(f"/api/presence?user_ids={direct_peer},{group_only}")
+        ids = {r["user_id"] for r in res.get_json()}
+        assert ids == {direct_peer, group_only}
+
+    def test_migration_from_legacy_is_online_schema(self):
+        """Startup migration renames `last_seen` → `last_active_at` and drops
+        `is_online`. We simulate the legacy table on a fresh DB file to make
+        sure upgrade-in-place works (and online state survives the rename)."""
+        import sqlite3, tempfile, time as _time, os as _os
+        # Build a v1-style DB in a temp file.
+        tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        tmp.close()
+        conn = sqlite3.connect(tmp.name)
+        conn.executescript("""
+            CREATE TABLE users (
+                id TEXT PRIMARY KEY,
+                username TEXT UNIQUE NOT NULL,
+                password_hash TEXT,
+                display_name TEXT NOT NULL,
+                avatar TEXT DEFAULT '',
+                role TEXT DEFAULT 'user',
+                is_agent INTEGER DEFAULT 0,
+                agent_token TEXT UNIQUE,
+                is_online INTEGER DEFAULT 0,
+                last_seen REAL,
+                created_at REAL NOT NULL
+            );
+        """)
+        now = _time.time()
+        conn.execute(
+            "INSERT INTO users (id, username, password_hash, display_name, "
+            "role, is_online, last_seen, created_at) "
+            "VALUES ('u1', 'u1', 'x', 'U1', 'user', 1, ?, ?)",
+            (now, now),
+        )
+        conn.commit()
+        conn.close()
+
+        prev_db = config.Config.DATABASE
+        config.Config.DATABASE = tmp.name
+        try:
+            models.init_db()
+            user = models.get_user_by_id("u1")
+            assert user is not None
+            assert user["is_online"] == 1  # derived from the renamed column
+            assert "last_active_at" in user
+            # Legacy columns are gone.
+            db = models.get_db()
+            cols = {r["name"] for r in db.execute("PRAGMA table_info(users)").fetchall()}
+            db.close()
+            assert "is_online" not in cols
+            assert "last_seen" not in cols
+            assert "last_active_at" in cols
+        finally:
+            config.Config.DATABASE = prev_db
+            _os.unlink(tmp.name)
+
     def test_cleanup_old_messages(self):
         uid = models.create_user("u1", hash_password("pass"), "User1")
         gid = models.create_group("G1", uid)

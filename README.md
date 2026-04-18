@@ -22,7 +22,7 @@
   - `mark_read` ACK 协议，避免重连风暴 / 消息重复处理。
   - 双层白名单（`allow_from` 按 user_id + `allow_from_kind` 按角色），默认拒绝，交集生效。
   - 离线消息自动补发。
-- **真实在线状态**：连接状态 + 应用层 `heartbeat` 心跳联合判定，silent-disconnect 超过阈值会被 sweeper 标记为离线；客户端的心跳间隔由服务端通过 `auth_ok` 下发，统一可配。
+- **真实在线状态**：服务端只记录每个用户的 `last_active_at`，在线与否按 `now - last_active_at < ACTIVE_TIMEOUT` 动态派生；任何活跃信号（心跳 / 发消息 / mark_read）都会续约。Web 端按 `PRESENCE_POLL_INTERVAL` 轮询 `/api/presence`（默认只看私聊联系人），Agent 端不关心别人的在线状态也无需轮询。所有间隔由服务端通过 `auth_ok` 下发。
 - **统一 Channel 协议**：任何 Agent 框架实现一次 Socket.IO Channel 就能接入。当前已有：
   - [`openclaw-channel`](agent_adapter/openclaw-channel) — OpenClaw Agent 插件（TypeScript）。
   - [`nanobot-channel`](agent_adapter/nanobot-channel) — Nanobot Agent 插件（Python）。
@@ -105,7 +105,8 @@ cd agent_adapter/nanobot-channel && pytest
 | `ALLOW_REGISTRATION` | `true` | 是否开放用户自助注册 |
 | `MESSAGE_RETENTION_DAYS` | `30` | 历史消息保留天数 |
 | `HEARTBEAT_INTERVAL` | `30` | 客户端心跳周期（秒），服务端通过 `auth_ok` 下发给所有客户端（Web / Agent Channel）统一使用 |
-| `HEARTBEAT_TIMEOUT` | `300` | 认定"silent 断线"的阈值（秒）；`last_seen` 超过此时长的连接会被 sweeper 标记为离线 |
+| `ACTIVE_TIMEOUT` | `90` | 在线判定阈值（秒）；`last_active_at` 距今超过此值即视为离线。建议 ≥ 2×`HEARTBEAT_INTERVAL` |
+| `PRESENCE_POLL_INTERVAL` | `30` | Web 端轮询 `/api/presence` 的周期（秒），同样走 `auth_ok` 下发；Agent 端不轮询 |
 
 其他常量（上传大小上限 50MB、允许的文件类型、分页大小等）直接改 `config.py`。
 
@@ -119,7 +120,8 @@ cd agent_adapter/nanobot-channel && pytest
 
 - `@mention` 统一走 `<at user_id="UUID">显示名</at>` 内嵌标签；`user_id="all"` 表示 @所有人。
 - **读游标 + `mark_read` ACK**：服务端按每个 `(user, chat)` 保存一个 `last_read_at` 读游标，**不**维护"未 ACK 消息列表"。每次客户端 `connect`（首连 / 重连都一样）都会通过 `offline_messages` 推送各会话里游标之后的全部消息，客户端处理完一条要发 `mark_read`（含 `message_id` 或 `(chat_type, chat_id)`）把游标推进过去。不 ACK 不影响实时 `new_message`，但下次连接还会把这条当未读再推一遍——at-least-once 语义就是这么来的。
-- **心跳**：认证成功后 `auth_ok` 会带 `heartbeat_interval`（秒），客户端需按该周期向服务端发送 `heartbeat` 事件；服务端用它刷新 `last_seen`，据此驱动真实在线状态。
+- **心跳**：认证成功后 `auth_ok` 会带 `heartbeat_interval`（秒），客户端需按该周期向服务端发送 `heartbeat` 事件；服务端用它刷新 `last_active_at`，据此驱动真实在线状态。
+- **在线状态查询**：Web 端按 `auth_ok.presence_poll_interval`（秒）轮询 `GET /api/presence`，默认返回当前用户所有私聊联系人的 `{user_id, is_online, last_active_at}`；可加 `?user_ids=a,b,c` 精确查询一批。服务端不再通过事件主动广播 presence，不用担心错过通知。
 
 ### Socket.IO 事件一览
 
@@ -132,16 +134,15 @@ cd agent_adapter/nanobot-channel && pytest
 | C → S | `heartbeat` | 应用层心跳，按 `auth_ok` 下发的 `heartbeat_interval` 周期发送 |
 | C → S | `join_chat` / `leave_chat` | 打开 / 关闭会话窗口，用于 Web 端刷未读 |
 | C → S | `typing` | "对方正在输入"提示 |
-| S → C | `auth_ok` | 认证成功，返回 `user_id` / `display_name` / `role` / `is_agent` / `heartbeat_interval` |
+| S → C | `auth_ok` | 认证成功，返回 `user_id` / `display_name` / `role` / `is_agent` / `heartbeat_interval` / `presence_poll_interval` |
 | S → C | `new_message` | 新消息到达 |
 | S → C | `offline_messages` | 重连时一次性补发所有未 ACK 的消息 |
 | S → C | `heartbeat_ack` | `heartbeat` 的响应，客户端可据此判断上行是否畅通 |
-| S → C | `presence` | 其他用户上下线广播（`is_online` + `last_seen`）|
 | S → C | `unread_updated` / `chat_list_updated` | 未读数 / 会话列表变动通知，主要给 Web 端刷新 UI |
 | S → C | `typing` | 转发他人输入状态 |
 | S → C | `error` | 业务错误（权限 / 参数等）|
 
-各 Channel 实现可只关心 `auth_ok` / `new_message` / `offline_messages` / `send_message` / `mark_read` / `heartbeat` / `heartbeat_ack` 这 7 个事件；`presence` / `typing` / `unread_updated` 等主要服务 Web UI。详细字段见 [`agent_adapter/openclaw-channel/src/types.ts`](agent_adapter/openclaw-channel/src/types.ts)。
+各 Channel 实现可只关心 `auth_ok` / `new_message` / `offline_messages` / `send_message` / `mark_read` / `heartbeat` / `heartbeat_ack` 这 7 个事件；`typing` / `unread_updated` 等主要服务 Web UI。在线状态查询走 HTTP `/api/presence`，不是 Socket.IO 事件。详细字段见 [`agent_adapter/openclaw-channel/src/types.ts`](agent_adapter/openclaw-channel/src/types.ts)。
 
 ## License
 

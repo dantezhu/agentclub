@@ -77,13 +77,6 @@ export interface NewMessagePayload {
   created_at: number;
 }
 
-export interface PresencePayload {
-  user_id: string;
-  display_name: string;
-  is_online: boolean;
-  is_agent: boolean;
-}
-
 /** Response from POST /api/agent/upload */
 export interface UploadResponse {
   url: string;

@@ -307,9 +307,9 @@ class AgentClubChannel(BaseChannel):
     async def _heartbeat_loop(self) -> None:
         """Emit an application-level heartbeat while connected.
 
-        The IM server combines its record of our ws connection with the
-        `last_seen` timestamp we bump here to decide whether we're truly
-        online. If this loop stops (process hung, task cancelled) the
+        The IM server derives our online status from the `last_active_at`
+        timestamp we bump here (plus any `send_message`/`mark_read` we
+        emit). If this loop stops (process hung, task cancelled) the
         server will eventually mark us offline even if the socket itself
         is still held open by an uncooperative network path.
 

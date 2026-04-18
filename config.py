@@ -23,9 +23,14 @@ class Config:
     # payload so all three clients (web, nanobot, openclaw) stay in sync
     # with a single server-side source of truth.
     HEARTBEAT_INTERVAL = int(os.environ.get("HEARTBEAT_INTERVAL", "30"))
-    # How long a user's last heartbeat can be stale before they count as
-    # offline, regardless of the `is_online` flag in the DB. The flag alone
-    # is unreliable when a socket dies silently without firing `disconnect`,
-    # so we combine it with `last_seen` freshness. Should be a few multiples
-    # of HEARTBEAT_INTERVAL to tolerate transient network blips.
-    HEARTBEAT_TIMEOUT = int(os.environ.get("HEARTBEAT_TIMEOUT", "300"))
+    # How long a user's `last_active_at` can go stale before we flip them
+    # to offline. Any client activity (heartbeat, send_message, mark_read)
+    # refreshes it; when nothing arrives for this long we treat the user
+    # as offline. Should be a few multiples of HEARTBEAT_INTERVAL to
+    # tolerate transient network blips.
+    ACTIVE_TIMEOUT = int(os.environ.get("ACTIVE_TIMEOUT", "90"))
+    # How often the web UI polls `/api/presence` to refresh the online
+    # status of direct-chat peers. Delivered via `auth_ok.presence_poll_interval`
+    # so a server-side config change propagates on the next reconnect.
+    # Agent clients do not poll — they don't render presence.
+    PRESENCE_POLL_INTERVAL = int(os.environ.get("PRESENCE_POLL_INTERVAL", "30"))
