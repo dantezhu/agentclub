@@ -619,7 +619,13 @@ button, .icon-btn, .chat-item, .member-item {
     width: 90%;
     max-width: 560px;
     max-height: 80vh;
-    overflow-y: auto;
+    /* Lay header + body out as a flex column so the body can scroll
+       independently while the header stays pinned. overflow:hidden on the
+       parent prevents the whole card (including the title bar) from being
+       scrolled away when the user list is long. */
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
     box-shadow: 0 20px 60px rgba(0,0,0,0.2);
 }
 .modal-sm { max-width: 400px; }
@@ -629,8 +635,17 @@ button, .icon-btn, .chat-item, .member-item {
     align-items: center;
     justify-content: space-between;
     border-bottom: 1px solid #eee;
+    flex-shrink: 0;
 }
-.modal-body { padding: 20px; }
+.modal-body {
+    padding: 20px;
+    /* min-height:0 is required so the flex item can actually shrink below
+       its content size, which is what makes overflow-y take effect inside
+       a flex column. */
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+}
 .admin-tabs {
     display: flex;
     gap: 8px;
