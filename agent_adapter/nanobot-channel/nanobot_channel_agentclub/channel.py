@@ -15,9 +15,13 @@ Feature parity with the OpenClaw channel of the same server:
   field of ``send_message``).
 * Recent-id dedup so duplicate deliveries (e.g. ACK raced a reconnect)
   don't produce duplicate agent runs.
-* ``allow_from`` inherits the ``BaseChannel`` semantics: empty list
-  denies everyone (default-deny); ``["*"]`` allows anyone; otherwise
-  explicit user-id allowlist.
+* ``allow_from`` is an allowlist with support for role tokens. Empty
+  list denies everyone (default-deny). Supported entries:
+    - ``"*"``    — allow anyone
+    - ``"human"`` — allow all non-agent senders
+    - ``"agent"`` — allow all agent senders
+    - any other string — a specific user_id
+  Tokens can be mixed freely, e.g. ``["human", "agent-xyz"]``.
 
 ``streaming`` is intentionally not implemented yet — the IM server has
 no "edit message" event, so every chunk would become a separate
@@ -156,8 +160,10 @@ class AgentClubConfig(BaseModel):
     enabled: bool = False
     server_url: str = ""
     agent_token: str = ""
-    # ``allow_from`` is consumed by ``BaseChannel.is_allowed``: an empty
-    # list denies everyone (default-deny, matching feishu/openclaw).
+    # ``allow_from`` is an allowlist with role tokens. An empty list
+    # denies everyone (default-deny, matching feishu/openclaw). Entries:
+    # ``"*"`` = anyone, ``"human"`` = all non-agent senders,
+    # ``"agent"`` = all agent senders, anything else = a specific user_id.
     allow_from: list[str] = Field(default_factory=list)
     require_mention: bool = True
     streaming: bool = False
@@ -387,6 +393,7 @@ class AgentClubChannel(BaseChannel):
             message_id = msg.get("id") or ""
             sender_id = msg.get("sender_id") or ""
             sender_name = msg.get("sender_name") or sender_id
+            sender_is_agent = bool(msg.get("sender_is_agent"))
             chat_type = msg.get("chat_type") or "direct"
             chat_id = msg.get("chat_id") or ""
             content = msg.get("content") or ""
@@ -411,8 +418,9 @@ class AgentClubChannel(BaseChannel):
                 while len(self._seen_message_ids) > _DEDUP_CAPACITY:
                     self._seen_message_ids.popitem(last=False)
 
-            # Access control (default-deny via BaseChannel.is_allowed)
-            if not self.is_allowed(sender_id):
+            # Access control — default-deny, with role tokens layered on
+            # top of explicit user-id matches (see `_is_sender_allowed`).
+            if not self._is_sender_allowed(sender_id, sender_is_agent):
                 logger.info(
                     "[agentclub] denied message from {} (not in allow_from)",
                     sender_name,
@@ -516,6 +524,27 @@ class AgentClubChannel(BaseChannel):
             )
         except Exception as exc:  # defensive: one bad message must not kill the loop
             logger.exception("[agentclub] error processing inbound: {}", exc)
+
+    def _is_sender_allowed(self, sender_id: str, sender_is_agent: bool) -> bool:
+        """Evaluate `allow_from` against a concrete sender.
+
+        Supported tokens (may be mixed with explicit user_ids):
+          - ``"*"``     → anyone
+          - ``"human"`` → any non-agent sender
+          - ``"agent"`` → any agent sender
+          - anything else → a specific user_id
+
+        An empty list denies everyone (default-deny, consistent with
+        feishu/openclaw). Token matching is O(n) over a small list so
+        we don't bother with a set cache."""
+        allow_from = list(self.config.allow_from or [])
+        if "*" in allow_from:
+            return True
+        if sender_is_agent and "agent" in allow_from:
+            return True
+        if not sender_is_agent and "human" in allow_from:
+            return True
+        return bool(sender_id) and sender_id in allow_from
 
     async def _ack(self, message_id: str) -> None:
         """Advance the server-side read cursor for ``message_id``.

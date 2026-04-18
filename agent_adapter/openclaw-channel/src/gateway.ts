@@ -42,11 +42,31 @@ export interface InboundGatewayOptions {
  *
  * Filtering rules:
  * 1. Skip messages sent by the agent itself.
- * 2. allowFrom must include "*" (allow all) or the sender's user ID.
+ * 2. allowFrom must accept the sender. Entries may be:
+ *      "*"     → anyone
+ *      "human" → any non-agent sender
+ *      "agent" → any agent sender
+ *      else    → a specific user_id
  *    An empty allowFrom rejects everyone (default-deny).
  * 3. In group chats with requireMention, skip messages without @mention.
  * 4. Direct chats always pass through.
  */
+
+/**
+ * Evaluate `allowFrom` against a concrete sender. Separated out so the
+ * 4-case token decision table lives in one place and is easy to unit
+ * test.
+ */
+export function isSenderAllowed(
+  allowFrom: string[],
+  senderId: string,
+  senderIsAgent: boolean,
+): boolean {
+  if (allowFrom.includes("*")) return true;
+  if (senderIsAgent && allowFrom.includes("agent")) return true;
+  if (!senderIsAgent && allowFrom.includes("human")) return true;
+  return !!senderId && allowFrom.includes(senderId);
+}
 const SEEN_MESSAGE_CAPACITY = 1024;
 
 export function createInboundGateway(opts: InboundGatewayOptions) {
@@ -89,7 +109,7 @@ export function createInboundGateway(opts: InboundGatewayOptions) {
       return;
     }
 
-    if (!account.allowFrom.includes("*") && !account.allowFrom.includes(msg.sender_id)) {
+    if (!isSenderAllowed(account.allowFrom, msg.sender_id, !!msg.sender_is_agent)) {
       logger.warn(`Ignored message from ${msg.sender_name} (not in allowFrom)`);
       ack(msg.id);
       return;

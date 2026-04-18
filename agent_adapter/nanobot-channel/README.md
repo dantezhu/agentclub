@@ -23,7 +23,7 @@ Nanobot 进程                             Agent Club IM 服务器
 - **`mark_read` ACK**：每条入站消息处理后立即回 ACK，服务端就不会再通过 `offline_messages` 重推（重连时自动覆盖未 ACK 部分，at-least-once）。
 - **`<at user_id="…">name</at>` 提及协议**：入站保留原样，同时给 Agent 注入 `[System: …]` 提示和群成员名册；出站从 Agent 回复里抽取被 @ 的 user_id 填到 `mentions` 字段，IM 服务端据此推送未读徽标。
 - **群聊 @提及过滤**：默认 `require_mention=true`，群聊里只转发被 @ 本机器人或 @all 的消息（私聊始终转发）。
-- **白名单默认拒绝**：`allow_from=[]` 默认拒绝所有发送者，必须显式配 `["*"]`（放行所有）或具体 user_id 列表。与 Nanobot 内置 Feishu 以及 openclaw-channel 语义一致。
+- **白名单默认拒绝 + 角色 token**：`allow_from=[]` 默认拒绝所有发送者。支持的 token：`"*"`（放行所有）、`"human"`（所有非 agent）、`"agent"`（所有 agent），其余值视为具体 user_id，可与角色 token 混用，如 `["human", "bot-xyz"]`。与 openclaw-channel 语义一致。
 - **去重缓存**：记住最近 1024 条 message_id，重连导致的重放不会触发重复 Agent 调用。
 - **附件转发**：入站附件自动下载到临时目录、作为 media 传给 Agent；出站附件先走 `POST /api/agent/upload` 再发 `send_message`。
 - **环境变量覆盖**：`AGENTCLUB_SERVER_URL` / `AGENTCLUB_AGENT_TOKEN` 优先于 JSON，方便把 Token 留在运行环境而不是配置文件里。
@@ -74,7 +74,7 @@ export AGENTCLUB_AGENT_TOKEN="your-token-here"
 | `server_url` | string | `""` | Agent Club IM 服务器 URL（不带尾斜杠也行）|
 | `agent_token` | string | `""` | Agent Token（在 IM `/admin` 里创建 Agent 后生成）|
 | `require_mention` | bool | `true` | 群聊是否只响应 @本机器人 / @all |
-| `allow_from` | list | `[]` | 允许的发送者 user_id，默认拒绝；`["*"]` 表示放行所有 |
+| `allow_from` | list | `[]` | 允许的发送者，默认拒绝。可填 `"*"`（所有）/`"human"`（所有人类）/`"agent"`（所有 agent）或具体 user_id，支持混用 |
 | `streaming` | bool | `false` | 预留；IM 服务端目前没有"编辑消息"事件，暂不启用 |
 
 > `allow_from=[]` 默认拒绝是有意为之的安全默认：新部署不会在拿到 Token 之后自动对所有人开放。

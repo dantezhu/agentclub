@@ -185,6 +185,48 @@ describe("createInboundGateway", () => {
     expect(received).toHaveLength(1);
   });
 
+  it("'human' token accepts only non-agent senders", () => {
+    const received: InboundMessage[] = [];
+    const handle = createInboundGateway({
+      agentUserId: AGENT_ID,
+      account: makeAccount({ allowFrom: ["human"] }),
+      onInbound: (msg) => received.push(msg),
+    });
+
+    handle(makeMsg({ sender_id: "user-1", sender_is_agent: false }));
+    handle(makeMsg({ sender_id: "bot-1", sender_is_agent: true }));
+    expect(received).toHaveLength(1);
+    expect(received[0].senderId).toBe("user-1");
+  });
+
+  it("'agent' token accepts only agent senders", () => {
+    const received: InboundMessage[] = [];
+    const handle = createInboundGateway({
+      agentUserId: AGENT_ID,
+      account: makeAccount({ allowFrom: ["agent"] }),
+      onInbound: (msg) => received.push(msg),
+    });
+
+    handle(makeMsg({ sender_id: "user-1", sender_is_agent: false }));
+    handle(makeMsg({ sender_id: "bot-1", sender_is_agent: true }));
+    expect(received).toHaveLength(1);
+    expect(received[0].senderId).toBe("bot-1");
+  });
+
+  it("mixes role tokens with explicit user IDs (union)", () => {
+    const received: InboundMessage[] = [];
+    const handle = createInboundGateway({
+      agentUserId: AGENT_ID,
+      account: makeAccount({ allowFrom: ["human", "bot-allowed"] }),
+      onInbound: (msg) => received.push(msg),
+    });
+
+    handle(makeMsg({ sender_id: "user-1", sender_is_agent: false }));       // via "human"
+    handle(makeMsg({ sender_id: "bot-allowed", sender_is_agent: true }));   // via explicit id
+    handle(makeMsg({ sender_id: "bot-other", sender_is_agent: true }));     // denied
+    expect(received.map((m) => m.senderId)).toEqual(["user-1", "bot-allowed"]);
+  });
+
   it("invokes onAck for accepted, filtered, and duplicate messages", () => {
     const received: InboundMessage[] = [];
     const acked: string[] = [];

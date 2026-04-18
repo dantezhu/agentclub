@@ -206,6 +206,60 @@ class TestInboundFiltering:
         channel.bus.publish_inbound.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_allow_from_human_token_accepts_only_humans(self, channel):
+        """`"human"` token lets any non-agent sender through, and blocks agents."""
+        channel.config.allow_from = ["human"]
+
+        await channel._process_inbound(
+            _inbound(id="m-h", sender_id="user-a", sender_is_agent=False)
+        )
+        channel.bus.publish_inbound.assert_awaited_once()
+        channel.bus.publish_inbound.reset_mock()
+
+        await channel._process_inbound(
+            _inbound(id="m-a", sender_id="bot-x", sender_is_agent=True)
+        )
+        channel.bus.publish_inbound.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_allow_from_agent_token_accepts_only_agents(self, channel):
+        """`"agent"` token lets any agent sender through, and blocks humans."""
+        channel.config.allow_from = ["agent"]
+
+        await channel._process_inbound(
+            _inbound(id="m-a", sender_id="bot-x", sender_is_agent=True)
+        )
+        channel.bus.publish_inbound.assert_awaited_once()
+        channel.bus.publish_inbound.reset_mock()
+
+        await channel._process_inbound(
+            _inbound(id="m-h", sender_id="user-a", sender_is_agent=False)
+        )
+        channel.bus.publish_inbound.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_allow_from_mixes_role_tokens_and_user_ids(self, channel):
+        """Role tokens compose with explicit user_ids (union)."""
+        channel.config.allow_from = ["human", "bot-allowed"]
+
+        # Human: allowed via "human"
+        await channel._process_inbound(
+            _inbound(id="h1", sender_id="user-a", sender_is_agent=False)
+        )
+        # Whitelisted agent: allowed via explicit id
+        await channel._process_inbound(
+            _inbound(id="a1", sender_id="bot-allowed", sender_is_agent=True)
+        )
+        assert channel.bus.publish_inbound.await_count == 2
+
+        channel.bus.publish_inbound.reset_mock()
+        # Non-whitelisted agent: denied
+        await channel._process_inbound(
+            _inbound(id="a2", sender_id="bot-other", sender_is_agent=True)
+        )
+        channel.bus.publish_inbound.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_group_requires_mention_by_default(self, channel):
         """In groups, messages without @agent and without @all are dropped."""
         await channel._process_inbound(
