@@ -199,6 +199,11 @@ class AgentClubChannel(BaseChannel):
         self._http: aiohttp.ClientSession | None = None
         self._tmp_dir: str | None = None
         self._stop_event: asyncio.Event | None = None
+        self._heartbeat_task: asyncio.Task | None = None
+        # Cadence of application-level heartbeats. Seeded with a sane
+        # default and overwritten when `auth_ok` arrives so the server's
+        # Config acts as the single source of truth.
+        self._heartbeat_interval: float = 30.0
 
         # Populated on ``auth_ok``
         self._agent_user_id: str | None = None
@@ -255,6 +260,7 @@ class AgentClubChannel(BaseChannel):
             return
 
         self._running = True
+        self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
         logger.info("[agentclub] started")
         try:
             await self._stop_event.wait()
@@ -266,8 +272,40 @@ class AgentClubChannel(BaseChannel):
         if self._stop_event is not None:
             self._stop_event.set()
 
+    async def _heartbeat_loop(self) -> None:
+        """Emit an application-level heartbeat while connected.
+
+        The IM server combines its record of our ws connection with the
+        `last_seen` timestamp we bump here to decide whether we're truly
+        online. If this loop stops (process hung, task cancelled) the
+        server will eventually mark us offline even if the socket itself
+        is still held open by an uncooperative network path.
+
+        Cadence is sourced from `self._heartbeat_interval`, which starts
+        at a safe default and is overwritten from the `auth_ok` payload
+        so the server owns the schedule."""
+        try:
+            while self._running:
+                if self._sio is not None and self._sio.connected:
+                    try:
+                        await self._sio.emit("heartbeat")
+                    except Exception as exc:
+                        logger.debug("[agentclub] heartbeat emit failed: {}", exc)
+                # Re-read every iteration so an `auth_ok` mid-run (on
+                # reconnect) takes effect on the next beat.
+                await asyncio.sleep(max(1.0, self._heartbeat_interval))
+        except asyncio.CancelledError:
+            pass
+
     async def _cleanup(self) -> None:
-        """Tear down in a fixed order: sio first, then http, then tmp dir."""
+        """Tear down in a fixed order: heartbeat, sio, http, tmp dir."""
+        if self._heartbeat_task is not None:
+            self._heartbeat_task.cancel()
+            try:
+                await self._heartbeat_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._heartbeat_task = None
         if self._sio is not None:
             try:
                 if self._sio.connected:
@@ -311,10 +349,18 @@ class AgentClubChannel(BaseChannel):
         async def _on_auth_ok(data: dict[str, Any]) -> None:
             self._agent_user_id = data.get("user_id")
             self._display_name = data.get("display_name")
+            interval = data.get("heartbeat_interval")
+            try:
+                interval_val = float(interval) if interval is not None else 0.0
+            except (TypeError, ValueError):
+                interval_val = 0.0
+            if interval_val > 0:
+                self._heartbeat_interval = interval_val
             logger.info(
-                "[agentclub] authenticated as {} ({})",
+                "[agentclub] authenticated as {} ({}), heartbeat={}s",
                 self._display_name,
                 self._agent_user_id,
+                self._heartbeat_interval,
             )
 
         @sio.on("error")

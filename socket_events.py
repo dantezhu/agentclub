@@ -1,6 +1,7 @@
 import json
 from flask import session, request
 from flask_socketio import emit, join_room, leave_room
+from config import Config
 import models
 
 # sid → user_id mapping
@@ -12,6 +13,7 @@ active_chat = {}
 
 
 def register_events(socketio):
+    _start_presence_sweeper(socketio)
 
     @socketio.on("connect")
     def on_connect(auth_data=None):
@@ -210,6 +212,23 @@ def register_events(socketio):
                 "chat_id": chat_id,
             }, room=room, include_self=False)
 
+    @socketio.on("heartbeat")
+    def on_heartbeat():
+        """Application-level ping/pong.
+
+        Clients (web + agent) emit this every ~30s over the existing
+        socket. We bump the user's `last_seen` so the online-flag reader
+        can distinguish a live session from a zombie one (is_online=1
+        but the TCP connection died silently without firing disconnect).
+        The `heartbeat_ack` echo lets the client verify the round trip
+        and optionally react (we don't currently, but it keeps the door
+        open for client-side liveness checks)."""
+        user_id = connected_users.get(request.sid)
+        if not user_id:
+            return
+        models.touch_last_seen(user_id)
+        emit("heartbeat_ack")
+
     @socketio.on("mark_read")
     def on_mark_read(data):
         """Advance the user's read cursor for a chat.
@@ -281,6 +300,11 @@ def _register_connection(user, sid):
         "display_name": user["display_name"],
         "role": user["role"],
         "is_agent": user["is_agent"],
+        # Advertise the server-preferred heartbeat cadence so all three
+        # client types (web, nanobot, openclaw) use a single source of
+        # truth and a deploy-time config change takes effect everywhere
+        # on the next reconnect.
+        "heartbeat_interval": Config.HEARTBEAT_INTERVAL,
     })
 
 
@@ -297,3 +321,33 @@ def _broadcast_presence(user, online):
         "is_online": online,
         "is_agent": user["is_agent"],
     })
+
+
+def _start_presence_sweeper(socketio):
+    """Poll the DB every minute and flip zombie `is_online=1` rows whose
+    heartbeat has gone stale back to 0, broadcasting a presence-off event
+    for each. Without this, an agent or browser tab that died silently
+    would keep showing a green dot to peers until they reload — the flag
+    would only self-correct on the stale socket's next explicit
+    disconnect, which may never arrive.
+
+    The sweep is also a belt-and-braces for the lazy read path in
+    `models._apply_online`: connected peers already compute presence
+    locally at every query, but the `presence` broadcast is what drives
+    real-time UI updates on other open tabs."""
+    def _loop():
+        while True:
+            socketio.sleep(60)
+            try:
+                stale = models.sweep_stale_online()
+            except Exception:
+                continue
+            for user in stale:
+                socketio.emit("presence", {
+                    "user_id": user["id"],
+                    "display_name": user.get("display_name", ""),
+                    "is_online": False,
+                    "is_agent": bool(user.get("is_agent")),
+                })
+
+    socketio.start_background_task(_loop)

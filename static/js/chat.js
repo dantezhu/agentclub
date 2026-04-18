@@ -5,6 +5,7 @@ let currentChat = null; // { type: 'group'|'direct', id, name }
 let chats = { groups: [], directs: [] };
 let oldestTimestamp = {};
 let typingTimeout = null;
+let heartbeatTimer = null;
 let unreadCounts = {};
 let lastMessages = {};
 let pendingImages = []; // Files queued for preview before sending
@@ -51,6 +52,7 @@ function connectSocket() {
 
     socket.on('auth_ok', (data) => {
         console.log('Authenticated:', data);
+        startHeartbeat(data.heartbeat_interval);
     });
 
     socket.on('new_message', (msg) => {
@@ -94,6 +96,22 @@ function connectSocket() {
     socket.on('disconnect', () => {
         console.log('Disconnected');
     });
+}
+
+/* ── Heartbeat ── */
+// Application-level heartbeat. The server uses our `last_seen`
+// alongside the ws-connection flag to decide real online-ness, so if
+// we stop heartbeating (tab frozen, TCP silently dead) peers will
+// eventually see us go offline without needing a clean disconnect.
+// The interval comes from the server (`auth_ok.heartbeat_interval`)
+// so a single Config change propagates to all clients on reconnect.
+function startHeartbeat(intervalSeconds) {
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
+    const sec = Number(intervalSeconds);
+    const ms = (Number.isFinite(sec) && sec > 0 ? sec : 30) * 1000;
+    heartbeatTimer = setInterval(() => {
+        if (socket && socket.connected) socket.emit('heartbeat');
+    }, ms);
 }
 
 /* ── Load Chats ── */

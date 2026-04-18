@@ -86,6 +86,34 @@ CREATE TABLE IF NOT EXISTS settings (
 _DEFAULT_SETTINGS = {}
 
 
+def _apply_online(user_dict):
+    """Reconcile `is_online` with the recorded `last_seen` heartbeat.
+
+    A user only counts as online if BOTH the session flag is set AND a
+    heartbeat has arrived within the last `Config.HEARTBEAT_TIMEOUT`
+    seconds. This protects against stuck-True states where the ws died
+    without cleanly firing `disconnect`. Mutates and returns the dict;
+    safe on None.
+    """
+    if not user_dict or "is_online" not in user_dict:
+        return user_dict
+    ls = user_dict.get("last_seen") or 0
+    fresh = ls >= (time.time() - Config.HEARTBEAT_TIMEOUT)
+    user_dict["is_online"] = 1 if (user_dict.get("is_online") and fresh) else 0
+    return user_dict
+
+
+def _apply_peer_online(row_dict):
+    """Same as `_apply_online` but for the aliased `peer_online` /
+    `peer_last_seen` columns produced by the direct-chat query."""
+    if not row_dict or "peer_online" not in row_dict:
+        return row_dict
+    ls = row_dict.get("peer_last_seen") or 0
+    fresh = ls >= (time.time() - Config.HEARTBEAT_TIMEOUT)
+    row_dict["peer_online"] = 1 if (row_dict.get("peer_online") and fresh) else 0
+    return row_dict
+
+
 def get_db():
     db = sqlite3.connect(Config.DATABASE)
     db.row_factory = sqlite3.Row
@@ -148,21 +176,21 @@ def get_user_by_username(username):
     db = get_db()
     row = db.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
     db.close()
-    return dict(row) if row else None
+    return _apply_online(dict(row)) if row else None
 
 
 def get_user_by_id(user_id):
     db = get_db()
     row = db.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
     db.close()
-    return dict(row) if row else None
+    return _apply_online(dict(row)) if row else None
 
 
 def get_user_by_agent_token(token):
     db = get_db()
     row = db.execute("SELECT * FROM users WHERE agent_token = ? AND is_agent = 1", (token,)).fetchone()
     db.close()
-    return dict(row) if row else None
+    return _apply_online(dict(row)) if row else None
 
 
 def set_user_online(user_id, online=True):
@@ -173,20 +201,58 @@ def set_user_online(user_id, online=True):
         )
 
 
+def touch_last_seen(user_id):
+    """Update the user's heartbeat timestamp without touching `is_online`.
+
+    Called on every incoming heartbeat / ping frame from a connected
+    client. Cheap enough to run per-heartbeat (single indexed UPDATE)."""
+    with get_db_ctx() as db:
+        db.execute("UPDATE users SET last_seen = ? WHERE id = ?", (now(), user_id))
+
+
+def sweep_stale_online():
+    """Flip `is_online` to 0 for any user whose heartbeat has gone stale.
+
+    Returned list contains the users that were just transitioned so the
+    caller can broadcast a presence update. A user appears here at most
+    once per staleness episode — we only select rows that still had
+    `is_online = 1` at sweep time."""
+    threshold = now() - Config.HEARTBEAT_TIMEOUT
+    with get_db_ctx() as db:
+        rows = db.execute(
+            "SELECT id, display_name, is_agent FROM users "
+            "WHERE is_online = 1 AND COALESCE(last_seen, 0) < ?",
+            (threshold,),
+        ).fetchall()
+        if not rows:
+            return []
+        ids = [r["id"] for r in rows]
+        placeholders = ",".join("?" for _ in ids)
+        db.execute(
+            f"UPDATE users SET is_online = 0 WHERE id IN ({placeholders})",
+            ids,
+        )
+    return [dict(r) for r in rows]
+
+
 def list_users():
     db = get_db()
-    rows = db.execute("SELECT id, username, display_name, avatar, role, is_agent, is_online FROM users ORDER BY created_at").fetchall()
+    rows = db.execute(
+        "SELECT id, username, display_name, avatar, role, is_agent, is_online, last_seen "
+        "FROM users ORDER BY created_at"
+    ).fetchall()
     db.close()
-    return [dict(r) for r in rows]
+    return [_apply_online(dict(r)) for r in rows]
 
 
 def list_agents():
     db = get_db()
     rows = db.execute(
-        "SELECT id, username, display_name, avatar, agent_token, is_online FROM users WHERE is_agent = 1 ORDER BY created_at"
+        "SELECT id, username, display_name, avatar, agent_token, is_online, last_seen "
+        "FROM users WHERE is_agent = 1 ORDER BY created_at"
     ).fetchall()
     db.close()
-    return [dict(r) for r in rows]
+    return [_apply_online(dict(r)) for r in rows]
 
 
 def delete_user(user_id):
@@ -258,13 +324,14 @@ def update_group(group_id, **kwargs):
 def get_group_members(group_id):
     db = get_db()
     rows = db.execute(
-        "SELECT u.id, u.username, u.display_name, u.avatar, u.role, u.is_agent, u.is_online "
+        "SELECT u.id, u.username, u.display_name, u.avatar, u.role, u.is_agent, "
+        "       u.is_online, u.last_seen "
         "FROM users u JOIN group_members gm ON u.id = gm.user_id "
         "WHERE gm.group_id = ? ORDER BY gm.joined_at",
         (group_id,),
     ).fetchall()
     db.close()
-    return [dict(r) for r in rows]
+    return [_apply_online(dict(r)) for r in rows]
 
 
 def get_user_groups(user_id):
@@ -339,15 +406,16 @@ def get_user_direct_chats(user_id):
         "CASE WHEN dc.user1_id = ? THEN u2.display_name ELSE u1.display_name END AS peer_name, "
         "CASE WHEN dc.user1_id = ? THEN u2.avatar ELSE u1.avatar END AS peer_avatar, "
         "CASE WHEN dc.user1_id = ? THEN u2.is_online ELSE u1.is_online END AS peer_online, "
+        "CASE WHEN dc.user1_id = ? THEN u2.last_seen ELSE u1.last_seen END AS peer_last_seen, "
         "CASE WHEN dc.user1_id = ? THEN u2.is_agent ELSE u1.is_agent END AS peer_is_agent "
         "FROM direct_chats dc "
         "JOIN users u1 ON dc.user1_id = u1.id "
         "JOIN users u2 ON dc.user2_id = u2.id "
         "WHERE dc.user1_id = ? OR dc.user2_id = ?",
-        (user_id, user_id, user_id, user_id, user_id, user_id, user_id),
+        (user_id, user_id, user_id, user_id, user_id, user_id, user_id, user_id),
     ).fetchall()
     db.close()
-    return [dict(r) for r in rows]
+    return [_apply_peer_online(dict(r)) for r in rows]
 
 
 # ── Message operations ──

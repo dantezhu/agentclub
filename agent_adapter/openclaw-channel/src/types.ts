@@ -23,6 +23,12 @@ export interface AuthOkPayload {
   display_name: string;
   role: string;
   is_agent: boolean;
+  /**
+   * Server-advertised cadence (in seconds) at which the client should
+   * emit the application-level `heartbeat` event. Optional for backward
+   * compatibility with older servers; clients fall back to a safe default.
+   */
+  heartbeat_interval?: number;
 }
 
 export type ChatType = "group" | "direct";

@@ -38,6 +38,7 @@ export class AgentClubClient {
   private _agentUserId: string | null = null;
   private _displayName: string | null = null;
   private _connected = false;
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(opts: AgentClubClientOptions) {
     this.serverUrl = opts.serverUrl;
@@ -80,10 +81,14 @@ export class AgentClubClient {
         this._displayName = data.display_name;
         this._connected = true;
         this.logger.info(`Authenticated as ${data.display_name} (${data.user_id})`);
+        this.startHeartbeat(data.heartbeat_interval);
         resolve(data);
       };
 
-      this.socket.once("auth_ok", onAuthOk);
+      // Subscribe to every auth_ok — the server re-sends it on each
+      // reconnect. Re-subscribing also lets config changes to
+      // heartbeat_interval take effect without restarting the process.
+      this.socket.on("auth_ok", onAuthOk);
 
       this.socket.on("new_message", (data: NewMessagePayload) => {
         this.onMessage(data);
@@ -119,12 +124,36 @@ export class AgentClubClient {
   }
 
   disconnect(): void {
+    this.stopHeartbeat();
     if (this.socket) {
       this.socket.disconnect();
       this.socket = null;
       this._connected = false;
       this._agentUserId = null;
       this._displayName = null;
+    }
+  }
+
+  /**
+   * (Re)start the application-level heartbeat. Driven off `auth_ok`
+   * payload so the IM server's Config (`HEARTBEAT_INTERVAL`) is the
+   * single source of truth across all clients; the server uses our
+   * `last_seen` alongside the ws-connection flag to decide real online
+   * status, so a silently-dead TCP path eventually surfaces as offline.
+   */
+  private startHeartbeat(intervalSeconds?: number): void {
+    this.stopHeartbeat();
+    const sec = Number(intervalSeconds);
+    const ms = (Number.isFinite(sec) && sec > 0 ? sec : 30) * 1000;
+    this.heartbeatTimer = setInterval(() => {
+      if (this.socket?.connected) this.socket.emit("heartbeat");
+    }, ms);
+  }
+
+  private stopHeartbeat(): void {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
     }
   }
 
