@@ -5,6 +5,18 @@ from contextlib import contextmanager
 from .config import Config
 
 SCHEMA = """
+-- ── Foreign-key conventions in this schema ─────────────────────────────
+-- Tables that should disappear with their owner use ON DELETE CASCADE
+-- (group_members, read_cursors). Everywhere else (groups.created_by,
+-- direct_chats.user1/2_id, messages.sender_id) the FK is left at SQLite's
+-- default of NO ACTION, which behaves like RESTRICT: deleting a parent row
+-- (a user) will fail at commit time if any of these child rows still
+-- reference it. This is intentional defensive armor for delete_user() —
+-- if a future table starts referencing users(id) and someone forgets to
+-- extend delete_user, the next call will raise IntegrityError instead of
+-- silently leaving orphan messages/chats. PRAGMA foreign_keys=ON in
+-- get_db() makes all of this enforceable.
+-- ─────────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
     username TEXT UNIQUE NOT NULL,
@@ -258,10 +270,131 @@ def list_agents():
     return [_apply_online(dict(r)) for r in rows]
 
 
+def get_user_footprint(user_id):
+    """Count what would be wiped by ``delete_user(user_id)``.
+
+    Returned counts are *destructive* — they include data that belongs to
+    other users but lives inside chats/groups this user owns or
+    co-participates in (since deleting the user collapses those chats too).
+    Used by the CLI / admin UI to surface a "you're about to nuke N
+    messages" prompt before confirmation.
+    """
+    db = get_db()
+    try:
+        direct_chat_ids = [r["id"] for r in db.execute(
+            "SELECT id FROM direct_chats WHERE user1_id = ? OR user2_id = ?",
+            (user_id, user_id),
+        ).fetchall()]
+        owned_group_ids = [r["id"] for r in db.execute(
+            "SELECT id FROM groups WHERE created_by = ?", (user_id,)
+        ).fetchall()]
+
+        direct_msg_count = 0
+        if direct_chat_ids:
+            ph = ",".join("?" * len(direct_chat_ids))
+            direct_msg_count = db.execute(
+                f"SELECT COUNT(*) AS c FROM messages "
+                f"WHERE chat_type='direct' AND chat_id IN ({ph})",
+                direct_chat_ids,
+            ).fetchone()["c"]
+
+        owned_group_msg_count = 0
+        if owned_group_ids:
+            ph = ",".join("?" * len(owned_group_ids))
+            owned_group_msg_count = db.execute(
+                f"SELECT COUNT(*) AS c FROM messages "
+                f"WHERE chat_type='group' AND chat_id IN ({ph})",
+                owned_group_ids,
+            ).fetchone()["c"]
+
+        own_messages = db.execute(
+            "SELECT COUNT(*) AS c FROM messages WHERE sender_id = ?",
+            (user_id,),
+        ).fetchone()["c"]
+
+        joined_groups = db.execute(
+            "SELECT COUNT(*) AS c FROM group_members WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()["c"]
+
+        return {
+            "direct_chats": len(direct_chat_ids),
+            "direct_messages": direct_msg_count,
+            "owned_groups": len(owned_group_ids),
+            "owned_group_messages": owned_group_msg_count,
+            "joined_groups": joined_groups,
+            "own_messages": own_messages,
+        }
+    finally:
+        db.close()
+
+
 def delete_user(user_id):
+    """Hard-delete a user and ALL of their footprint.
+
+    Order matters: we must clear every row that points at this user before
+    deleting the ``users`` row itself, otherwise the FK constraints (NO
+    ACTION on messages/direct_chats/groups, which behaves like RESTRICT in
+    SQLite) reject the final DELETE at commit time.
+
+    Destructive scope (intentional, per project decision to keep delete
+    semantics simple):
+
+      - Direct chats this user is in → the whole chat (incl. messages and
+        the peer's read cursor) is wiped. Same semantics as the user
+        clicking "delete chat".
+      - Groups this user *created* → disbanded entirely (members,
+        messages, read cursors, the group row).
+      - Groups this user only joined → user is removed; the group and its
+        history stay intact, except their own messages (next bullet).
+      - Every message authored by this user, anywhere (group or direct).
+      - The user's read cursors and the ``users`` row itself.
+
+    The FK constraints in the schema are deliberately RESTRICT-ish so that
+    if a *new* table starts referencing ``users`` and someone forgets to
+    extend this function, the next call will raise ``IntegrityError``
+    instead of silently leaving orphans.
+    """
     with get_db_ctx() as db:
+        direct_chat_ids = [r["id"] for r in db.execute(
+            "SELECT id FROM direct_chats WHERE user1_id = ? OR user2_id = ?",
+            (user_id, user_id),
+        ).fetchall()]
+        for cid in direct_chat_ids:
+            db.execute(
+                "DELETE FROM read_cursors WHERE chat_type='direct' AND chat_id=?",
+                (cid,),
+            )
+            db.execute(
+                "DELETE FROM messages WHERE chat_type='direct' AND chat_id=?",
+                (cid,),
+            )
+            db.execute("DELETE FROM direct_chats WHERE id=?", (cid,))
+
+        owned_group_ids = [r["id"] for r in db.execute(
+            "SELECT id FROM groups WHERE created_by = ?", (user_id,)
+        ).fetchall()]
+        for gid in owned_group_ids:
+            db.execute(
+                "DELETE FROM read_cursors WHERE chat_type='group' AND chat_id=?",
+                (gid,),
+            )
+            db.execute(
+                "DELETE FROM messages WHERE chat_type='group' AND chat_id=?",
+                (gid,),
+            )
+            db.execute("DELETE FROM group_members WHERE group_id=?", (gid,))
+            db.execute("DELETE FROM groups WHERE id=?", (gid,))
+
+        # Remaining messages this user sent in groups they don't own.
+        db.execute("DELETE FROM messages WHERE sender_id = ?", (user_id,))
+
+        # Group memberships + this user's read cursors. (read_cursors would
+        # also CASCADE on the final users DELETE, but we wipe explicitly to
+        # keep the function's behaviour independent of FK actions.)
         db.execute("DELETE FROM group_members WHERE user_id = ?", (user_id,))
-        # read_cursors cascades via FK
+        db.execute("DELETE FROM read_cursors WHERE user_id = ?", (user_id,))
+
         db.execute("DELETE FROM users WHERE id = ?", (user_id,))
 
 

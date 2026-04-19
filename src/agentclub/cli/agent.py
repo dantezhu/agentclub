@@ -1,20 +1,23 @@
 """`agentclub agent ...` — manage agent (bot) accounts.
 
-Scope (per the minimal-CLI design discussion):
+Scope:
 
     agent create <name> [--display-name NAME]   # prints token ONCE
     agent list                                   # no token column
     agent reset-token <name>                    # prints new token ONCE
+    agent delete <name> [--yes]                  # hard delete, with footprint
 
-``rename`` and ``delete`` are intentionally omitted — the former isn't
-a real recovery need, the latter should live in a future admin GUI
-where proper cascade/archival UX is possible.
+``delete`` mirrors the admin web UI's "delete agent" button: the agent
+row, every message it sent, every direct chat it participated in, and
+every group it created are physically removed. Use ``--yes`` to skip the
+confirmation prompt (handy for scripted teardowns).
 
 Tokens are always shown **once** on the command that mints them, never
 on ``list``. Losing a token → ``reset-token``.
 """
 from __future__ import annotations
 
+import sqlite3
 import time
 from datetime import datetime
 
@@ -130,3 +133,58 @@ def agent_reset_token(name, data_dir_flag):
         "  (previous token is now invalid — update your channel config)",
         fg="yellow",
     ))
+
+
+@agent_group.command("delete", help="Hard-delete an agent and ALL its data.")
+@click.argument("name")
+@click.option("--data-dir", "data_dir_flag", type=click.Path(),
+              help="Data directory. Defaults to $AGENTCLUB_HOME or "
+                   "~/.agentclub.")
+@click.option("--yes", "-y", "assume_yes", is_flag=True,
+              help="Skip the confirmation prompt. Use in scripts.")
+def agent_delete(name, data_dir_flag, assume_yes):
+    bootstrap(data_dir_flag, require_exists=True)
+    from .. import models
+
+    agent = models.get_user_by_username(name)
+    if not agent or not agent["is_agent"]:
+        raise click.ClickException(f"Agent '{name}' not found.")
+
+    fp = models.get_user_footprint(agent["id"])
+
+    echo_header(f"About to DELETE agent '{name}'")
+    click.echo(f"  display       : {agent['display_name']}")
+    click.echo(f"  id            : {agent['id']}")
+    click.echo("")
+    click.echo("  Footprint to be wiped:")
+    click.echo(f"    - direct chats        : {fp['direct_chats']} "
+               f"(with {fp['direct_messages']} message(s))")
+    click.echo(f"    - groups it created   : {fp['owned_groups']} "
+               f"(with {fp['owned_group_messages']} message(s), "
+               f"members will be kicked)")
+    click.echo(f"    - other groups joined : {fp['joined_groups']} "
+               f"(membership removed; groups stay)")
+    click.echo(f"    - own messages total  : {fp['own_messages']} "
+               f"(includes the above)")
+    click.echo("")
+    click.echo(click.style(
+        "  This is permanent. There is no undo.", fg="red", bold=True,
+    ))
+
+    if not assume_yes:
+        click.echo("")
+        if not click.confirm(f"Delete agent '{name}'?", default=False):
+            click.echo("Aborted.")
+            return
+
+    try:
+        models.delete_user(agent["id"])
+    except sqlite3.IntegrityError as e:
+        # delete_user is supposed to clean every reference; hitting this
+        # means the schema grew a new FK someone forgot to wire in.
+        raise click.ClickException(
+            f"Delete failed — leftover references: {e}\n"
+            "This is a bug in models.delete_user(); please report it."
+        )
+
+    click.echo(click.style(f"✓ Agent '{name}' deleted.", fg="green"))

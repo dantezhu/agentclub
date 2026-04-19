@@ -1,6 +1,7 @@
 import logging
 import os
 import json
+import sqlite3
 from flask import Blueprint, request, session, jsonify, send_from_directory
 from werkzeug.utils import secure_filename
 from .config import Config
@@ -147,7 +148,16 @@ def delete_agent(agent_id):
     agent = models.get_user_by_id(agent_id)
     if not agent or not agent["is_agent"]:
         return jsonify({"error": "Agent 不存在"}), 404
-    models.delete_user(agent_id)
+    try:
+        models.delete_user(agent_id)
+    except sqlite3.IntegrityError as e:
+        # Either delete_user is out of sync with the schema (a new table
+        # references users(id) without being cleaned up) or the DB has
+        # corrupt-looking rows. Either way it's a bug, not user error.
+        log.exception("delete_agent failed: agent_id=%s", agent_id)
+        return jsonify({
+            "error": f"删除失败：仍有关联数据未清理 ({e})"
+        }), 500
     return jsonify({"ok": True})
 
 
