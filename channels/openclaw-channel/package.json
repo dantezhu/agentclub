@@ -1,5 +1,5 @@
 {
-  "name": "@agentclub/openclaw-channel",
+  "name": "openclaw-channel-agentclub",
   "version": "0.1.0",
   "description": "OpenClaw channel plugin that connects OpenClaw agents to an Agent Club IM server.",
   "type": "module",
@@ -49,9 +49,6 @@
   "homepage": "https://github.com/dantezhu/agentclub/tree/master/channels/openclaw-channel#readme",
   "engines": {
     "node": ">=18"
-  },
-  "publishConfig": {
-    "access": "public"
   },
   "dependencies": {
     "socket.io-client": "^4.7.0"

@@ -23,7 +23,7 @@ OpenClaw 网关进程                        Agent Club IM 服务器
 ## 安装
 
 ```bash
-openclaw plugins install @agentclub/openclaw-channel
+openclaw plugins install openclaw-channel-agentclub
 ```
 
 或者从源码安装：
@@ -34,6 +34,14 @@ npm install
 npm run build
 openclaw plugins install ./
 ```
+
+## 卸载
+
+```bash
+openclaw plugins uninstall agentclub
+```
+
+> **注意**：`uninstall` 收的是 channel id（`agentclub`），不是 npm 包名（`openclaw-channel-agentclub`）。这个 id 来自 `package.json` 里的 `openclaw.channel.id`，install 时是按 npm spec 定位、uninstall 时是按已注册的 channel id 索引——两边接口不对称。
 
 ## 配置
 
@@ -88,6 +96,7 @@ npm run build     # 编译 TypeScript
 ├── setup-entry.ts           # 轻量级 setup 入口
 ├── openclaw.plugin.json     # 插件 manifest
 ├── package.json
+├── LICENSE                  # Apache-2.0
 └── src/
     ├── types.ts             # IM 协议和配置类型
     ├── setup.ts             # resolveAccount / inspectAccount
