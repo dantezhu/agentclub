@@ -1506,9 +1506,14 @@ async function openGroupSettings(groupId) {
         name: group.name || '',
         avatar: group.avatar || '',
     };
+    document.getElementById('groupSettingsTitle').textContent = '群组设置';
+    document.getElementById('groupSettingsSaveBtn').textContent = '保存';
     document.getElementById('groupSettingsName').value = group.name || '';
     renderGroupSettingsAvatar();
     document.getElementById('groupSettingsModal').classList.remove('hidden');
+    // Defer focus until after the modal is painted so the input actually
+    // gets it on Safari.
+    setTimeout(() => document.getElementById('groupSettingsName').focus(), 0);
 }
 
 async function uploadGroupSettingsAvatar(event) {
@@ -1534,13 +1539,18 @@ async function saveGroupSettings() {
     if (!groupSettingsState) return;
     const name = document.getElementById('groupSettingsName').value.trim();
     if (!name) { alert('群组名称不能为空'); return; }
+    const isCreate = !groupSettingsState.groupId;
     const btn = document.getElementById('groupSettingsSaveBtn');
     btn.disabled = true;
     const original = btn.textContent;
-    btn.textContent = '保存中…';
+    btn.textContent = isCreate ? '创建中…' : '保存中…';
     try {
-        const res = await fetch(`/api/groups/${groupSettingsState.groupId}`, {
-            method: 'PUT',
+        const url = isCreate
+            ? '/api/groups'
+            : `/api/groups/${groupSettingsState.groupId}`;
+        const method = isCreate ? 'POST' : 'PUT';
+        const res = await fetch(url, {
+            method,
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({
                 name,
@@ -1549,13 +1559,23 @@ async function saveGroupSettings() {
         });
         if (!res.ok) {
             const err = await res.json().catch(() => ({}));
-            alert(err.error || '保存失败');
+            alert(err.error || (isCreate ? '创建失败' : '保存失败'));
             return;
         }
         const group = await res.json();
-        // Refresh header (title + avatar) and the sidebar chat list so the
-        // change is visible immediately. If the user is still looking at
-        // this group, also refresh the title text shown in the header.
+        if (isCreate) {
+            // Brand-new group — close the modal, refresh the sidebar so
+            // the new entry shows up, then jump straight into it.
+            closeModal('groupSettingsModal');
+            groupSettingsState = null;
+            await loadChats();
+            openChat('group', group.id, group.name);
+            return;
+        }
+        // Edit path: refresh header (title + avatar) and the sidebar chat
+        // list so the change is visible immediately. If the user is still
+        // looking at this group, also refresh the title text shown in the
+        // header.
         if (currentChat && currentChat.type === 'group' && currentChat.id === group.id) {
             currentChat.name = group.name;
             const titleEl = document.getElementById('chatTitle');
@@ -1579,22 +1599,19 @@ async function saveGroupSettings() {
 }
 
 async function showCreateGroupModal() {
+    // Close the sidebar "+" menu first so the modal isn't competing for
+    // focus with a dropdown that's still open behind it.
     document.getElementById('sidebarMenu').classList.add('hidden');
-    const name = prompt('请输入群组名称');
-    if (!name || !name.trim()) return;
-    const res = await fetch('/api/groups', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ name: name.trim() }),
-    });
-    if (res.ok) {
-        const group = await res.json();
-        await loadChats();
-        openChat('group', group.id, group.name);
-    } else {
-        const d = await res.json().catch(() => ({}));
-        alert(d.error || '创建失败');
-    }
+    // Reuse groupSettingsModal with groupId=null → save handler treats
+    // this as a POST (create) instead of PUT (edit). Same UX shape as
+    // editing, just different endpoint.
+    groupSettingsState = { groupId: null, name: '', avatar: '' };
+    document.getElementById('groupSettingsTitle').textContent = '创建群组';
+    document.getElementById('groupSettingsSaveBtn').textContent = '创建';
+    document.getElementById('groupSettingsName').value = '';
+    renderGroupSettingsAvatar();
+    document.getElementById('groupSettingsModal').classList.remove('hidden');
+    setTimeout(() => document.getElementById('groupSettingsName').focus(), 0);
 }
 
 async function showNewChatModal() {

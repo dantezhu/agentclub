@@ -126,14 +126,16 @@
         </div>
     </div>
 
-    <!-- Group settings modal (creator/admin only). Same shape as the
-         profile modal so it feels familiar — round avatar with an upload
-         button under it, single name input, full-width save. Triggered
-         from the members panel ("群组设置" button next to "添加成员"). -->
+    <!-- Group settings modal: a single overlay reused for both
+         "create new group" (sidebar + button → showCreateGroupModal)
+         and "edit existing group" (members panel → openGroupSettings).
+         The two flows differ only in the modal title, the save button
+         label, and whether the save handler does POST or PUT. We keep
+         them in one modal so the avatar / name UX is identical. -->
     <div class="modal hidden" id="groupSettingsModal">
         <div class="modal-content modal-sm">
             <div class="modal-header">
-                <h3>群组设置</h3>
+                <h3 id="groupSettingsTitle">群组设置</h3>
                 <button class="icon-btn" onclick="closeModal('groupSettingsModal')" data-icon="x" title="关闭"></button>
             </div>
             <div class="modal-body">
@@ -145,7 +147,7 @@
                 </div>
                 <div class="form-group" style="margin-bottom:16px">
                     <label style="display:block;font-size:13px;color:#555;margin-bottom:6px">群组名称</label>
-                    <input type="text" id="groupSettingsName" style="width:100%;padding:10px 12px;border:1.5px solid #ddd;border-radius:8px;font-size:16px;outline:none">
+                    <input type="text" id="groupSettingsName" placeholder="例如：产品讨论组" style="width:100%;padding:10px 12px;border:1.5px solid #ddd;border-radius:8px;font-size:16px;outline:none">
                 </div>
                 <button class="btn-sm" id="groupSettingsSaveBtn" style="width:100%;padding:10px" onclick="saveGroupSettings()">保存</button>
             </div>

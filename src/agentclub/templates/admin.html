@@ -80,33 +80,22 @@
             padding: 24px;
             margin-bottom: 20px;
         }
-        .card h2 {
-            font-size: 16px;
+        /* The Agent-management card header is a flex row: title on the
+           left, "+ 创建 Agent" call-to-action on the right. The bottom
+           border that used to live on the h2 moved up here so it still
+           spans the full card width. */
+        .card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
             margin-bottom: 16px;
             padding-bottom: 10px;
             border-bottom: 1px solid #eee;
+        }
+        .card-header h2 {
+            font-size: 16px;
             color: #333;
-        }
-        .inline-form {
-            display: flex;
-            gap: 8px;
-            flex-wrap: wrap;
-            margin-bottom: 16px;
-        }
-        .inline-form input {
-            flex: 1;
-            min-width: 120px;
-            padding: 10px 14px;
-            border: 1.5px solid #ddd;
-            border-radius: 8px;
-            font-size: 14px;
-            outline: none;
-        }
-        .inline-form input:focus { border-color: var(--color-primary); }
-        /* Bump input font-size to 16px on touch screens so iOS Safari
-           doesn't auto-zoom the whole page when the user focuses a form. */
-        @media (max-width: 768px) {
-            .inline-form input { font-size: 16px; }
         }
         .btn {
             padding: 10px 18px;
@@ -117,19 +106,13 @@
             font-size: 14px;
             cursor: pointer;
             white-space: nowrap;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
         }
         .btn:hover { opacity: 0.9; }
         .btn.danger { background: #ff4757; }
         .btn.sm { padding: 6px 14px; font-size: 13px; }
-        /* Inline avatar picker inside the "create Agent" form: the label
-           toggles between a plain "头像" prompt (with an image icon) and
-           a thumbnail once a file has been selected, so admins get
-           immediate visual confirmation their upload went through. */
-        .avatar-picker { display: inline-flex; align-items: center; gap: 6px; }
-        .avatar-picker img {
-            width: 22px; height: 22px; border-radius: 50%;
-            object-fit: cover; display: block;
-        }
         .agent-item {
             display: flex;
             align-items: center;
@@ -411,35 +394,24 @@
     <div class="container">
         <!-- Agent Management -->
         <div class="card">
-            <h2>Agent 管理</h2>
-            <div class="inline-form">
-                <input type="text" id="newAgentUsername" placeholder="用户名">
-                <input type="text" id="newAgentDisplayName" placeholder="显示名称（选填）">
-                <label class="btn avatar-picker" id="agentAvatarLabel" style="cursor:pointer">
-                    <img id="agentAvatarPreview" style="display:none" alt="">
-                    <span id="agentAvatarLabelText" data-icon="image" style="display:inline-flex;align-items:center;gap:4px">头像</span>
-                    <input type="file" accept="image/*" id="agentAvatarFile" style="display:none" onchange="handleAgentAvatarSelect(event)">
-                </label>
-                <button class="btn" onclick="createAgent()">创建 Agent</button>
+            <div class="card-header">
+                <h2>Agent 管理</h2>
+                <button class="btn" onclick="openCreateAgent()">
+                    <span data-icon="plus"></span>创建 Agent
+                </button>
             </div>
-            <!-- Description gets its own row so it can be wider; same
-                 visual weight as the inputs above but spans the full
-                 form. Optional — empty is fine. -->
-            <input type="text" id="newAgentDescription"
-                   placeholder="描述（选填，例如「英语口语陪练，每天练 15 分钟」）"
-                   style="width:100%;padding:10px 14px;border:1.5px solid #ddd;border-radius:8px;font-size:14px;outline:none;margin-bottom:16px">
-            <input type="hidden" id="agentAvatarUrl" value="">
             <div id="agentList"></div>
         </div>
     </div>
 
-    <!-- Edit-agent modal: identical shape to chat.html's "个人设置" so admins
-         get a familiar pattern. Holds avatar + display_name; one Save click
-         PUTs both at once. -->
+    <!-- Agent modal: a single overlay reused for both create and edit.
+         The two flows differ only in the title, the save button label,
+         and whether the username field is editable. Same shape as
+         chat.html's "个人设置" so admins get a familiar pattern. -->
     <div class="modal-overlay" id="editAgentModal">
         <div class="modal-box">
             <div class="modal-head">
-                <h3>编辑 Agent</h3>
+                <h3 id="editAgentTitle">编辑 Agent</h3>
                 <button class="modal-close" onclick="closeEditAgent()" data-icon="x" title="关闭"></button>
             </div>
             <div class="modal-body">
@@ -455,12 +427,13 @@
                 </div>
                 <div class="modal-field">
                     <label>用户名</label>
-                    <input type="text" id="editAgentUsername" disabled
-                           style="background:#f8f9fa;color:#999">
+                    <input type="text" id="editAgentUsername"
+                           placeholder="例如：translator-bot">
                 </div>
                 <div class="modal-field">
                     <label>显示名称</label>
-                    <input type="text" id="editAgentDisplayName">
+                    <input type="text" id="editAgentDisplayName"
+                           placeholder="留空则使用用户名">
                 </div>
                 <div class="modal-field">
                     <label>描述（选填）</label>
@@ -583,92 +556,13 @@
         document.getElementById('agentList').innerHTML = html;
     }
 
-    /* The picker label has three visual states:
-     *   default → "<image-icon> 头像"
-     *   pending → "<spinner-icon> 上传中"
-     *   done    → "已选"
-     * Centralised here so the inline JS doesn't need to remember the
-     * exact icon names. */
-    function setPickerLabel(state) {
-        const el = document.getElementById('agentAvatarLabelText');
-        if (state === 'pending') {
-            el.innerHTML = AgentClubUI.iconHTML('loader') + ' 上传中';
-        } else if (state === 'done') {
-            el.textContent = '已选';
-        } else {
-            el.innerHTML = AgentClubUI.iconHTML('image') + ' 头像';
-        }
-    }
-
-    function resetAgentAvatarPicker() {
-        document.getElementById('agentAvatarUrl').value = '';
-        // Clearing the file input's value is important: otherwise picking
-        // the *same* file a second time doesn't fire ``onchange`` and the
-        // preview silently goes stale.
-        document.getElementById('agentAvatarFile').value = '';
-        const preview = document.getElementById('agentAvatarPreview');
-        preview.style.display = 'none';
-        preview.src = '';
-        setPickerLabel('default');
-    }
-
-    async function handleAgentAvatarSelect(event) {
-        const file = event.target.files[0];
-        if (!file) return;
-        const preview = document.getElementById('agentAvatarPreview');
-        // Immediate feedback while the upload is in flight — before this
-        // fix the label stayed on the default text through the whole
-        // request and admins couldn't tell whether the file had even
-        // been registered.
-        setPickerLabel('pending');
-        try {
-            const formData = new FormData();
-            formData.append('file', file);
-            const res = await fetch('/api/upload', { method: 'POST', body: formData });
-            if (!res.ok) {
-                const err = await res.json().catch(() => ({}));
-                throw new Error(err.error || '上传失败');
-            }
-            const data = await res.json();
-            document.getElementById('agentAvatarUrl').value = data.url;
-            preview.src = data.url;
-            preview.style.display = '';
-            setPickerLabel('done');
-        } catch (err) {
-            alert(err.message);
-            resetAgentAvatarPicker();
-        }
-    }
-
-    async function createAgent() {
-        const username = document.getElementById('newAgentUsername').value.trim();
-        const displayName = document.getElementById('newAgentDisplayName').value.trim();
-        const description = document.getElementById('newAgentDescription').value.trim();
-        const avatar = document.getElementById('agentAvatarUrl').value;
-        if (!username) { alert('请输入用户名'); return; }
-        const res = await fetch('/api/agents', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                username,
-                display_name: displayName || username,
-                description,
-                avatar,
-            }),
-        });
-        if (res.ok) {
-            const data = await res.json();
-            showTokenDialog(data.agent_token);
-            document.getElementById('newAgentUsername').value = '';
-            document.getElementById('newAgentDisplayName').value = '';
-            document.getElementById('newAgentDescription').value = '';
-            resetAgentAvatarPicker();
-            loadAgents();
-        } else {
-            const data = await res.json();
-            alert(data.error || '创建失败');
-        }
-    }
+    /* ── Agent create/edit modal ──
+     * One overlay (#editAgentModal) drives both flows. The mode is
+     * captured in the module-level `editingAgent` ref:
+     *   editingAgent === null  → create   (POST /api/agents)
+     *   editingAgent === <obj> → edit     (PUT  /api/agents/<id>)
+     * openCreateAgent() / editAgent() differ only in what they preload
+     * into the form; saveEditAgent() branches at the end. */
 
     function renderEditAgentAvatar() {
         const el = document.getElementById('editAgentAvatar');
@@ -676,10 +570,15 @@
             el.innerHTML = `<img src="${esc(editingAvatar)}">`;
             el.style.background = '';
         } else {
+            // For "create" we don't have a server-side display_name yet,
+            // so the placeholder character is whatever the admin has
+            // typed into the form so far (display_name first, then
+            // username). Falls back to "?" until they start typing.
             const fullName = (
                 document.getElementById('editAgentDisplayName').value
-                || editingAgent?.display_name
-                || editingAgent?.username
+                || (editingAgent && editingAgent.display_name)
+                || document.getElementById('editAgentUsername').value
+                || (editingAgent && editingAgent.username)
                 || '?'
             );
             el.textContent = fullName.charAt(0);
@@ -687,14 +586,50 @@
         }
     }
 
+    function _setUsernameEditable(editable) {
+        const el = document.getElementById('editAgentUsername');
+        el.disabled = !editable;
+        // Greyed-out look when disabled mirrors how the field behaved
+        // before the dual-mode refactor (edit-only).
+        if (editable) {
+            el.style.background = '';
+            el.style.color = '';
+        } else {
+            el.style.background = '#f8f9fa';
+            el.style.color = '#999';
+        }
+    }
+
+    function openCreateAgent() {
+        editingAgent = null;
+        editingAvatar = '';
+        document.getElementById('editAgentTitle').textContent = '创建 Agent';
+        document.getElementById('editAgentSaveBtn').textContent = '创建';
+        document.getElementById('editAgentUsername').value = '';
+        document.getElementById('editAgentDisplayName').value = '';
+        document.getElementById('editAgentDescription').value = '';
+        _setUsernameEditable(true);
+        renderEditAgentAvatar();
+        document.getElementById('editAgentModal').classList.add('visible');
+        // Defer focus so Safari actually applies it after the overlay
+        // becomes display:flex.
+        setTimeout(() => document.getElementById('editAgentUsername').focus(), 0);
+    }
+
     function editAgent(agentId) {
         const a = agentsById[agentId];
         if (!a) return;
         editingAgent = a;
         editingAvatar = a.avatar || '';
+        document.getElementById('editAgentTitle').textContent = '编辑 Agent';
+        document.getElementById('editAgentSaveBtn').textContent = '保存';
         document.getElementById('editAgentUsername').value = a.username;
         document.getElementById('editAgentDisplayName').value = a.display_name || '';
         document.getElementById('editAgentDescription').value = a.description || '';
+        // Username is the agent's identity — once created it can't
+        // change, so lock the field. Same convention as `agent edit`
+        // CLI which doesn't expose a --username flag.
+        _setUsernameEditable(false);
         renderEditAgentAvatar();
         document.getElementById('editAgentModal').classList.add('visible');
     }
@@ -724,33 +659,59 @@
     }
 
     async function saveEditAgent() {
-        if (!editingAgent) return;
+        const isCreate = !editingAgent;
+        const username = document.getElementById('editAgentUsername').value.trim();
         const displayName = document.getElementById('editAgentDisplayName').value.trim();
         const description = document.getElementById('editAgentDescription').value.trim();
-        if (!displayName) { alert('显示名称不能为空'); return; }
+        if (isCreate) {
+            if (!username) { alert('请输入用户名'); return; }
+        } else {
+            // For edit, display name must remain non-empty (matches the
+            // CLI's `agent edit --display-name` validation).
+            if (!displayName) { alert('显示名称不能为空'); return; }
+        }
         const btn = document.getElementById('editAgentSaveBtn');
         btn.disabled = true;
-        btn.textContent = '保存中…';
+        const original = btn.textContent;
+        btn.textContent = isCreate ? '创建中…' : '保存中…';
         try {
-            const res = await fetch(`/api/agents/${editingAgent.id}`, {
-                method: 'PUT',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({
+            const url = isCreate
+                ? '/api/agents'
+                : `/api/agents/${editingAgent.id}`;
+            const method = isCreate ? 'POST' : 'PUT';
+            const body = isCreate
+                ? {
+                    username,
+                    display_name: displayName || username,
+                    description,
+                    avatar: editingAvatar,
+                }
+                : {
                     display_name: displayName,
                     description,
                     avatar: editingAvatar,
-                }),
+                };
+            const res = await fetch(url, {
+                method,
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(body),
             });
             if (!res.ok) {
                 const err = await res.json().catch(() => ({}));
-                alert(err.error || '保存失败');
+                alert(err.error || (isCreate ? '创建失败' : '保存失败'));
                 return;
             }
+            const data = await res.json();
             closeEditAgent();
             await loadAgents();
+            // Show the one-shot connection token only after the modal
+            // has closed — keeps the focus on the new sensitive value.
+            if (isCreate && data.agent_token) {
+                showTokenDialog(data.agent_token);
+            }
         } finally {
             btn.disabled = false;
-            btn.textContent = '保存';
+            btn.textContent = original;
         }
     }
 
