@@ -1,14 +1,22 @@
 {
   "name": "@agentclub/openclaw-channel",
-  "version": "2.0.0",
-  "description": "OpenClaw channel plugin for Agent Club IM",
+  "version": "0.1.0",
+  "description": "OpenClaw channel plugin that connects OpenClaw agents to an Agent Club IM server.",
   "type": "module",
   "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "openclaw.plugin.json",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run build"
   },
   "openclaw": {
     "extensions": ["./dist/index.js"],
@@ -19,6 +27,31 @@
       "blurb": "Connect OpenClaw to an Agent Club IM server.",
       "markdownCapable": true
     }
+  },
+  "keywords": [
+    "openclaw",
+    "agent",
+    "chat",
+    "channel",
+    "agentclub",
+    "socketio"
+  ],
+  "author": "Dante Zhu",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dantezhu/agentclub.git",
+    "directory": "channels/openclaw-channel"
+  },
+  "bugs": {
+    "url": "https://github.com/dantezhu/agentclub/issues"
+  },
+  "homepage": "https://github.com/dantezhu/agentclub/tree/master/channels/openclaw-channel#readme",
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "dependencies": {
     "socket.io-client": "^4.7.0"
