@@ -1252,7 +1252,12 @@ function handleOverlayClick() {
     syncMobileOverlay();
 }
 
-/* ── Members panel ── */
+/* ── Members panel ──
+ * _membersById caches the latest fetched member list keyed by user id
+ * so the kebab handler (showMemberMenu) can look up display_name and
+ * is_agent for the 发起私聊 action without inflating the onclick
+ * string with escape-prone fields. Refreshed on every render. */
+let _membersById = {};
 async function renderMembersPanel() {
     if (!currentChat || currentChat.type !== 'group') return;
 
@@ -1262,6 +1267,7 @@ async function renderMembersPanel() {
     ]);
     const members = await membersRes.json();
     const group = await groupRes.json();
+    _membersById = Object.fromEntries(members.map(m => [m.id, m]));
     const canManage = currentUser.role === 'admin' || group.created_by === currentUser.id;
 
     // Keep the chat header's "X 名成员" in sync. The subtitle was only
@@ -1323,16 +1329,23 @@ async function renderMembersPanel() {
  * Reuses the same #contextMenu element used by the chat-list right-click
  * menu so we don't duplicate styles or document-click handlers.
  *
- * The menu has two items today:
- *   • 查看信息  → opens the read-only profile modal
- *   • 移除成员  → destructive, gated by canManage at render time
- * (canManage is implicit — showMemberMenu is only wired into rows whose
- * kebab was rendered by the manageable branch in renderMembersPanel.) */
+ * Items (rendered in this order, each gated):
+ *   • 查看信息  → opens the read-only profile modal (always)
+ *   • 发起私聊  → 1:1 chat with this member (hidden when row is self)
+ *   • 移除成员  → destructive (only when canRemove)
+ *
+ * Display name / is_agent for 发起私聊 come from _membersById, which
+ * renderMembersPanel populates — avoids escaping member names through
+ * the onclick string. */
 function showMemberMenu(event, groupId, userId, canRemove) {
     event.preventDefault();
     event.stopPropagation();
     const menu = document.getElementById('contextMenu');
+    const isSelf = userId === currentUser.id;
     let html = `<button onclick="closeContextMenu();openProfileModal('${userId}')">查看信息</button>`;
+    if (!isSelf) {
+        html += `<button onclick="startDirectChatFromMember('${userId}')">发起私聊</button>`;
+    }
     if (canRemove) {
         html += `<button class="danger" onclick="removeMember('${groupId}','${userId}')">移除成员</button>`;
     }
@@ -1350,6 +1363,21 @@ function showMemberMenu(event, groupId, userId, canRemove) {
 
 function closeContextMenu() {
     document.getElementById('contextMenu').classList.add('hidden');
+}
+
+/* Kebab → "发起私聊" handler. Resolves display_name / is_agent from
+ * the cached members map so we can pre-populate the chat header
+ * before /api/direct-chats responds; falls back to a placeholder if
+ * the member somehow isn't in cache (defensive — shouldn't happen
+ * because the kebab is rendered from that same list). If the user is
+ * already in a 1:1 with this peer we just close the menu — clicking
+ * 发起私聊 on yourself is hidden at render time. */
+function startDirectChatFromMember(userId) {
+    closeContextMenu();
+    const m = _membersById[userId];
+    const name = (m && m.display_name) || userId;
+    const isAgent = !!(m && m.is_agent);
+    startDirectChat(userId, name, isAgent);
 }
 
 async function toggleMembers() {
