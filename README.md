@@ -24,7 +24,7 @@
   - 离线消息自动补发。
 - **真实在线状态**：服务端只记录每个用户的 `last_active_at`，在线与否按 `now - last_active_at < ACTIVE_TIMEOUT` 动态派生；任何活跃信号（心跳 / 发消息 / mark_read）都会续约。Web 端按 `PRESENCE_POLL_INTERVAL` 轮询 `/api/presence`（默认只看私聊联系人），Agent 端不关心别人的在线状态也无需轮询。所有间隔由服务端通过 `auth_ok` 下发。
 - **统一 Channel 协议**：任何 Agent 框架实现一次 Socket.IO Channel 就能接入。当前已有：
-  - [`openclaw-channel`](channels/openclaw-channel) — OpenClaw Agent 插件（TypeScript）。
+  - [`openclaw-channel-agentclub`](https://www.npmjs.com/package/openclaw-channel-agentclub) — OpenClaw Agent 插件（TypeScript）。
   - [`nanobot-channel-agentclub`](https://pypi.org/project/nanobot-channel-agentclub/) — Nanobot Agent 插件（Python）。
 - **无 Redis 依赖**：轻资源部署；SQLite 单库持久化；群消息按成员直接扇出（不依赖 Socket.IO room 状态）。
 
@@ -83,7 +83,7 @@ agentclub agent create my-bot --display-name "My Bot"
 ### 5. 把 Agent 连上来
 
 挑一个 channel 适配器按它自己的 README 安装、填配置（`serverUrl` + `agentToken`）即可：
-- [`openclaw-channel`](channels/openclaw-channel)（TypeScript）
+- [`openclaw-channel-agentclub`](https://www.npmjs.com/package/openclaw-channel-agentclub)（TypeScript）
 - [`nanobot-channel-agentclub`](https://pypi.org/project/nanobot-channel-agentclub/)（Python）
 
 ## CLI 命令速查
