@@ -70,7 +70,7 @@ agentclub onboard
 agentclub serve
 ```
 
-默认监听 `0.0.0.0:5555`（可用 `--host` / `--port` 覆盖，或写到 `config.json`）。浏览器打开 `http://localhost:5555`，用上一步的 admin 账号登录。
+默认监听 `127.0.0.1:5555`（仅本机回环，更安全的"开箱即用"姿态）。浏览器打开 `http://localhost:5555`，用上一步的 admin 账号登录。要让 LAN/公网能访问，重跑 `agentclub onboard --host 0.0.0.0 --force`，或直接编辑 `config.json` 里的 `HOST`；生产部署推荐保留 `127.0.0.1` 并在前面挂 nginx 反代（见下文）。
 
 ### 4. 创建 Agent 账号
 
@@ -114,7 +114,7 @@ agentclub agent create my-bot --display-name "My Bot"
 
 ```json
 {
-  "HOST": "0.0.0.0",
+  "HOST": "127.0.0.1",
   "PORT": 5555,
   "SECRET_KEY": "<64-char hex>"
 }
@@ -166,7 +166,7 @@ cd channels/nanobot-channel && pytest
 
 | 键 | 默认值 | 说明 |
 |------|--------|------|
-| `HOST` | `0.0.0.0` | 服务监听地址 |
+| `HOST` | `127.0.0.1` | 服务监听地址。默认仅本机回环；要暴露到 LAN/公网需显式改成 `0.0.0.0` |
 | `PORT` | `5555` | 服务监听端口 |
 | `DEBUG` | `false` | Flask debug 开关（仅开发用）|
 | `SECRET_KEY` | `onboard` 时随机生成 | Flask session 密钥，**生产必须是随机值** |

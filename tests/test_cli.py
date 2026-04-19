@@ -50,7 +50,7 @@ class TestOnboard:
         assert (data_dir / "agentclub.db").exists()
 
         cfg = json.loads((data_dir / "config.json").read_text())
-        assert cfg["HOST"] == "0.0.0.0"
+        assert cfg["HOST"] == "127.0.0.1"
         assert cfg["PORT"] == 5555
         # SECRET_KEY must be a real key, not the dev fallback.
         assert len(cfg["SECRET_KEY"]) >= 32

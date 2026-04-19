@@ -53,8 +53,9 @@ def _random_password(length: int = 20) -> str:
 @click.option("--data-dir", "data_dir_flag", type=click.Path(),
               help="Where to create the data directory. Defaults to "
                    "$AGENTCLUB_HOME or ~/.agentclub.")
-@click.option("--host", default="0.0.0.0", show_default=True,
-              help="Bind address to write into config.json.")
+@click.option("--host", default="127.0.0.1", show_default=True,
+              help="Bind address to write into config.json. Defaults to "
+                   "loopback only; pass 0.0.0.0 to expose on LAN/public IPs.")
 @click.option("--port", default=5555, show_default=True, type=int,
               help="Bind port to write into config.json.")
 @click.option("--admin-username", default="admin", show_default=True,
@@ -153,3 +154,10 @@ def onboard(data_dir_flag, host, port, admin_username, admin_display_name,
     click.echo("Start the server with:")
     click.echo(f"  agentclub serve --data-dir {data_dir}")
     click.echo("")
+    if host in ("127.0.0.1", "localhost"):
+        click.echo(click.style(
+            "  Bound to loopback only. To allow LAN/public access, re-run with "
+            "--host 0.0.0.0 --force, or edit HOST in config.json.",
+            fg="cyan",
+        ))
+        click.echo("")

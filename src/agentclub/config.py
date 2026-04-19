@@ -121,7 +121,11 @@ def refresh_config():
     BASE_DIR = _default_home()
 
     # Network
-    Config.HOST = os.environ.get("HOST", "0.0.0.0")
+    # Default to loopback only — safer "out of the box" stance for a
+    # service with auth + uploads. Production deploys behind nginx (the
+    # documented setup) hit 127.0.0.1 anyway. To expose on LAN/public
+    # IPs you must opt in: ``--host 0.0.0.0`` or set HOST in config.json.
+    Config.HOST = os.environ.get("HOST", "127.0.0.1")
     Config.PORT = int(os.environ.get("PORT", "5555"))
     Config.DEBUG = _bool("DEBUG", False)
 
