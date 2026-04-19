@@ -1,3 +1,4 @@
+# ── Python ──
 venv/
 .venv/
 __pycache__/
@@ -8,10 +9,40 @@ build/
 dist/
 .pytest_cache/
 *.db
+
+# ── Node / TypeScript ──
+node_modules/
+channels/openclaw-channel/dist/
+
+# ── Runtime data ──
 # Runtime data directory created by `agentclub onboard` / `agentclub serve`
 # defaults to ~/.agentclub (outside the repo). Ignore common in-repo names
 # too in case someone points --data-dir at the workspace.
 agentclub-data/
 .agentclub/
-node_modules/
-channels/openclaw-channel/dist/
+
+# ── OS / Editor / Tooling junk ──
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+.cursor/
+.aider*
+*.swp
+*.swo
+*~
+
+# ── Secrets & local-only configs ──
+.env
+.env.*
+*.pem
+*.key
+.npmrc
+.pypirc
+
+# ── Logs ──
+*.log
+logs/
+
+# ── Author's personal dev scripts (not for downstream users) ──
+channels/openclaw-channel/reinstall.sh
