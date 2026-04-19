@@ -23,6 +23,10 @@ CREATE TABLE IF NOT EXISTS users (
     password_hash TEXT,
     display_name TEXT NOT NULL,
     avatar TEXT DEFAULT '',
+    -- Free-form short bio. Currently surfaced only for agents (admin
+    -- create/edit + chat header subtitle), but we store it on every
+    -- row so future "user bio" features don't need another migration.
+    description TEXT DEFAULT '',
     role TEXT DEFAULT 'user',
     is_agent INTEGER DEFAULT 0,
     agent_token TEXT UNIQUE,
@@ -151,7 +155,24 @@ def get_db_ctx():
 def init_db():
     with get_db_ctx() as db:
         db.executescript(SCHEMA)
-        _migrate_presence_columns(db)
+        _migrate_user_columns(db)
+
+
+def _migrate_user_columns(db):
+    """Bring an existing ``users`` table up to the current schema.
+
+    Two migrations live here:
+      1. Presence: legacy ``is_online`` / ``last_seen`` → single
+         ``last_active_at`` (see commit history for the rationale).
+      2. Description: optional bio column added in 0.1.8.
+
+    All ALTERs are guarded by a column-existence check so this function
+    is safe to run on every startup.
+    """
+    _migrate_presence_columns(db)
+    cols = {r["name"] for r in db.execute("PRAGMA table_info(users)").fetchall()}
+    if "description" not in cols:
+        db.execute("ALTER TABLE users ADD COLUMN description TEXT DEFAULT ''")
 
 
 def _migrate_presence_columns(db):
@@ -205,13 +226,13 @@ def create_user(username, password_hash, display_name, role="user", avatar=""):
     return uid
 
 
-def create_agent(username, display_name, token, avatar=""):
+def create_agent(username, display_name, token, avatar="", description=""):
     uid = new_id()
     with get_db_ctx() as db:
         db.execute(
-            "INSERT INTO users (id, username, password_hash, display_name, avatar, role, is_agent, agent_token, created_at) "
-            "VALUES (?, ?, NULL, ?, ?, 'agent', 1, ?, ?)",
-            (uid, username, display_name, avatar, token, now()),
+            "INSERT INTO users (id, username, password_hash, display_name, avatar, description, role, is_agent, agent_token, created_at) "
+            "VALUES (?, ?, NULL, ?, ?, ?, 'agent', 1, ?, ?)",
+            (uid, username, display_name, avatar, description, token, now()),
         )
     return uid
 
@@ -253,7 +274,8 @@ def touch_active(user_id):
 def list_users():
     db = get_db()
     rows = db.execute(
-        "SELECT id, username, display_name, avatar, role, is_agent, last_active_at "
+        "SELECT id, username, display_name, avatar, description, role, is_agent, "
+        "       last_active_at, created_at "
         "FROM users ORDER BY created_at"
     ).fetchall()
     db.close()
@@ -263,7 +285,8 @@ def list_users():
 def list_agents():
     db = get_db()
     rows = db.execute(
-        "SELECT id, username, display_name, avatar, agent_token, last_active_at "
+        "SELECT id, username, display_name, avatar, description, agent_token, "
+        "       last_active_at "
         "FROM users WHERE is_agent = 1 ORDER BY created_at"
     ).fetchall()
     db.close()
@@ -399,7 +422,7 @@ def delete_user(user_id):
 
 
 def update_user(user_id, **kwargs):
-    allowed = {"display_name", "avatar", "password_hash", "role"}
+    allowed = {"display_name", "avatar", "description", "password_hash", "role"}
     fields = {k: v for k, v in kwargs.items() if k in allowed}
     if not fields:
         return
@@ -541,13 +564,14 @@ def get_user_direct_chats(user_id):
         "CASE WHEN dc.user1_id = ? THEN u2.id ELSE u1.id END AS peer_id, "
         "CASE WHEN dc.user1_id = ? THEN u2.display_name ELSE u1.display_name END AS peer_name, "
         "CASE WHEN dc.user1_id = ? THEN u2.avatar ELSE u1.avatar END AS peer_avatar, "
+        "CASE WHEN dc.user1_id = ? THEN u2.description ELSE u1.description END AS peer_description, "
         "CASE WHEN dc.user1_id = ? THEN u2.last_active_at ELSE u1.last_active_at END AS peer_last_active_at, "
         "CASE WHEN dc.user1_id = ? THEN u2.is_agent ELSE u1.is_agent END AS peer_is_agent "
         "FROM direct_chats dc "
         "JOIN users u1 ON dc.user1_id = u1.id "
         "JOIN users u2 ON dc.user2_id = u2.id "
         "WHERE dc.user1_id = ? OR dc.user2_id = ?",
-        (user_id, user_id, user_id, user_id, user_id, user_id, user_id),
+        (user_id, user_id, user_id, user_id, user_id, user_id, user_id, user_id),
     ).fetchall()
     db.close()
     return [_apply_peer_online(dict(r)) for r in rows]

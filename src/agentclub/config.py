@@ -140,7 +140,12 @@ def refresh_config():
     Config.MAX_CONTENT_LENGTH = int(os.environ.get("MAX_CONTENT_LENGTH", str(50 * 1024 * 1024)))
 
     # Retention + feature flags + paging
-    Config.ALLOW_REGISTRATION = _bool("ALLOW_REGISTRATION", True)
+    # Default is False: a fresh deploy ships closed. The very first
+    # signup is special-cased in routes.register() — if the users table
+    # is empty, registration is allowed regardless of this flag, so the
+    # operator can still bootstrap the initial admin from the web. Set
+    # this to True only if you actually want open public registration.
+    Config.ALLOW_REGISTRATION = _bool("ALLOW_REGISTRATION", False)
     Config.MESSAGE_RETENTION_DAYS = int(os.environ.get("MESSAGE_RETENTION_DAYS", "30"))
     Config.MESSAGE_PAGE_SIZE = int(os.environ.get("MESSAGE_PAGE_SIZE", "50"))
 

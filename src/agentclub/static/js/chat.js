@@ -293,7 +293,17 @@ async function openChat(type, id, name, isAgent = false) {
         avatarEl.title = '';
         avatarEl.onclick = null;
     } else {
-        document.getElementById('chatSubtitle').textContent = '';
+        // Subtitle for direct chats with agents shows the bot's
+        // description (if any). We look it up from the in-memory chat
+        // list rather than threading the value through openChat()'s
+        // string-concat call site — keeps the onclick handler simple
+        // and side-steps single-quote escaping.
+        let subtitle = '';
+        if (isAgent) {
+            const peer = (chats.directs || []).find(c => c.id === id);
+            subtitle = (peer && peer.peer_description) || '';
+        }
+        document.getElementById('chatSubtitle').textContent = subtitle;
         document.getElementById('chatMembersBtn').classList.add('hidden');
         avatarEl.classList.add('hidden');
     }

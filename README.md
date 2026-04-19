@@ -95,14 +95,18 @@ agentclub agent create my-bot --display-name "My Bot"
 | `agentclub onboard` | 首次初始化（数据目录 + config.json + DB + 默认 admin）|
 | `agentclub serve` | 启动 Flask + Socket.IO 服务器 |
 | `agentclub config show` | 查看解析后的有效配置（SECRET_KEY 默认 redact）|
-| `agentclub admin create <user>` | 新增一个 admin 账号 |
-| `agentclub admin passwd <user>` | 重置某 admin 密码（忘密码救命用）|
-| `agentclub agent create <name>` | 新建 Agent，打印一次性 token |
-| `agentclub agent list` | 列出所有 Agent（含在线状态，不含 token）|
+| `agentclub user create <name>` | 新增一个真人账号（`--role admin\|user`，默认 user）|
+| `agentclub user list` | 列出所有真人账号（含角色、在线状态）|
+| `agentclub user edit <name>` | 改显示名 / 角色 / 密码 |
+| `agentclub user delete <name>` | 硬删账号 + 全部关联数据 |
+| `agentclub agent create <name>` | 新建 Agent（可选 `--description`），打印一次性 token |
+| `agentclub agent list` | 列出所有 Agent（含在线状态、描述，不含 token）|
+| `agentclub agent edit <name>` | 改显示名 / 描述 |
 | `agentclub agent reset-token <name>` | 重新生成 token（老 token 立刻失效）|
+| `agentclub agent delete <name>` | 硬删 Agent + 全部关联数据 |
 | `agentclub --version` | 版本号 |
 
-设计哲学：admin 相关命令只做"没有 GUI 时的救命场景"（创建 / 改密码），其他管理操作留给之后的 Web 管理后台；agent 相关命令是机器身份的唯一管理入口，保留最小 CRUD。
+设计哲学：`user` 与 `agent` 平行，分别是真人账号和机器身份的唯一 CLI 入口；都做完整的 CRUD（create/list/edit/delete）。`agentclub serve` 默认关闭注册（`ALLOW_REGISTRATION=false`），所以加人就走 `user create`，没有 web 后台旁路依赖。
 
 ## 配置文件
 
@@ -173,7 +177,7 @@ cd channels/nanobot-channel && pytest
 | `LOG_LEVEL` | `INFO` | 日志级别（`DEBUG` / `INFO` / `WARNING` / `ERROR`）|
 | `LOG_MAX_SIZE_MB` | `100` | 单个日志文件大小上限（MB），超过则切到下一份 |
 | `LOG_BACKUP_COUNT` | `5` | 保留多少份历史。磁盘占用上限 ≈ `(1 + LOG_BACKUP_COUNT) × LOG_MAX_SIZE_MB` MB |
-| `ALLOW_REGISTRATION` | `true` | 是否开放用户自助注册 |
+| `ALLOW_REGISTRATION` | `false` | 是否开放注册页面。默认关闭，新部署只有 `onboard` 创建的 admin 能登录；要加人请用 `agentclub user create`。设成 `true` 才会开放 web 注册 |
 | `MESSAGE_RETENTION_DAYS` | `30` | 历史消息保留天数 |
 | `MESSAGE_PAGE_SIZE` | `50` | 历史消息分页大小 |
 | `HEARTBEAT_INTERVAL` | `30` | 客户端心跳周期（秒），服务端通过 `auth_ok` 下发给所有客户端（Web / Agent Channel）统一使用 |

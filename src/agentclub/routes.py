@@ -137,6 +137,11 @@ def update_agent(agent_id):
         updates["display_name"] = data["display_name"].strip()
     if "avatar" in data:
         updates["avatar"] = data["avatar"]
+    # description is intentionally allowed to be empty (admin clearing it).
+    # Trim trailing whitespace so a stray newline from a textarea doesn't
+    # show as a phantom subtitle.
+    if "description" in data:
+        updates["description"] = (data.get("description") or "").strip()
     if updates:
         models.update_user(agent_id, **updates)
     return jsonify({"ok": True})
@@ -189,6 +194,7 @@ def create_agent():
     username = data.get("username", "").strip()
     display_name = data.get("display_name", "").strip() or username
     avatar = data.get("avatar", "")
+    description = (data.get("description") or "").strip()
 
     if not username:
         return jsonify({"error": "用户名不能为空"}), 400
@@ -196,7 +202,7 @@ def create_agent():
         return jsonify({"error": "用户名已存在"}), 409
 
     token = generate_agent_token()
-    uid = models.create_agent(username, display_name, token, avatar)
+    uid = models.create_agent(username, display_name, token, avatar, description)
     agent = models.get_user_by_id(uid)
     return jsonify({**_safe_user(agent), "agent_token": token}), 201
 
@@ -562,6 +568,10 @@ def _safe_user(user):
         "username": user["username"],
         "display_name": user["display_name"],
         "avatar": user["avatar"],
+        # description is on every user row but only meaningful for agents
+        # today; humans get an empty string until/unless we surface a "user
+        # bio" UI somewhere. .get() guards against pre-migration callers.
+        "description": user.get("description", "") or "",
         "role": user["role"],
         "is_agent": user["is_agent"],
         "is_online": user["is_online"],

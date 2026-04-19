@@ -11,7 +11,7 @@ from .. import __version__
 from .serve import serve
 from .onboard import onboard
 from .config_cmd import config_group
-from .admin import admin_group
+from .user import user_group
 from .agent import agent_group
 
 
@@ -27,7 +27,7 @@ def main():
 main.add_command(serve)
 main.add_command(onboard)
 main.add_command(config_group, name="config")
-main.add_command(admin_group, name="admin")
+main.add_command(user_group, name="user")
 main.add_command(agent_group, name="agent")
 
 

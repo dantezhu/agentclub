@@ -2,16 +2,20 @@
 
 Scope:
 
-    agent create <name> [--display-name NAME]   # prints token ONCE
+    agent create <name> [--display-name NAME] [--description TEXT]
     agent list                                   # no token column
-    agent edit <name> [--display-name NAME]      # editable fields only
+    agent edit <name> [--display-name NAME] [--description TEXT]
     agent reset-token <name>                    # prints new token ONCE
     agent delete <name> [--yes]                  # hard delete, with footprint
 
-``edit`` and ``delete`` mirror the admin web UI's buttons. ``edit``
-currently exposes only ``--display-name`` because that's the only field
-the web UI lets admins change inline; ``--username`` (rename) and
-``--avatar`` are deliberately omitted until there's a real need.
+``edit`` and ``delete`` mirror the admin web UI's buttons. ``--username``
+(rename) and ``--avatar`` are deliberately omitted from ``edit`` until
+there's a real need; the web UI handles avatar uploads.
+
+``--description`` is optional, free-form, and surfaced in two places:
+the chat header subtitle when chatting 1-on-1 with the agent (so users
+remember "what does this bot actually do?") and the agent list in the
+admin web. Pass an empty string to clear it.
 
 Tokens are always shown **once** on the command that mints them, never
 on ``list``. Losing a token → ``reset-token``.
@@ -51,7 +55,10 @@ def _status(last_active_at, timeout):
                    "~/.agentclub.")
 @click.option("--display-name", default=None,
               help="Display name shown in the UI. Defaults to NAME.")
-def agent_create(name, data_dir_flag, display_name):
+@click.option("--description", default="",
+              help="Short bio shown under the agent name in chat headers "
+                   "and the admin list. Optional.")
+def agent_create(name, data_dir_flag, display_name, description):
     bootstrap(data_dir_flag, require_exists=True)
     from .. import models
     from ..auth import generate_agent_token
@@ -61,11 +68,14 @@ def agent_create(name, data_dir_flag, display_name):
 
     token = generate_agent_token()
     display = display_name or name
-    models.create_agent(name, display, token)
+    desc = (description or "").strip()
+    models.create_agent(name, display, token, description=desc)
 
     echo_header(f"✓ Agent '{name}' created")
     click.echo(f"  name     : {name}")
     click.echo(f"  display  : {display}")
+    if desc:
+        click.echo(f"  desc     : {desc}")
     click.echo("")
     click.echo(f"  token    : {click.style(token, fg='yellow', bold=True)}")
     click.echo(click.style(
@@ -88,15 +98,21 @@ def agent_list(data_dir_flag):
         click.echo("No agents. Create one with: agentclub agent create <name>")
         return
 
-    # Fixed-width columns; no external dep for pretty tables.
-    headers = ("NAME", "DISPLAY", "STATUS", "LAST ACTIVE")
+    # Fixed-width columns; no external dep for pretty tables. Description
+    # is optional and often long, so it gets truncated for the table view —
+    # full text is always visible via the admin web UI / DB.
+    headers = ("NAME", "DISPLAY", "STATUS", "LAST ACTIVE", "DESCRIPTION")
     rows = []
     for a in agents:
+        desc = a.get("description") or ""
+        if len(desc) > 40:
+            desc = desc[:39] + "…"
         rows.append((
             a["username"],
             a["display_name"],
             _status(a.get("last_active_at"), Config.ACTIVE_TIMEOUT),
             _format_ts(a.get("last_active_at")),
+            desc,
         ))
     widths = [max(len(h), *(len(r[i]) for r in rows)) for i, h in enumerate(headers)]
     fmt = "  ".join(f"{{:<{w}}}" for w in widths)
@@ -112,9 +128,11 @@ def agent_list(data_dir_flag):
               help="Data directory. Defaults to $AGENTCLUB_HOME or "
                    "~/.agentclub.")
 @click.option("--display-name", "display_name", default=None,
-              help="New display name shown in the UI. Use empty string is "
+              help="New display name shown in the UI. Empty string is "
                    "rejected; pass a real value or omit the flag.")
-def agent_edit(name, data_dir_flag, display_name):
+@click.option("--description", "description", default=None,
+              help="New short bio. Pass an empty string to clear it.")
+def agent_edit(name, data_dir_flag, display_name, description):
     bootstrap(data_dir_flag, require_exists=True)
     from .. import models
 
@@ -128,10 +146,16 @@ def agent_edit(name, data_dir_flag, display_name):
         if not new_display:
             raise click.ClickException("--display-name cannot be empty.")
         updates["display_name"] = new_display
+    # description is intentionally allowed to be empty — that's how an
+    # admin clears a previously-set bio. We only update when the flag was
+    # explicitly passed (None means "leave alone").
+    if description is not None:
+        updates["description"] = description.strip()
 
     if not updates:
         raise click.ClickException(
-            "Nothing to update. Pass at least one of: --display-name."
+            "Nothing to update. Pass at least one of: --display-name, "
+            "--description."
         )
 
     models.update_user(agent["id"], **updates)
@@ -140,6 +164,10 @@ def agent_edit(name, data_dir_flag, display_name):
     if "display_name" in updates:
         click.echo(f"  display  : {agent['display_name']} "
                    f"→ {click.style(updates['display_name'], fg='green')}")
+    if "description" in updates:
+        old = agent.get("description") or "(empty)"
+        new = updates["description"] or "(empty)"
+        click.echo(f"  desc     : {old} → {click.style(new, fg='green')}")
 
 
 @agent_group.command("reset-token", help="Regenerate an agent's token.")
