@@ -293,19 +293,32 @@ async function openChat(type, id, name, isAgent = false) {
         avatarEl.title = '';
         avatarEl.onclick = null;
     } else {
-        // Subtitle for direct chats with agents shows the bot's
-        // description (if any). We look it up from the in-memory chat
-        // list rather than threading the value through openChat()'s
-        // string-concat call site — keeps the onclick handler simple
-        // and side-steps single-quote escaping.
+        // For direct chats we surface the peer's avatar + (for agents)
+        // their description. Both come from chats.directs which the
+        // sidebar already pulled — looking them up here avoids re-
+        // fetching and avoids threading the values through openChat()'s
+        // string-concat call site (which would force escaping).
+        const peer = (chats.directs || []).find(c => c.id === id);
+        const peerAvatar = peer && peer.peer_avatar;
+        const peerName = (peer && peer.peer_name) || name;
         let subtitle = '';
-        if (isAgent) {
-            const peer = (chats.directs || []).find(c => c.id === id);
-            subtitle = (peer && peer.peer_description) || '';
+        if (isAgent && peer) {
+            subtitle = peer.peer_description || '';
         }
         document.getElementById('chatSubtitle').textContent = subtitle;
         document.getElementById('chatMembersBtn').classList.add('hidden');
-        avatarEl.classList.add('hidden');
+        // Render the peer avatar in the same slot the group avatar uses
+        // so the header layout stays consistent across chat types. No
+        // editing affordance — direct-chat peers aren't ours to rename.
+        avatarEl.innerHTML = peerAvatar
+            ? `<img src="${escHtml(peerAvatar)}">`
+            : (peerName || '?').charAt(0);
+        avatarEl.style.background = peerAvatar
+            ? '' : AgentClubUI.avatarColor(peerName);
+        avatarEl.classList.remove('hidden');
+        avatarEl.classList.remove('editable');
+        avatarEl.title = '';
+        avatarEl.onclick = null;
     }
 
     // Close sidebar on mobile
