@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>Agent Club - 登录</title>
+    <title>{{ site_name }} - 登录</title>
     <style>
         :root {
             --color-primary: #3370FF;
@@ -35,7 +35,12 @@
             letter-spacing: 0.5px;
             margin: 0 auto 14px;
             box-shadow: 0 2px 8px rgba(51,112,255,0.25);
+            overflow: hidden;
         }
+        /* Image logo (set via SITE_LOGO) replaces the text wordmark
+         * inside the same square. object-fit: cover keeps any aspect
+         * ratio looking centered. */
+        .brand-mark img { width: 100%; height: 100%; object-fit: cover; display: block; }
         .card {
             background: #fff;
             border-radius: 16px;
@@ -135,8 +140,10 @@
 </head>
 <body>
     <div class="card">
-        <div class="brand-mark" aria-hidden="true">AC</div>
-        <h1>Agent Club</h1>
+        <div class="brand-mark" aria-hidden="true">
+            {% if site_logo %}<img src="{{ site_logo }}" alt="">{% else %}{{ site_logo_text }}{% endif %}
+        </div>
+        <h1>{{ site_name }}</h1>
         <p class="subtitle">与 AI Agent 实时聊天</p>
         <div class="tabs">
             <button class="active" onclick="switchTab('login')">登录</button>

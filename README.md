@@ -179,8 +179,13 @@ cd channels/nanobot-channel && pytest
 | `HEARTBEAT_INTERVAL` | `30` | 客户端心跳周期（秒），服务端通过 `auth_ok` 下发给所有客户端（Web / Agent Channel）统一使用 |
 | `ACTIVE_TIMEOUT` | `90` | 在线判定阈值（秒）；`last_active_at` 距今超过此值即视为离线。建议 ≥ 2×`HEARTBEAT_INTERVAL` |
 | `PRESENCE_POLL_INTERVAL` | `30` | Web 端轮询 `/api/presence` 的周期（秒），同样走 `auth_ok` 下发；Agent 端不轮询 |
+| `SITE_NAME` | `Agent Club` | 浏览器标题、登录卡片、侧边栏、管理后台显示的站点名称 |
+| `SITE_LOGO` | （空）| 自定义 logo 图片 URL；留空则显示 `SITE_LOGO_TEXT` 字标。可以是 `/media/uploads/xxx.png` 这类站内文件，也可以是外链 |
+| `SITE_LOGO_TEXT` | 从 `SITE_NAME` 派生 | 字标文字（1–2 个字符）。`Agent Club`→`AC`，`我的团队`→`我的`。设置 `SITE_LOGO` 后此字段被忽略 |
 
 允许上传的文件扩展名集合（`ALLOWED_EXTENSIONS`）是嵌套结构，目前仍在源码里维护，未开放为运行时配置；如果你的场景确实需要调整，欢迎提 issue。运行中随时可以用 `agentclub config show` 确认当前生效值。
+
+> **品牌定制**：改完 `config.json` 后 `agentclub serve` 重启即生效。三个 `SITE_*` 字段都是可选的，全部留空就是默认的 “Agent Club + AC” 字标。`SITE_LOGO` 推荐用 32×32 或更大的方形 PNG/SVG，会被裁剪成圆角方块。
 
 ## 日志
 

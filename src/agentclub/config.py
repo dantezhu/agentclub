@@ -80,6 +80,33 @@ class Config:
     LOG_LEVEL = None
     LOG_MAX_SIZE_MB = None
     LOG_BACKUP_COUNT = None
+    SITE_NAME = None
+    SITE_LOGO = None
+    SITE_LOGO_TEXT = None
+
+
+def _derive_logo_text(site_name):
+    """Build a short 1-2 char wordmark from the site name.
+
+    Heuristic:
+      - "Agent Club" → "AC"   (multiple ASCII words → take initials)
+      - "AgentClub"  → "AG"   (single ASCII word → take first 2 letters)
+      - "我的团队"    → "我的"  (CJK → take first 2 chars)
+      - empty/junk   → "AC"   (safe fallback)
+
+    Capped at 2 visible chars so the round mark stays legible at 24-40px.
+    """
+    name = (site_name or "").strip()
+    if not name:
+        return "AC"
+    words = name.split()
+    if len(words) >= 2:
+        # Multiple whitespace-separated words: take leading char of each.
+        # Works for both "Agent Club" → AC and "我 的 团队" → 我的.
+        return "".join(w[0] for w in words[:2]).upper()
+    # Single word — take the first two characters as-is. Upper-casing
+    # only matters for ASCII; CJK is unaffected.
+    return name[:2].upper()
 
 
 def refresh_config():
@@ -130,6 +157,19 @@ def refresh_config():
     Config.LOG_LEVEL = (os.environ.get("LOG_LEVEL") or "INFO").upper()
     Config.LOG_MAX_SIZE_MB = int(os.environ.get("LOG_MAX_SIZE_MB", "100"))
     Config.LOG_BACKUP_COUNT = int(os.environ.get("LOG_BACKUP_COUNT", "5"))
+
+    # Branding — all three are optional and only affect the title bar /
+    # logomark. Empty strings are treated as "use default":
+    #   SITE_NAME       → "Agent Club"
+    #   SITE_LOGO       → "" (no image, fall back to text wordmark)
+    #   SITE_LOGO_TEXT  → derived from SITE_NAME (see _derive_logo_text)
+    # Putting these in config.json — not in the DB settings table — is
+    # deliberate: the brand is part of the deploy, not a runtime knob
+    # that admins can poke from the web UI.
+    Config.SITE_NAME = (os.environ.get("SITE_NAME") or "Agent Club").strip()
+    Config.SITE_LOGO = (os.environ.get("SITE_LOGO") or "").strip()
+    explicit_text = (os.environ.get("SITE_LOGO_TEXT") or "").strip()
+    Config.SITE_LOGO_TEXT = explicit_text or _derive_logo_text(Config.SITE_NAME)
 
 
 # Populate on import so existing ``from .config import Config`` code

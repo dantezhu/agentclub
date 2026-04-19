@@ -8,7 +8,7 @@ agentclub.app`` also work for quick local iteration.
 """
 import logging
 import os
-from flask import Flask, send_from_directory, jsonify, request
+from flask import Flask, render_template, jsonify, request
 from werkzeug.exceptions import HTTPException
 from flask_socketio import SocketIO
 from .config import Config
@@ -32,19 +32,31 @@ from .socket_events import register_events  # noqa: E402
 register_events(socketio)
 
 
+@app.context_processor
+def _inject_branding():
+    """Expose Config.SITE_* to every Jinja render so templates can show
+    a deployer-customised name / logomark. Read from Config (not env)
+    so refresh_config() takes effect at runtime."""
+    return {
+        "site_name": Config.SITE_NAME,
+        "site_logo": Config.SITE_LOGO,
+        "site_logo_text": Config.SITE_LOGO_TEXT,
+    }
+
+
 @app.route("/")
 def index():
-    return send_from_directory(app.template_folder, "login.html")
+    return render_template("login.html")
 
 
 @app.route("/chat")
 def chat_page():
-    return send_from_directory(app.template_folder, "chat.html")
+    return render_template("chat.html")
 
 
 @app.route("/admin")
 def admin_page():
-    return send_from_directory(app.template_folder, "admin.html")
+    return render_template("admin.html")
 
 
 @app.before_request
