@@ -219,6 +219,22 @@ def list_users():
     return jsonify(models.list_users())
 
 
+@api.route("/api/users/<user_id>")
+@login_required
+def get_user(user_id):
+    """Return a single user's public profile.
+
+    Used by the chat UI's profile-view modal — opened from the chat
+    header avatar (direct chats), message author avatars, and the group
+    members panel kebab. Returns the same _safe_user shape that
+    /api/users (list) does, plus the agent description.
+    """
+    user = models.get_user_by_id(user_id)
+    if not user:
+        return jsonify({"error": "用户不存在"}), 404
+    return jsonify(_safe_user(user))
+
+
 # ── Group management ──
 
 @api.route("/api/groups", methods=["POST"])

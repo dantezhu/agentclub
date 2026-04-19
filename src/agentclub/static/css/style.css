@@ -619,6 +619,28 @@ button, .icon-btn, .chat-item, .member-item {
     border-bottom: 1px solid #eee;
 }
 .members-header h3 { font-size: 15px; }
+/* Right-side cluster in the members panel header. Holds the manage
+   actions (添加成员 / 群组设置) and the close X on a single row so the
+   list area below stays uncluttered. */
+.members-header-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+#membersHeaderActions {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+#membersHeaderActions:empty { display: none; }
+/* Header-context icon-action: smaller (28x28) and lighter than the
+   list-area variant so it visually pairs with the close X. */
+.members-header-actions .icon-action {
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+}
+.members-header-actions .icon-action .icon { width: 14px; height: 14px; }
 #membersList { flex: 1; overflow-y: auto; padding: 8px; }
 .member-item {
     display: flex;
@@ -798,16 +820,28 @@ button, .icon-btn, .chat-item, .member-item {
 }
 .btn-sm.ghost .icon { width: 14px; height: 14px; }
 
-/* Members panel header action bar — sits inside the scrollable
-   #membersList and groups the ghost buttons with consistent spacing. */
-.members-actions {
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-    padding: 4px 12px 12px;
-    border-bottom: 1px solid #f0f0f0;
-    margin-bottom: 8px;
+/* Square ghost icon button — used in members panel header, possibly
+   elsewhere in the future. Same visual weight across actions so we
+   don't accidentally signal a primary one. */
+.icon-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    background: #fff;
+    color: #4a4a55;
+    border: 1px solid #e1e4e8;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.12s, border-color 0.12s, color 0.12s;
 }
+.icon-action:hover {
+    background: #f6f8fa;
+    border-color: #d0d4d9;
+    color: var(--color-text);
+}
+.icon-action .icon { width: 16px; height: 16px; }
 
 .admin-group-item, .admin-agent-item {
     display: flex;
@@ -852,6 +886,98 @@ button, .icon-btn, .chat-item, .member-item {
     width: 100%;
     height: 100%;
     object-fit: cover;
+}
+
+/* ── Profile view modal ──
+ * Read-only card showing a peer's display name + tag(s) + description.
+ * Centered column layout with a single CTA at the bottom — different
+ * from the editable "个人设置" modal (which has form fields stacked
+ * left-aligned). The avatar reuses .profile-avatar; everything else
+ * lives under .profile-view to avoid CSS naming clashes. */
+.profile-view {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    padding: 4px 0 20px;
+}
+.profile-view .profile-avatar { margin-bottom: 14px; }
+.profile-view-name {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--color-text);
+    line-height: 1.2;
+}
+.profile-view-username {
+    font-size: 13px;
+    color: #999;
+    margin-top: 4px;
+}
+.profile-view-tags {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    justify-content: center;
+    margin-top: 10px;
+}
+.profile-view-tags:empty { display: none; }
+.profile-view-tags .member-tag { font-size: 11px; padding: 2px 8px; }
+/* Online dot variant for the profile card — slightly larger than the
+ * 8px dot used in chat list rows so it reads at the avatar scale. */
+.profile-view-tags .online-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    color: #2ed573;
+    background: #ecfdf5;
+    padding: 2px 8px;
+    border-radius: 4px;
+}
+.profile-view-tags .online-pill::before {
+    content: "";
+    width: 6px; height: 6px; border-radius: 50%;
+    background: #2ed573;
+}
+.profile-view-desc {
+    font-size: 13px;
+    color: #555;
+    line-height: 1.5;
+    margin-top: 14px;
+    padding: 10px 14px;
+    background: #f6f8fa;
+    border-radius: 8px;
+    width: 100%;
+    word-break: break-word;
+    text-align: left;
+}
+.profile-view-desc:empty { display: none; }
+.profile-view-actions {
+    border-top: 1px solid #f0f0f0;
+    padding-top: 14px;
+}
+.profile-view-actions .btn-sm {
+    width: 100%;
+    padding: 10px;
+}
+.profile-view-actions .btn-sm.hidden { display: none; }
+
+/* Avatars that double as click affordances get a subtle hover cue so
+ * users discover the new "open profile" interaction. We add this to
+ * msg-avatar and chat-header-avatar via a .clickable modifier (set
+ * from JS only when the click would actually do something — we don't
+ * want a hover ring on the user's own message avatar). */
+.msg-avatar.clickable,
+.chat-header-avatar.clickable,
+.member-avatar.clickable {
+    cursor: pointer;
+    transition: filter 0.12s, box-shadow 0.12s;
+}
+.msg-avatar.clickable:hover,
+.chat-header-avatar.clickable:hover,
+.member-avatar.clickable:hover {
+    filter: brightness(0.95);
+    box-shadow: 0 0 0 2px rgba(51,112,255,0.25);
 }
 .context-menu {
     position: fixed;

@@ -288,8 +288,10 @@ async function openChat(type, id, name, isAgent = false) {
         avatarEl.classList.remove('hidden');
         // Header avatar is display-only now. Editing (name + avatar) lives
         // in the members panel's "群组设置" button → groupSettingsModal,
-        // mirroring the profile-settings UX.
+        // mirroring the profile-settings UX. Also strip .clickable in
+        // case we just came from a direct-chat header where it was set.
         avatarEl.classList.remove('editable');
+        avatarEl.classList.remove('clickable');
         avatarEl.title = '';
         avatarEl.onclick = null;
     } else {
@@ -301,6 +303,7 @@ async function openChat(type, id, name, isAgent = false) {
         const peer = (chats.directs || []).find(c => c.id === id);
         const peerAvatar = peer && peer.peer_avatar;
         const peerName = (peer && peer.peer_name) || name;
+        const peerId = peer && peer.peer_id;
         let subtitle = '';
         if (isAgent && peer) {
             subtitle = peer.peer_description || '';
@@ -308,8 +311,9 @@ async function openChat(type, id, name, isAgent = false) {
         document.getElementById('chatSubtitle').textContent = subtitle;
         document.getElementById('chatMembersBtn').classList.add('hidden');
         // Render the peer avatar in the same slot the group avatar uses
-        // so the header layout stays consistent across chat types. No
-        // editing affordance — direct-chat peers aren't ours to rename.
+        // so the header layout stays consistent across chat types.
+        // Click opens the profile modal — no edit affordance, the peer
+        // isn't ours to rename.
         avatarEl.innerHTML = peerAvatar
             ? `<img src="${escHtml(peerAvatar)}">`
             : (peerName || '?').charAt(0);
@@ -317,8 +321,15 @@ async function openChat(type, id, name, isAgent = false) {
             ? '' : AgentClubUI.avatarColor(peerName);
         avatarEl.classList.remove('hidden');
         avatarEl.classList.remove('editable');
-        avatarEl.title = '';
-        avatarEl.onclick = null;
+        if (peerId) {
+            avatarEl.classList.add('clickable');
+            avatarEl.title = '查看个人信息';
+            avatarEl.onclick = () => openProfileModal(peerId);
+        } else {
+            avatarEl.classList.remove('clickable');
+            avatarEl.title = '';
+            avatarEl.onclick = null;
+        }
     }
 
     // Close sidebar on mobile
@@ -395,17 +406,23 @@ function renderMessage(msg) {
     const isSelf = msg.sender_id === currentUser.id;
     const isAgent = msg.sender_is_agent;
     const initial = (msg.sender_name || '?').charAt(0);
-    const avatarClass = isAgent ? 'msg-avatar agent' : 'msg-avatar';
+    // Self avatars are not clickable: there's no point opening your own
+    // profile from your own message (and the modal would hide its CTA
+    // anyway). Peer avatars get .clickable for the hover ring + cursor.
+    const avatarClass = `msg-avatar${isAgent ? ' agent' : ''}${isSelf ? '' : ' clickable'}`;
     const avatarContent = msg.sender_avatar ? `<img src="${escHtml(msg.sender_avatar)}">` : initial;
     const avatarStyle = msg.sender_avatar
         ? ''
         : ` style="${AgentClubUI.avatarStyle(msg.sender_name || msg.sender_id)}"`;
+    const avatarOnclick = isSelf
+        ? ''
+        : ` onclick="openProfileModal('${msg.sender_id}')" title="查看个人信息"`;
     const nameClass = isAgent ? 'msg-sender agent-name' : 'msg-sender';
     const time = formatTime(msg.created_at);
     const content = renderContent(msg);
 
     return `<div class="message ${isSelf ? 'self' : ''}">
-        <div class="${avatarClass}"${avatarStyle}>${avatarContent}</div>
+        <div class="${avatarClass}"${avatarStyle}${avatarOnclick}>${avatarContent}</div>
         <div class="msg-body">
             <div class="msg-header">
                 <span class="${nameClass}">${escHtml(msg.sender_name)}</span>
@@ -1253,20 +1270,25 @@ async function renderMembersPanel() {
     // the group.
     document.getElementById('chatSubtitle').textContent = `${members.length} 名成员`;
 
-    let html = '';
+    // Manage actions go into the panel HEADER (next to the close X), not
+    // into the list body — keeps the list area uncluttered and aligns
+    // affordances with what users expect from a sidebar header.
+    const headerActions = document.getElementById('membersHeaderActions');
     if (canManage) {
-        // Ghost-styled action row: blends with the panel chrome instead
-        // of competing with the chat content. Both actions are equal-
-        // weight (neither is "the" primary action) so neither gets the
-        // solid brand fill.
-        html += `<div class="members-actions">
-            <button class="btn-sm ghost" onclick="showAddMember('${currentChat.id}')" title="添加群成员">${AgentClubUI.iconHTML('user-plus')}添加成员</button>
-            <button class="btn-sm ghost" onclick="openGroupSettings('${currentChat.id}')" title="修改群名称和头像">${AgentClubUI.iconHTML('settings')}群组设置</button>
-        </div>`;
+        headerActions.innerHTML = `
+            <button class="icon-action" onclick="showAddMember('${currentChat.id}')" title="添加成员" aria-label="添加成员">${AgentClubUI.iconHTML('user-plus')}</button>
+            <button class="icon-action" onclick="openGroupSettings('${currentChat.id}')" title="群组设置（修改名称和头像）" aria-label="群组设置">${AgentClubUI.iconHTML('settings')}</button>
+        `;
+    } else {
+        headerActions.innerHTML = '';
     }
+
+    let html = '';
     for (const m of members) {
         const initial = (m.display_name || '?').charAt(0);
-        const avatarClass = m.is_agent ? 'member-avatar agent' : 'member-avatar';
+        // Avatar is clickable to open the profile modal — same affordance
+        // as message author avatars and direct-chat header avatars.
+        const avatarClass = `member-avatar${m.is_agent ? ' agent' : ''} clickable`;
         // Group member presence is intentionally not shown in real time —
         // the panel is a transient view and we don't poll for it. If you
         // need to know whether a specific peer is online right now, open
@@ -1280,16 +1302,16 @@ async function renderMembersPanel() {
         // Feishu all use it) and gives us room to add future operations
         // (mute, promote, …) without further visual clutter. The actual
         // dropdown is the existing #contextMenu element, populated on
-        // click via showMemberMenu().
-        let actionBtn = '';
-        if (canManage && m.id !== group.created_by) {
-            const safeName = escHtml(m.display_name || '');
-            actionBtn = `<button class="icon-btn member-kebab" onclick="showMemberMenu(event,'${currentChat.id}','${m.id}','${safeName.replace(/'/g, "\\'")}')" title="更多" aria-label="更多操作">${AgentClubUI.iconHTML('more-horizontal')}</button>`;
-        }
+        // click via showMemberMenu(). Every row gets a kebab — the
+        // menu's contents (查看信息 always; 移除成员 only when
+        // canManage and not the creator) are decided at click time so
+        // we don't need separate code paths here.
+        const canRemove = canManage && m.id !== group.created_by;
+        const actionBtn = `<button class="icon-btn member-kebab" onclick="showMemberMenu(event,'${currentChat.id}','${m.id}',${canRemove})" title="更多" aria-label="更多操作">${AgentClubUI.iconHTML('more-horizontal')}</button>`;
 
         const memberAvatarStyle = ` style="${AgentClubUI.avatarStyle(m.display_name || m.id)}"`;
         html += `<div class="member-item">
-            <div class="${avatarClass}"${memberAvatarStyle}>${initial}</div>
+            <div class="${avatarClass}"${memberAvatarStyle} onclick="openProfileModal('${m.id}')" title="查看个人信息">${initial}</div>
             <span class="member-name">${escHtml(m.display_name)}</span>
             ${tag}${actionBtn}
         </div>`;
@@ -1299,12 +1321,22 @@ async function renderMembersPanel() {
 
 /* Open the contextMenu dropdown anchored under a member's kebab button.
  * Reuses the same #contextMenu element used by the chat-list right-click
- * menu so we don't duplicate styles or document-click handlers. */
-function showMemberMenu(event, groupId, userId, displayName) {
+ * menu so we don't duplicate styles or document-click handlers.
+ *
+ * The menu has two items today:
+ *   • 查看信息  → opens the read-only profile modal
+ *   • 移除成员  → destructive, gated by canManage at render time
+ * (canManage is implicit — showMemberMenu is only wired into rows whose
+ * kebab was rendered by the manageable branch in renderMembersPanel.) */
+function showMemberMenu(event, groupId, userId, canRemove) {
     event.preventDefault();
     event.stopPropagation();
     const menu = document.getElementById('contextMenu');
-    menu.innerHTML = `<button class="danger" onclick="removeMember('${groupId}','${userId}')">移除成员</button>`;
+    let html = `<button onclick="closeContextMenu();openProfileModal('${userId}')">查看信息</button>`;
+    if (canRemove) {
+        html += `<button class="danger" onclick="removeMember('${groupId}','${userId}')">移除成员</button>`;
+    }
+    menu.innerHTML = html;
     // Position right-aligned below the kebab so the dropdown opens
     // toward the panel's interior (members panel sits on the right edge,
     // a left-anchored menu would clip on narrow viewports).
@@ -1314,6 +1346,10 @@ function showMemberMenu(event, groupId, userId, displayName) {
     const menuW = menu.offsetWidth || 140;
     menu.style.top = (rect.bottom + 4) + 'px';
     menu.style.left = Math.max(8, rect.right - menuW) + 'px';
+}
+
+function closeContextMenu() {
+    document.getElementById('contextMenu').classList.add('hidden');
 }
 
 async function toggleMembers() {
@@ -1689,6 +1725,87 @@ async function startDirectChat(userId, userName, isAgent = false) {
     const chat = await res.json();
     await loadChats();
     openChat('direct', chat.id, userName, isAgent);
+}
+
+/* ── Profile view modal ──
+ * Opened from anywhere a peer's avatar is shown:
+ *   • chat-header avatar in direct chats          (bindHeaderAvatarProfile)
+ *   • message author avatar in any chat           (renderMessage onclick)
+ *   • group members panel kebab → 查看信息       (showMemberMenu)
+ * The "发起私聊" button is hidden when the viewer is looking at their
+ * own profile (you can't 1:1-chat yourself). For agents the button is
+ * still labelled 发起私聊 — same UX as the sidebar "+" picker. */
+let _profileViewState = null; // { id, display_name, is_agent }
+
+async function openProfileModal(userId) {
+    if (!userId) return;
+    let user;
+    try {
+        const res = await fetch(`/api/users/${userId}`);
+        if (!res.ok) { alert('加载用户信息失败'); return; }
+        user = await res.json();
+    } catch (e) {
+        alert('加载用户信息失败');
+        return;
+    }
+    _profileViewState = user;
+
+    // Avatar: same render rules as everywhere else (image if set,
+    // hashed-color initial otherwise).
+    const avatarEl = document.getElementById('profileViewAvatar');
+    if (user.avatar) {
+        avatarEl.innerHTML = `<img src="${escHtml(user.avatar)}">`;
+        avatarEl.style.background = '';
+    } else {
+        const fullName = user.display_name || user.username || '?';
+        avatarEl.textContent = fullName.charAt(0);
+        avatarEl.style.background = AgentClubUI.avatarColor(fullName);
+    }
+    document.getElementById('profileViewName').textContent =
+        user.display_name || user.username || '';
+    document.getElementById('profileViewUsername').textContent =
+        '@' + user.username;
+
+    // Tags: role/agent + online pill. Order matters: identity tags
+    // first, then status. Empty container hides itself via CSS.
+    const tagsEl = document.getElementById('profileViewTags');
+    let tagsHtml = '';
+    if (user.role === 'admin') tagsHtml += '<span class="member-tag admin">管理员</span>';
+    if (user.is_agent) tagsHtml += '<span class="member-tag agent">Agent</span>';
+    if (user.is_online) tagsHtml += '<span class="online-pill">在线</span>';
+    tagsEl.innerHTML = tagsHtml;
+
+    document.getElementById('profileViewDesc').textContent = user.description || '';
+
+    // Hide the "start chat" CTA when viewing self — clicking it would
+    // hit /api/direct-chats with own user_id which the backend would
+    // (rightly) reject.
+    const chatBtn = document.getElementById('profileViewChatBtn');
+    if (user.id === currentUser.id) {
+        chatBtn.classList.add('hidden');
+    } else {
+        chatBtn.classList.remove('hidden');
+    }
+
+    document.getElementById('profileViewModal').classList.remove('hidden');
+}
+
+async function startChatFromProfile() {
+    if (!_profileViewState) return;
+    const u = _profileViewState;
+    closeModal('profileViewModal');
+    // If we're already inside a direct chat with this peer, no need
+    // to reopen — startDirectChat() is idempotent on the server but
+    // the openChat() jump would still be redundant noise.
+    if (currentChat && currentChat.type === 'direct') {
+        const peer = (chats.directs || []).find(c => c.id === currentChat.id);
+        if (peer && peer.peer_id === u.id) {
+            _profileViewState = null;
+            return;
+        }
+    }
+    await startDirectChat(u.id, u.display_name || u.username, !!u.is_agent);
+    _profileViewState = null;
 }
 
 function closeModal(id) {

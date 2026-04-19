@@ -96,7 +96,15 @@
             <div class="members-panel hidden" id="membersPanel">
                 <div class="members-header">
                     <h3>成员</h3>
-                    <button class="icon-btn" onclick="toggleMembers()" data-icon="x" title="关闭"></button>
+                    <div class="members-header-actions">
+                        <!-- Manage actions (添加成员 / 群组设置) injected here
+                             by renderMembersPanel() when the viewer can
+                             manage the group; sitting next to the close X
+                             keeps the row compact and avoids stealing space
+                             from the member list below. -->
+                        <span id="membersHeaderActions"></span>
+                        <button class="icon-btn" onclick="toggleMembers()" data-icon="x" title="关闭"></button>
+                    </div>
                 </div>
                 <div id="membersList"></div>
             </div>
@@ -162,6 +170,33 @@
                 <button class="icon-btn" onclick="closeModal('newChatModal')" data-icon="x" title="关闭"></button>
             </div>
             <div class="modal-body" id="newChatUserList"></div>
+        </div>
+    </div>
+
+    <!-- Profile view modal — read-only "who is this person" card.
+         Opened from: chat-header avatar in direct chats, message author
+         avatars (skipped for self), group members kebab "查看信息" item.
+         Bottom action lets the viewer jump straight into a 1:1 chat
+         with the displayed user. -->
+    <div class="modal hidden" id="profileViewModal">
+        <div class="modal-content modal-sm">
+            <div class="modal-header">
+                <h3>个人信息</h3>
+                <button class="icon-btn" onclick="closeModal('profileViewModal')" data-icon="x" title="关闭"></button>
+            </div>
+            <div class="modal-body">
+                <div class="profile-view">
+                    <div class="profile-avatar" id="profileViewAvatar"></div>
+                    <div class="profile-view-name" id="profileViewName"></div>
+                    <div class="profile-view-username" id="profileViewUsername"></div>
+                    <div class="profile-view-tags" id="profileViewTags"></div>
+                    <div class="profile-view-desc" id="profileViewDesc"></div>
+                </div>
+                <div class="profile-view-actions">
+                    <button class="btn-sm" id="profileViewChatBtn"
+                            onclick="startChatFromProfile()">发起私聊</button>
+                </div>
+            </div>
         </div>
     </div>
 
