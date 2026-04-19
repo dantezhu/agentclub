@@ -120,6 +120,32 @@
         </div>
     </div>
 
+    <!-- Group settings modal (creator/admin only). Same shape as the
+         profile modal so it feels familiar — round avatar with an upload
+         button under it, single name input, full-width save. Triggered
+         from the members panel ("群组设置" button next to "添加成员"). -->
+    <div class="modal hidden" id="groupSettingsModal">
+        <div class="modal-content modal-sm">
+            <div class="modal-header">
+                <h3>群组设置</h3>
+                <button class="icon-btn" onclick="closeModal('groupSettingsModal')">✕</button>
+            </div>
+            <div class="modal-body">
+                <div style="text-align:center;margin-bottom:20px">
+                    <div class="profile-avatar" id="groupSettingsAvatar"></div>
+                    <label class="btn-sm" style="display:inline-block;margin-top:10px;cursor:pointer">
+                        更换头像 <input type="file" accept="image/*" style="display:none" onchange="uploadGroupSettingsAvatar(event)">
+                    </label>
+                </div>
+                <div class="form-group" style="margin-bottom:16px">
+                    <label style="display:block;font-size:13px;color:#555;margin-bottom:6px">群组名称</label>
+                    <input type="text" id="groupSettingsName" style="width:100%;padding:10px 12px;border:1.5px solid #ddd;border-radius:8px;font-size:16px;outline:none">
+                </div>
+                <button class="btn-sm" id="groupSettingsSaveBtn" style="width:100%;padding:10px" onclick="saveGroupSettings()">保存</button>
+            </div>
+        </div>
+    </div>
+
     <!-- New direct chat modal -->
     <div class="modal hidden" id="newChatModal">
         <div class="modal-content modal-sm">

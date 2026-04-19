@@ -283,15 +283,12 @@ async function openChat(type, id, name, isAgent = false) {
         const initial = name.charAt(0);
         avatarEl.innerHTML = group.avatar ? `<img src="${escHtml(group.avatar)}">` : initial;
         avatarEl.classList.remove('hidden');
-        if (group.created_by === currentUser.id) {
-            avatarEl.classList.add('editable');
-            avatarEl.title = '点击修改群头像';
-            avatarEl.onclick = () => uploadGroupAvatar(id);
-        } else {
-            avatarEl.classList.remove('editable');
-            avatarEl.title = '';
-            avatarEl.onclick = null;
-        }
+        // Header avatar is display-only now. Editing (name + avatar) lives
+        // in the members panel's "群组设置" button → groupSettingsModal,
+        // mirroring the profile-settings UX.
+        avatarEl.classList.remove('editable');
+        avatarEl.title = '';
+        avatarEl.onclick = null;
     } else {
         document.getElementById('chatSubtitle').textContent = '';
         document.getElementById('chatMembersBtn').classList.add('hidden');
@@ -1218,7 +1215,10 @@ async function renderMembersPanel() {
 
     let html = '';
     if (canManage) {
-        html += `<div style="padding:8px 12px"><button class="btn-sm" onclick="showAddMember('${currentChat.id}')">+ 添加成员</button></div>`;
+        html += `<div style="padding:8px 12px;display:flex;gap:6px;flex-wrap:wrap">
+            <button class="btn-sm" onclick="showAddMember('${currentChat.id}')">+ 添加成员</button>
+            <button class="btn-sm" onclick="openGroupSettings('${currentChat.id}')" title="修改群名称和头像">⚙ 群组设置</button>
+        </div>`;
     }
     for (const m of members) {
         const initial = (m.display_name || '?').charAt(0);
@@ -1441,32 +1441,105 @@ async function deleteDirectChat(chatId) {
     }
 }
 
-function uploadGroupAvatar(groupId) {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = 'image/*';
-    input.onchange = async (e) => {
-        const file = e.target.files[0];
-        if (!file) return;
-        const formData = new FormData();
-        formData.append('file', file);
-        const res = await fetch('/api/upload', { method: 'POST', body: formData });
-        if (!res.ok) { alert('上传失败'); return; }
-        const data = await res.json();
-        const r2 = await fetch(`/api/groups/${groupId}`, {
+/* ── Group settings modal (rename group + change group avatar) ──
+ * Mirrors the profile-settings flow: avatar upload only mutates a local
+ * staged URL; nothing hits /api/groups until the user clicks Save, which
+ * PUTs name+avatar in one go. The original "click header avatar to
+ * upload" shortcut was removed in favour of this one entry point. */
+let groupSettingsState = null; // { groupId, avatar }
+
+function renderGroupSettingsAvatar() {
+    const el = document.getElementById('groupSettingsAvatar');
+    if (!groupSettingsState) return;
+    if (groupSettingsState.avatar) {
+        el.innerHTML = `<img src="${escHtml(groupSettingsState.avatar)}">`;
+    } else {
+        const seed = (
+            document.getElementById('groupSettingsName').value
+            || groupSettingsState.name
+            || '?'
+        ).charAt(0);
+        el.textContent = seed;
+    }
+}
+
+async function openGroupSettings(groupId) {
+    const res = await fetch(`/api/groups/${groupId}`);
+    if (!res.ok) { alert('加载群组信息失败'); return; }
+    const group = await res.json();
+    groupSettingsState = {
+        groupId,
+        name: group.name || '',
+        avatar: group.avatar || '',
+    };
+    document.getElementById('groupSettingsName').value = group.name || '';
+    renderGroupSettingsAvatar();
+    document.getElementById('groupSettingsModal').classList.remove('hidden');
+}
+
+async function uploadGroupSettingsAvatar(event) {
+    if (!groupSettingsState) return;
+    const file = event.target.files[0];
+    if (!file) return;
+    // Reset the input so the same file can be picked twice in a row.
+    event.target.value = '';
+    const formData = new FormData();
+    formData.append('file', file);
+    const res = await fetch('/api/upload', { method: 'POST', body: formData });
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert(err.error || '上传失败');
+        return;
+    }
+    const data = await res.json();
+    groupSettingsState.avatar = data.url;
+    renderGroupSettingsAvatar();
+}
+
+async function saveGroupSettings() {
+    if (!groupSettingsState) return;
+    const name = document.getElementById('groupSettingsName').value.trim();
+    if (!name) { alert('群组名称不能为空'); return; }
+    const btn = document.getElementById('groupSettingsSaveBtn');
+    btn.disabled = true;
+    const original = btn.textContent;
+    btn.textContent = '保存中…';
+    try {
+        const res = await fetch(`/api/groups/${groupSettingsState.groupId}`, {
             method: 'PUT',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ avatar: data.url }),
+            body: JSON.stringify({
+                name,
+                avatar: groupSettingsState.avatar,
+            }),
         });
-        if (r2.ok) {
-            document.getElementById('chatHeaderAvatar').innerHTML = `<img src="${escHtml(data.url)}">`;
-            loadChats();
-        } else {
-            const err = await r2.json();
-            alert(err.error || '修改失败');
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            alert(err.error || '保存失败');
+            return;
         }
-    };
-    input.click();
+        const group = await res.json();
+        // Refresh header (title + avatar) and the sidebar chat list so the
+        // change is visible immediately. If the user is still looking at
+        // this group, also refresh the title text shown in the header.
+        if (currentChat && currentChat.type === 'group' && currentChat.id === group.id) {
+            currentChat.name = group.name;
+            const titleEl = document.getElementById('chatTitle');
+            if (titleEl) titleEl.textContent = group.name;
+            const avatarEl = document.getElementById('chatHeaderAvatar');
+            if (avatarEl) {
+                avatarEl.innerHTML = group.avatar
+                    ? `<img src="${escHtml(group.avatar)}">`
+                    : (group.name || '?').charAt(0);
+            }
+        }
+        closeModal('groupSettingsModal');
+        groupSettingsState = null;
+        loadChats();
+    } finally {
+        btn.disabled = false;
+        btn.textContent = original;
+    }
 }
 
 async function showCreateGroupModal() {

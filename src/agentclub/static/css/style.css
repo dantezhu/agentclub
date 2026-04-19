@@ -224,7 +224,6 @@ button, .icon-btn, .chat-item, .member-item {
     flex-shrink: 0;
     overflow: hidden;
 }
-.chat-header-avatar.editable { cursor: pointer; }
 .chat-header-avatar img {
     width: 100%;
     height: 100%;
