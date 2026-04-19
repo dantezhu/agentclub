@@ -121,7 +121,7 @@
             <div class="modal-body">
                 <div style="text-align:center;margin-bottom:20px">
                     <div class="profile-avatar" id="profileAvatar"></div>
-                    <label class="btn-sm" style="display:inline-block;margin-top:10px;cursor:pointer">
+                    <label class="btn-sm ghost" style="display:inline-block;margin-top:10px;cursor:pointer">
                         更换头像 <input type="file" accept="image/*" style="display:none" onchange="uploadAvatar(event)">
                     </label>
                 </div>
@@ -149,13 +149,17 @@
             <div class="modal-body">
                 <div style="text-align:center;margin-bottom:20px">
                     <div class="profile-avatar" id="groupSettingsAvatar"></div>
-                    <label class="btn-sm" style="display:inline-block;margin-top:10px;cursor:pointer">
+                    <label class="btn-sm ghost" style="display:inline-block;margin-top:10px;cursor:pointer">
                         更换头像 <input type="file" accept="image/*" style="display:none" onchange="uploadGroupSettingsAvatar(event)">
                     </label>
                 </div>
                 <div class="form-group" style="margin-bottom:16px">
                     <label style="display:block;font-size:13px;color:#555;margin-bottom:6px">群组名称</label>
                     <input type="text" id="groupSettingsName" placeholder="例如：产品讨论组" style="width:100%;padding:10px 12px;border:1.5px solid #ddd;border-radius:8px;font-size:16px;outline:none">
+                </div>
+                <div class="form-group" style="margin-bottom:16px">
+                    <label style="display:block;font-size:13px;color:#555;margin-bottom:6px">群组描述（选填）</label>
+                    <input type="text" id="groupSettingsDescription" maxlength="200" placeholder="一句话介绍这个群" style="width:100%;padding:10px 12px;border:1.5px solid #ddd;border-radius:8px;font-size:16px;outline:none">
                 </div>
                 <button class="btn-sm" id="groupSettingsSaveBtn" style="width:100%;padding:10px" onclick="saveGroupSettings()">保存</button>
             </div>
@@ -195,6 +199,30 @@
                 <div class="profile-view-actions">
                     <button class="btn-sm" id="profileViewChatBtn"
                             onclick="startChatFromProfile()">发起私聊</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Group info modal — read-only "what is this group" card. Opened
+         by clicking the group chat-header avatar. Reuses the same
+         .profile-view styles as the user profile modal so the two
+         info cards (人/群) feel like siblings. No bottom CTA — group
+         management still lives in the members panel ("群组设置" / 添加
+         成员), this is purely informational. -->
+    <div class="modal hidden" id="groupInfoModal">
+        <div class="modal-content modal-sm">
+            <div class="modal-header">
+                <h3>群组信息</h3>
+                <button class="icon-btn" onclick="closeModal('groupInfoModal')" data-icon="x" title="关闭"></button>
+            </div>
+            <div class="modal-body">
+                <div class="profile-view">
+                    <div class="profile-avatar" id="groupInfoAvatar"></div>
+                    <div class="profile-view-name" id="groupInfoName"></div>
+                    <div class="profile-view-tags" id="groupInfoTags"></div>
+                    <div class="profile-view-desc" id="groupInfoDesc"></div>
+                    <div class="profile-view-meta" id="groupInfoMeta"></div>
                 </div>
             </div>
         </div>

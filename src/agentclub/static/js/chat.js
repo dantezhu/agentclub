@@ -286,14 +286,14 @@ async function openChat(type, id, name, isAgent = false) {
         avatarEl.innerHTML = group.avatar ? `<img src="${escHtml(group.avatar)}">` : initial;
         avatarEl.style.background = group.avatar ? '' : AgentClubUI.avatarColor(name);
         avatarEl.classList.remove('hidden');
-        // Header avatar is display-only now. Editing (name + avatar) lives
-        // in the members panel's "群组设置" button → groupSettingsModal,
-        // mirroring the profile-settings UX. Also strip .clickable in
-        // case we just came from a direct-chat header where it was set.
+        // Header avatar opens the read-only group-info modal — symmetric
+        // to clicking a peer's avatar in a direct chat. Editing still
+        // lives behind the members-panel "群组设置" button so we don't
+        // overload this affordance with two different actions.
         avatarEl.classList.remove('editable');
-        avatarEl.classList.remove('clickable');
-        avatarEl.title = '';
-        avatarEl.onclick = null;
+        avatarEl.classList.add('clickable');
+        avatarEl.title = '查看群组信息';
+        avatarEl.onclick = () => openGroupInfoModal(id);
     } else {
         // For direct chats we surface the peer's avatar + (for agents)
         // their description. Both come from chats.directs which the
@@ -1585,10 +1585,12 @@ async function openGroupSettings(groupId) {
         groupId,
         name: group.name || '',
         avatar: group.avatar || '',
+        description: group.description || '',
     };
     document.getElementById('groupSettingsTitle').textContent = '群组设置';
     document.getElementById('groupSettingsSaveBtn').textContent = '保存';
     document.getElementById('groupSettingsName').value = group.name || '';
+    document.getElementById('groupSettingsDescription').value = group.description || '';
     renderGroupSettingsAvatar();
     document.getElementById('groupSettingsModal').classList.remove('hidden');
     // Defer focus until after the modal is painted so the input actually
@@ -1619,6 +1621,7 @@ async function saveGroupSettings() {
     if (!groupSettingsState) return;
     const name = document.getElementById('groupSettingsName').value.trim();
     if (!name) { alert('群组名称不能为空'); return; }
+    const description = document.getElementById('groupSettingsDescription').value.trim();
     const isCreate = !groupSettingsState.groupId;
     const btn = document.getElementById('groupSettingsSaveBtn');
     btn.disabled = true;
@@ -1635,6 +1638,7 @@ async function saveGroupSettings() {
             body: JSON.stringify({
                 name,
                 avatar: groupSettingsState.avatar,
+                description,
             }),
         });
         if (!res.ok) {
@@ -1685,10 +1689,11 @@ async function showCreateGroupModal() {
     // Reuse groupSettingsModal with groupId=null → save handler treats
     // this as a POST (create) instead of PUT (edit). Same UX shape as
     // editing, just different endpoint.
-    groupSettingsState = { groupId: null, name: '', avatar: '' };
+    groupSettingsState = { groupId: null, name: '', avatar: '', description: '' };
     document.getElementById('groupSettingsTitle').textContent = '创建群组';
     document.getElementById('groupSettingsSaveBtn').textContent = '创建';
     document.getElementById('groupSettingsName').value = '';
+    document.getElementById('groupSettingsDescription').value = '';
     renderGroupSettingsAvatar();
     document.getElementById('groupSettingsModal').classList.remove('hidden');
     setTimeout(() => document.getElementById('groupSettingsName').focus(), 0);
@@ -1790,6 +1795,63 @@ async function openProfileModal(userId) {
     document.getElementById('profileViewModal').classList.remove('hidden');
 }
 
+/* Open the read-only group-info modal for a given group id. Mirrors
+ * openProfileModal()'s shape (fetch → populate → show) so the two
+ * info cards stay symmetric. The endpoint returns the group row plus
+ * member_count and created_by_name — see _group_with_meta() in
+ * routes.py. */
+async function openGroupInfoModal(groupId) {
+    if (!groupId) return;
+    let group;
+    try {
+        const res = await fetch(`/api/groups/${groupId}`);
+        if (!res.ok) { alert('加载群组信息失败'); return; }
+        group = await res.json();
+    } catch (e) {
+        alert('加载群组信息失败');
+        return;
+    }
+    const name = group.name || '';
+    const avatarEl = document.getElementById('groupInfoAvatar');
+    if (group.avatar) {
+        avatarEl.innerHTML = `<img src="${escHtml(group.avatar)}">`;
+        avatarEl.style.background = '';
+    } else {
+        avatarEl.textContent = (name || '?').charAt(0);
+        avatarEl.style.background = AgentClubUI.avatarColor(name || group.id);
+    }
+    document.getElementById('groupInfoName').textContent = name;
+
+    // Single "群组" tag — keeps visual parity with the profile card,
+    // which has role/agent/online tags. We deliberately don't surface
+    // member_count here; it has its own meta row below.
+    document.getElementById('groupInfoTags').innerHTML =
+        '<span class="member-tag agent">群组</span>';
+
+    document.getElementById('groupInfoDesc').textContent = group.description || '';
+
+    // Meta as a single horizontal "·"-separated line (creator · member
+    // count · created time). Reads like a card subtitle rather than a
+    // settings table; only items with data are included. Wraps on
+    // narrow screens via flex-wrap in CSS.
+    const metaEl = document.getElementById('groupInfoMeta');
+    const items = [];
+    if (group.created_by_name) {
+        items.push(`创建者 <strong>${escHtml(group.created_by_name)}</strong>`);
+    }
+    if (typeof group.member_count === 'number') {
+        items.push(`<strong>${group.member_count}</strong> 名成员`);
+    }
+    if (group.created_at) {
+        items.push(`创建于 ${escHtml(formatDateTime(group.created_at))}`);
+    }
+    metaEl.innerHTML = items
+        .map(s => `<span>${s}</span>`)
+        .join('<span class="meta-sep">·</span>');
+
+    document.getElementById('groupInfoModal').classList.remove('hidden');
+}
+
 async function startChatFromProfile() {
     if (!_profileViewState) return;
     const u = _profileViewState;
@@ -1850,6 +1912,18 @@ function formatTime(ts) {
     if (d.toDateString() === now.toDateString()) return time;
     if (d.getFullYear() === now.getFullYear()) return `${d.getMonth() + 1}/${d.getDate()} ${time}`;
     return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${time}`;
+}
+
+/* Absolute date-time used by info cards (group info, future user info)
+ * where "yesterday 14:30"-style relative formats are confusing — the
+ * caller wants to know exactly when. Always YYYY-MM-DD HH:MM, no
+ * locale-dependent slashes. Kept separate from formatTime() because
+ * message timestamps still want the relative collapse. */
+function formatDateTime(ts) {
+    const d = new Date(ts * 1000);
+    const pad = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} `
+         + `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 function previewText(msg) {

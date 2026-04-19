@@ -180,9 +180,13 @@ def update_group(group_id):
         updates["name"] = data["name"].strip()
     if "avatar" in data:
         updates["avatar"] = data["avatar"]
+    if "description" in data:
+        # Allow clearing the description by sending an empty string —
+        # explicit None / missing key keeps the existing value.
+        updates["description"] = (data.get("description") or "").strip()
     if updates:
         models.update_group(group_id, **updates)
-    return jsonify(models.get_group(group_id))
+    return jsonify(_group_with_meta(group_id))
 
 
 # ── Agent management (admin only) ──
@@ -245,9 +249,14 @@ def create_group():
     if not name:
         return jsonify({"error": "群组名不能为空"}), 400
 
-    gid = models.create_group(name, request.current_user["id"], data.get("avatar", ""))
-    group = models.get_group(gid)
-    return jsonify(group), 201
+    description = (data.get("description") or "").strip()
+    gid = models.create_group(
+        name,
+        request.current_user["id"],
+        data.get("avatar", ""),
+        description,
+    )
+    return jsonify(_group_with_meta(gid)), 201
 
 
 @api.route("/api/groups")
@@ -259,10 +268,29 @@ def list_groups():
 @api.route("/api/groups/<group_id>")
 @login_required
 def get_group(group_id):
-    group = models.get_group(group_id)
+    group = _group_with_meta(group_id)
     if not group:
         return jsonify({"error": "群组不存在"}), 404
     return jsonify(group)
+
+
+def _group_with_meta(group_id):
+    """Return the group dict enriched with display-time metadata used by
+    the chat-header group-info modal: ``member_count`` and the creator's
+    ``created_by_name``. The base columns (id, name, avatar,
+    description, created_by, created_at) come straight from the row.
+    Returns ``None`` if the group doesn't exist.
+    """
+    group = models.get_group(group_id)
+    if not group:
+        return None
+    members = models.get_group_members(group_id)
+    group["member_count"] = len(members)
+    creator = models.get_user_by_id(group["created_by"])
+    group["created_by_name"] = (
+        creator["display_name"] if creator else group["created_by"]
+    )
+    return group
 
 
 @api.route("/api/groups/<group_id>/members")

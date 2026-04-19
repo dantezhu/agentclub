@@ -899,26 +899,37 @@ button, .icon-btn, .chat-item, .member-item {
     flex-direction: column;
     align-items: center;
     text-align: center;
-    padding: 4px 0 20px;
+    padding: 8px 8px 20px;
 }
-.profile-view .profile-avatar { margin-bottom: 14px; }
+/* Bigger, ringed avatar — gives the card a clear "hero" focal point.
+ * The thin outer ring works on both image and initial avatars without
+ * competing with the avatar's own background color. */
+.profile-view .profile-avatar {
+    width: 88px;
+    height: 88px;
+    margin-bottom: 16px;
+    box-shadow: 0 0 0 4px #fff, 0 0 0 5px #eef0f3;
+    font-size: 30px;
+}
 .profile-view-name {
-    font-size: 18px;
+    font-size: 20px;
     font-weight: 600;
     color: var(--color-text);
-    line-height: 1.2;
+    line-height: 1.25;
+    word-break: break-word;
 }
 .profile-view-username {
     font-size: 13px;
-    color: #999;
+    color: #9aa0a6;
     margin-top: 4px;
 }
+.profile-view-username:empty { display: none; }
 .profile-view-tags {
     display: flex;
     gap: 6px;
     flex-wrap: wrap;
     justify-content: center;
-    margin-top: 10px;
+    margin-top: 12px;
 }
 .profile-view-tags:empty { display: none; }
 .profile-view-tags .member-tag { font-size: 11px; padding: 2px 8px; }
@@ -939,22 +950,43 @@ button, .icon-btn, .chat-item, .member-item {
     width: 6px; height: 6px; border-radius: 50%;
     background: #2ed573;
 }
+/* Description: no boxed background — that read like a code block at
+ * 13px and made the card feel cluttered. Now it's centered prose
+ * with comfortable line-height, capped width to keep lines short. */
 .profile-view-desc {
-    font-size: 13px;
-    color: #555;
-    line-height: 1.5;
-    margin-top: 14px;
-    padding: 10px 14px;
-    background: #f6f8fa;
-    border-radius: 8px;
-    width: 100%;
+    font-size: 14px;
+    color: #4a4a55;
+    line-height: 1.6;
+    margin-top: 16px;
+    max-width: 320px;
     word-break: break-word;
-    text-align: left;
+    text-align: center;
 }
 .profile-view-desc:empty { display: none; }
+/* Group info meta — single horizontal row with " · " separators
+ * (rendered as inline <span class="meta-sep">). Replaces the earlier
+ * key/value table layout, which read like a settings page rather than
+ * a card. Centered, gray, wraps gracefully on narrow screens. */
+.profile-view-meta {
+    margin-top: 14px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 6px 8px;
+    font-size: 12px;
+    color: #8a8f97;
+}
+.profile-view-meta:empty { display: none; }
+.profile-view-meta strong {
+    color: #4a4a55;
+    font-weight: 600;
+}
+.profile-view-meta .meta-sep { color: #d0d4d9; }
 .profile-view-actions {
     border-top: 1px solid #f0f0f0;
     padding-top: 14px;
+    margin-top: 18px;
 }
 .profile-view-actions .btn-sm {
     width: 100%;

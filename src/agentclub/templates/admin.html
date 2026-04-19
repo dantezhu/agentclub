@@ -113,6 +113,21 @@
         .btn:hover { opacity: 0.9; }
         .btn.danger { background: #ff4757; }
         .btn.sm { padding: 6px 14px; font-size: 13px; }
+        /* Ghost variant — secondary actions (e.g. 更换头像 in the agent
+         * edit modal) so the form's primary CTA (.modal-save) keeps its
+         * solid blue without competing for the eye. Mirrors .btn-sm.ghost
+         * in style.css; the admin page just doesn't share that file. */
+        .btn.ghost {
+            background: #fff;
+            color: #4a4a55;
+            border: 1px solid #e1e4e8;
+        }
+        .btn.ghost:hover {
+            background: #f6f8fa;
+            border-color: #d0d4d9;
+            color: #1a1a1a;
+            opacity: 1;
+        }
         .agent-item {
             display: flex;
             align-items: center;
@@ -422,7 +437,7 @@
                 <div class="modal-avatar-row">
                     <div class="modal-avatar" id="editAgentAvatar"></div>
                     <div>
-                        <label class="btn sm" style="cursor:pointer">
+                        <label class="btn sm ghost" style="cursor:pointer">
                             更换头像
                             <input type="file" accept="image/*" style="display:none"
                                    onchange="uploadEditAgentAvatar(event)">

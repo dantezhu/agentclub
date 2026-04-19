@@ -38,6 +38,10 @@ CREATE TABLE IF NOT EXISTS groups (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     avatar TEXT DEFAULT '',
+    -- Optional one-line "what's this group for". Surfaced in the group
+    -- settings modal (creator-editable) and the read-only group-info
+    -- card opened from the chat-header avatar.
+    description TEXT DEFAULT '',
     created_by TEXT NOT NULL REFERENCES users(id),
     created_at REAL NOT NULL
 );
@@ -156,6 +160,18 @@ def init_db():
     with get_db_ctx() as db:
         db.executescript(SCHEMA)
         _migrate_user_columns(db)
+        _migrate_group_columns(db)
+
+
+def _migrate_group_columns(db):
+    """Bring an existing ``groups`` table up to the current schema.
+
+    Currently just adds the optional ``description`` column when missing
+    (added after 0.1.10). Guarded so it's safe on every startup.
+    """
+    cols = {r["name"] for r in db.execute("PRAGMA table_info(groups)").fetchall()}
+    if "description" not in cols:
+        db.execute("ALTER TABLE groups ADD COLUMN description TEXT DEFAULT ''")
 
 
 def _migrate_user_columns(db):
@@ -434,13 +450,14 @@ def update_user(user_id, **kwargs):
 
 # ── Group operations ──
 
-def create_group(name, created_by, avatar=""):
+def create_group(name, created_by, avatar="", description=""):
     gid = new_id()
     ts = now()
     with get_db_ctx() as db:
         db.execute(
-            "INSERT INTO groups (id, name, avatar, created_by, created_at) VALUES (?, ?, ?, ?, ?)",
-            (gid, name, avatar, created_by, ts),
+            "INSERT INTO groups (id, name, avatar, description, created_by, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (gid, name, avatar, description, created_by, ts),
         )
         db.execute(
             "INSERT INTO group_members (group_id, user_id, joined_at) VALUES (?, ?, ?)",
@@ -470,7 +487,7 @@ def remove_group_member(group_id, user_id):
 
 
 def update_group(group_id, **kwargs):
-    allowed = {"name", "avatar"}
+    allowed = {"name", "avatar", "description"}
     fields = {k: v for k, v in kwargs.items() if k in allowed}
     if not fields:
         return
