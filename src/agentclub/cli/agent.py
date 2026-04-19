@@ -4,13 +4,14 @@ Scope:
 
     agent create <name> [--display-name NAME]   # prints token ONCE
     agent list                                   # no token column
+    agent edit <name> [--display-name NAME]      # editable fields only
     agent reset-token <name>                    # prints new token ONCE
     agent delete <name> [--yes]                  # hard delete, with footprint
 
-``delete`` mirrors the admin web UI's "delete agent" button: the agent
-row, every message it sent, every direct chat it participated in, and
-every group it created are physically removed. Use ``--yes`` to skip the
-confirmation prompt (handy for scripted teardowns).
+``edit`` and ``delete`` mirror the admin web UI's buttons. ``edit``
+currently exposes only ``--display-name`` because that's the only field
+the web UI lets admins change inline; ``--username`` (rename) and
+``--avatar`` are deliberately omitted until there's a real need.
 
 Tokens are always shown **once** on the command that mints them, never
 on ``list``. Losing a token → ``reset-token``.
@@ -103,6 +104,42 @@ def agent_list(data_dir_flag):
     click.echo(fmt.format(*("-" * w for w in widths)))
     for row in rows:
         click.echo(fmt.format(*row))
+
+
+@agent_group.command("edit", help="Edit an agent's editable fields.")
+@click.argument("name")
+@click.option("--data-dir", "data_dir_flag", type=click.Path(),
+              help="Data directory. Defaults to $AGENTCLUB_HOME or "
+                   "~/.agentclub.")
+@click.option("--display-name", "display_name", default=None,
+              help="New display name shown in the UI. Use empty string is "
+                   "rejected; pass a real value or omit the flag.")
+def agent_edit(name, data_dir_flag, display_name):
+    bootstrap(data_dir_flag, require_exists=True)
+    from .. import models
+
+    agent = models.get_user_by_username(name)
+    if not agent or not agent["is_agent"]:
+        raise click.ClickException(f"Agent '{name}' not found.")
+
+    updates = {}
+    if display_name is not None:
+        new_display = display_name.strip()
+        if not new_display:
+            raise click.ClickException("--display-name cannot be empty.")
+        updates["display_name"] = new_display
+
+    if not updates:
+        raise click.ClickException(
+            "Nothing to update. Pass at least one of: --display-name."
+        )
+
+    models.update_user(agent["id"], **updates)
+
+    echo_header(f"✓ Agent '{name}' updated")
+    if "display_name" in updates:
+        click.echo(f"  display  : {agent['display_name']} "
+                   f"→ {click.style(updates['display_name'], fg='green')}")
 
 
 @agent_group.command("reset-token", help="Regenerate an agent's token.")

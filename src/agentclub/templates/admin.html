@@ -132,6 +132,91 @@
         }
         .empty { color: #999; font-size: 13px; padding: 8px 0; }
 
+        /* Edit-agent modal: same shape as the chat-side "个人设置" modal so
+           admins get a familiar pattern (centered overlay, large round
+           avatar with an upload button under it, single name input,
+           full-width save button). Hidden by default; .visible swaps it on. */
+        .modal-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.4);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 999;
+            padding: 16px;
+        }
+        .modal-overlay.visible { display: flex; }
+        .modal-box {
+            background: #fff;
+            border-radius: 12px;
+            width: 100%;
+            max-width: 420px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+            overflow: hidden;
+        }
+        .modal-head {
+            padding: 14px 20px;
+            border-bottom: 1px solid #eee;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .modal-head h3 { font-size: 15px; color: #333; }
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 18px;
+            color: #999;
+            cursor: pointer;
+            line-height: 1;
+        }
+        .modal-body { padding: 20px; }
+        .modal-avatar-row { text-align: center; margin-bottom: 20px; }
+        .modal-avatar {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #f093fb, #f5576c);
+            color: #fff;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 32px;
+            font-weight: 600;
+            overflow: hidden;
+            margin-bottom: 10px;
+        }
+        .modal-avatar img { width: 100%; height: 100%; object-fit: cover; }
+        .modal-field { margin-bottom: 16px; }
+        .modal-field label {
+            display: block;
+            font-size: 13px;
+            color: #555;
+            margin-bottom: 6px;
+        }
+        .modal-field input {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1.5px solid #ddd;
+            border-radius: 8px;
+            font-size: 16px;
+            outline: none;
+        }
+        .modal-field input:focus { border-color: #667eea; }
+        .modal-save {
+            width: 100%;
+            padding: 11px;
+            background: #667eea;
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            cursor: pointer;
+        }
+        .modal-save:hover { opacity: 0.9; }
+        .modal-save:disabled { opacity: 0.5; cursor: not-allowed; }
+
         @media (max-width: 640px) {
             .topbar { padding: 12px 16px; }
             .topbar h1 { font-size: 16px; }
@@ -167,8 +252,52 @@
         </div>
     </div>
 
+    <!-- Edit-agent modal: identical shape to chat.html's "个人设置" so admins
+         get a familiar pattern. Holds avatar + display_name; one Save click
+         PUTs both at once. -->
+    <div class="modal-overlay" id="editAgentModal">
+        <div class="modal-box">
+            <div class="modal-head">
+                <h3>编辑 Agent</h3>
+                <button class="modal-close" onclick="closeEditAgent()">✕</button>
+            </div>
+            <div class="modal-body">
+                <div class="modal-avatar-row">
+                    <div class="modal-avatar" id="editAgentAvatar"></div>
+                    <div>
+                        <label class="btn sm" style="cursor:pointer">
+                            更换头像
+                            <input type="file" accept="image/*" style="display:none"
+                                   onchange="uploadEditAgentAvatar(event)">
+                        </label>
+                    </div>
+                </div>
+                <div class="modal-field">
+                    <label>用户名</label>
+                    <input type="text" id="editAgentUsername" disabled
+                           style="background:#f8f9fa;color:#999">
+                </div>
+                <div class="modal-field">
+                    <label>显示名称</label>
+                    <input type="text" id="editAgentDisplayName">
+                </div>
+                <button class="modal-save" id="editAgentSaveBtn"
+                        onclick="saveEditAgent()">保存</button>
+            </div>
+        </div>
+    </div>
+
     <script>
     let currentUser = null;
+    // Cache of the most recent /api/agents response. Indexed lookups
+    // (editAgent etc.) read from here instead of round-tripping through
+    // onclick string args, so display_name/avatar can contain anything
+    // without HTML-injection worry.
+    let agentsById = {};
+    // Pending edit-modal state. avatar starts equal to the agent's current
+    // value and only mutates after a successful upload.
+    let editingAgent = null;
+    let editingAvatar = '';
 
     async function init() {
         const res = await fetch('/api/me');
@@ -184,6 +313,8 @@
     async function loadAgents() {
         const res = await fetch('/api/agents');
         const agents = await res.json();
+        agentsById = {};
+        for (const a of agents) agentsById[a.id] = a;
         if (!agents.length) {
             document.getElementById('agentList').innerHTML = '<div class="empty">暂无 Agent</div>';
             return;
@@ -196,11 +327,12 @@
                 ? `<img src="${esc(a.avatar)}">`
                 : initial;
             html += `<div class="agent-item">
-                <div class="agent-avatar" onclick="changeAgentAvatar('${a.id}')" title="点击更换头像">${avatar}</div>
+                <div class="agent-avatar">${avatar}</div>
                 <div class="agent-info">
                     <div class="name">${dot}${esc(a.display_name)} <span style="color:#999;font-weight:400">(${esc(a.username)})</span></div>
                     <div class="token">Token: ${esc(a.agent_token)}</div>
                 </div>
+                <button class="btn sm" onclick="editAgent('${a.id}')">编辑</button>
                 <button class="btn sm danger" onclick="deleteAgent('${a.id}','${esc(a.display_name)}')">删除</button>
             </div>`;
         }
@@ -270,26 +402,82 @@
         }
     }
 
-    async function changeAgentAvatar(agentId) {
-        const input = document.createElement('input');
-        input.type = 'file';
-        input.accept = 'image/*';
-        input.onchange = async (e) => {
-            const file = e.target.files[0];
-            if (!file) return;
-            const formData = new FormData();
-            formData.append('file', file);
-            const res = await fetch('/api/upload', { method: 'POST', body: formData });
-            if (!res.ok) return;
-            const data = await res.json();
-            await fetch(`/api/agents/${agentId}`, {
+    function renderEditAgentAvatar() {
+        const el = document.getElementById('editAgentAvatar');
+        if (editingAvatar) {
+            el.innerHTML = `<img src="${esc(editingAvatar)}">`;
+        } else {
+            const initial = (
+                document.getElementById('editAgentDisplayName').value
+                || editingAgent?.display_name
+                || '?'
+            ).charAt(0);
+            el.textContent = initial;
+        }
+    }
+
+    function editAgent(agentId) {
+        const a = agentsById[agentId];
+        if (!a) return;
+        editingAgent = a;
+        editingAvatar = a.avatar || '';
+        document.getElementById('editAgentUsername').value = a.username;
+        document.getElementById('editAgentDisplayName').value = a.display_name || '';
+        renderEditAgentAvatar();
+        document.getElementById('editAgentModal').classList.add('visible');
+    }
+
+    function closeEditAgent() {
+        document.getElementById('editAgentModal').classList.remove('visible');
+        editingAgent = null;
+        editingAvatar = '';
+    }
+
+    async function uploadEditAgentAvatar(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+        // Reset input so picking the same file twice still fires onchange.
+        event.target.value = '';
+        const formData = new FormData();
+        formData.append('file', file);
+        const res = await fetch('/api/upload', { method: 'POST', body: formData });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            alert(err.error || '上传失败');
+            return;
+        }
+        const data = await res.json();
+        editingAvatar = data.url;
+        renderEditAgentAvatar();
+    }
+
+    async function saveEditAgent() {
+        if (!editingAgent) return;
+        const displayName = document.getElementById('editAgentDisplayName').value.trim();
+        if (!displayName) { alert('显示名称不能为空'); return; }
+        const btn = document.getElementById('editAgentSaveBtn');
+        btn.disabled = true;
+        btn.textContent = '保存中…';
+        try {
+            const res = await fetch(`/api/agents/${editingAgent.id}`, {
                 method: 'PUT',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ avatar: data.url }),
+                body: JSON.stringify({
+                    display_name: displayName,
+                    avatar: editingAvatar,
+                }),
             });
-            loadAgents();
-        };
-        input.click();
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                alert(err.error || '保存失败');
+                return;
+            }
+            closeEditAgent();
+            await loadAgents();
+        } finally {
+            btn.disabled = false;
+            btn.textContent = '保存';
+        }
     }
 
     async function deleteAgent(agentId, name) {
