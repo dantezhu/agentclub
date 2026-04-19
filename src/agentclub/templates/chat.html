@@ -59,6 +59,14 @@
                         <h3 id="chatTitle"></h3>
                         <span id="chatSubtitle" class="subtitle"></span>
                     </div>
+                    <!-- Chat actions kebab. Sits to the left of the members
+                         button for groups, and is the only header action for
+                         direct chats (where the members button is hidden).
+                         Replaces the desktop-only right-click context menu
+                         on mobile, where there is no rightclick. Items are
+                         decided at click time: direct=删除会话; group member=
+                         退出群组; group creator=群组设置 + 解散群组. -->
+                    <button class="icon-btn hidden" id="chatActionsBtn" onclick="showChatActionsMenu(event)" title="更多" aria-label="更多操作" data-icon="more-horizontal"></button>
                     <button class="icon-btn" id="chatMembersBtn" onclick="toggleMembers()" title="成员" data-icon="users"></button>
                 </div>
 

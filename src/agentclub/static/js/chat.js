@@ -281,6 +281,11 @@ async function openChat(type, id, name, isAgent = false) {
         ]);
         document.getElementById('chatSubtitle').textContent = `${members.length} 名成员`;
         document.getElementById('chatMembersBtn').classList.remove('hidden');
+        document.getElementById('chatActionsBtn').classList.remove('hidden');
+        // Stash creator so showChatActionsMenu() can decide between
+        // creator items (群组设置 + 解散群组) and member items (退出群组)
+        // without re-fetching /api/groups on every menu open.
+        currentChat.created_by = group.created_by;
 
         const initial = name.charAt(0);
         avatarEl.innerHTML = group.avatar ? `<img src="${escHtml(group.avatar)}">` : initial;
@@ -310,6 +315,7 @@ async function openChat(type, id, name, isAgent = false) {
         }
         document.getElementById('chatSubtitle').textContent = subtitle;
         document.getElementById('chatMembersBtn').classList.add('hidden');
+        document.getElementById('chatActionsBtn').classList.remove('hidden');
         // Render the peer avatar in the same slot the group avatar uses
         // so the header layout stays consistent across chat types.
         // Click opens the profile modal — no edit affordance, the peer
@@ -1276,14 +1282,16 @@ async function renderMembersPanel() {
     // the group.
     document.getElementById('chatSubtitle').textContent = `${members.length} 名成员`;
 
-    // Manage actions go into the panel HEADER (next to the close X), not
-    // into the list body — keeps the list area uncluttered and aligns
-    // affordances with what users expect from a sidebar header.
+    // Members-panel header only carries "添加成员" — it's the one action
+    // that's about *the member list itself*. 群组设置 / 退出群组 / 解散
+    // 群组 are about *the chat*, so they live in the chat header's kebab
+    // (#chatActionsBtn) instead. Splitting by responsibility keeps each
+    // surface uncluttered and gives mobile users a tappable entry point
+    // without right-click.
     const headerActions = document.getElementById('membersHeaderActions');
     if (canManage) {
         headerActions.innerHTML = `
             <button class="icon-action" onclick="showAddMember('${currentChat.id}')" title="添加成员" aria-label="添加成员">${AgentClubUI.iconHTML('user-plus')}</button>
-            <button class="icon-action" onclick="openGroupSettings('${currentChat.id}')" title="群组设置（修改名称和头像）" aria-label="群组设置">${AgentClubUI.iconHTML('settings')}</button>
         `;
     } else {
         headerActions.innerHTML = '';
@@ -1510,6 +1518,55 @@ async function saveProfile() {
     } else {
         alert('保存失败');
     }
+}
+
+/* Chat-header kebab → dropdown for the *currently open* chat. Mirrors
+ * showChatMenu (which is bound to right-click on sidebar rows) so mobile
+ * users — who have no right-click — can still reach 删除会话 / 退出群组
+ * / 群组设置 / 解散群组. Items are decided here at click time based on
+ * currentChat:
+ *
+ *   direct                         → 删除会话
+ *   group, regular member          → 退出群组
+ *   group, creator (or admin)      → 群组设置 + 解散群组
+ *
+ * Reuses the same #contextMenu element used by sidebar right-click and
+ * member kebab dropdowns, so a single document-click handler dismisses
+ * all of them. */
+function showChatActionsMenu(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!currentChat) return;
+    const menu = document.getElementById('contextMenu');
+    let html = '';
+    if (currentChat.type === 'direct') {
+        html = `<button class="danger" onclick="deleteDirectChat('${currentChat.id}')">删除会话</button>`;
+    } else if (currentChat.type === 'group') {
+        const isCreator = currentChat.created_by === currentUser.id;
+        const canManage = isCreator || currentUser.role === 'admin';
+        if (canManage) {
+            html += `<button onclick="closeContextMenu();openGroupSettings('${currentChat.id}')">群组设置</button>`;
+        }
+        if (isCreator) {
+            html += `<button class="danger" onclick="dissolveGroup('${currentChat.id}')">解散群组</button>`;
+        } else {
+            html += `<button class="danger" onclick="leaveGroup('${currentChat.id}')">退出群组</button>`;
+        }
+    }
+    menu.innerHTML = html;
+    // Anchor the menu under the kebab button rather than at the raw tap
+    // coordinates — the kebab sits in a fixed corner so this keeps the
+    // dropdown predictable across taps. Right-edge alignment so it
+    // doesn't overflow the viewport on mobile.
+    const btn = event.currentTarget;
+    const rect = btn.getBoundingClientRect();
+    menu.classList.remove('hidden');
+    // Remove first then read offsetWidth — needs to be visible to measure.
+    const menuWidth = menu.offsetWidth || 160;
+    let left = rect.right - menuWidth;
+    if (left < 8) left = 8;
+    menu.style.left = left + 'px';
+    menu.style.top = (rect.bottom + 4) + 'px';
 }
 
 /* ── Context menu for chat list ── */
