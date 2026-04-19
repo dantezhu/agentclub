@@ -69,6 +69,7 @@ class Config:
     SECRET_KEY = None
     DATABASE = None
     UPLOAD_FOLDER = None
+    MEDIA_FOLDER = None
     MAX_CONTENT_LENGTH = None
     MESSAGE_PAGE_SIZE = None
     ALLOW_REGISTRATION = None
@@ -133,7 +134,16 @@ def refresh_config():
 
     # Storage (derived from BASE_DIR unless explicitly overridden)
     Config.DATABASE = os.environ.get("DATABASE") or os.path.join(BASE_DIR, "agentclub.db")
-    Config.UPLOAD_FOLDER = os.environ.get("UPLOAD_FOLDER") or os.path.join(BASE_DIR, "media", "uploads")
+    # Two related dirs:
+    #   MEDIA_FOLDER   → data-dir/media           served at /media/<file>
+    #   UPLOAD_FOLDER  → MEDIA_FOLDER/uploads     served at /media/uploads/<file>
+    # Uploads is *always* a subdir of media — there's no separate env
+    # var for it. The previous design exposed ``UPLOAD_FOLDER`` and
+    # ``MEDIA_FOLDER`` as independent overrides, which let an operator
+    # split them in confusing ways (uploads written to one tree, served
+    # from another). Now the relationship is forced.
+    Config.MEDIA_FOLDER = os.environ.get("MEDIA_FOLDER") or os.path.join(BASE_DIR, "media")
+    Config.UPLOAD_FOLDER = os.path.join(Config.MEDIA_FOLDER, "uploads")
 
     # Upload size cap. Unit is bytes (Flask convention). Default 50MB =
     # 52428800. Remember to keep nginx ``client_max_body_size`` in sync.

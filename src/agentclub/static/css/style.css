@@ -777,6 +777,38 @@ button, .icon-btn, .chat-item, .member-item {
 .btn-sm:hover { background: var(--color-primary-hover); }
 .btn-sm.danger { background: var(--color-danger); }
 
+/* Ghost button: blends with surrounding chrome (members panel header,
+   dropdown action bars, etc.) without screaming for attention like the
+   solid primary variant. Use when the action is secondary or part of a
+   row of equally-weighted choices. */
+.btn-sm.ghost {
+    background: #fff;
+    color: #4a4a55;
+    border: 1px solid #e1e4e8;
+    font-weight: 500;
+    box-shadow: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+.btn-sm.ghost:hover {
+    background: #f6f8fa;
+    border-color: #d0d4d9;
+    color: var(--color-text);
+}
+.btn-sm.ghost .icon { width: 14px; height: 14px; }
+
+/* Members panel header action bar — sits inside the scrollable
+   #membersList and groups the ghost buttons with consistent spacing. */
+.members-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    padding: 4px 12px 12px;
+    border-bottom: 1px solid #f0f0f0;
+    margin-bottom: 8px;
+}
+
 .admin-group-item, .admin-agent-item {
     display: flex;
     align-items: center;

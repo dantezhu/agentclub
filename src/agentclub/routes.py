@@ -545,6 +545,24 @@ def serve_upload(filename):
     return send_from_directory(Config.UPLOAD_FOLDER, filename)
 
 
+@api.route("/media/<filename>")
+def serve_media(filename):
+    """Serve operator-placed assets from the data directory's media root.
+
+    URL space split:
+      /media/uploads/<file>  → user uploads (distinct route above)
+      /media/<file>          → assets the operator drops into
+                               ``data-dir/media/`` directly: site logo,
+                               favicon, custom welcome image, etc.
+
+    Werkzeug picks the more specific 3-segment ``/media/uploads/<file>``
+    over this 2-segment rule, so they don't collide. ``send_from_directory``
+    rejects any embedded path separators in ``filename``, so this can't
+    serve files outside ``MEDIA_FOLDER`` (in particular, no peeking into
+    the ``uploads/`` subdir via ``/media/uploads%2Ffoo``)."""
+    return send_from_directory(Config.MEDIA_FOLDER, filename)
+
+
 # ── Admin settings ──
 
 @api.route("/api/settings")

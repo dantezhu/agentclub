@@ -1255,9 +1255,13 @@ async function renderMembersPanel() {
 
     let html = '';
     if (canManage) {
-        html += `<div style="padding:8px 12px;display:flex;gap:6px;flex-wrap:wrap">
-            <button class="btn-sm" onclick="showAddMember('${currentChat.id}')">+ 添加成员</button>
-            <button class="btn-sm" onclick="openGroupSettings('${currentChat.id}')" title="修改群名称和头像">${AgentClubUI.iconHTML('settings')}群组设置</button>
+        // Ghost-styled action row: blends with the panel chrome instead
+        // of competing with the chat content. Both actions are equal-
+        // weight (neither is "the" primary action) so neither gets the
+        // solid brand fill.
+        html += `<div class="members-actions">
+            <button class="btn-sm ghost" onclick="showAddMember('${currentChat.id}')" title="添加群成员">${AgentClubUI.iconHTML('user-plus')}添加成员</button>
+            <button class="btn-sm ghost" onclick="openGroupSettings('${currentChat.id}')" title="修改群名称和头像">${AgentClubUI.iconHTML('settings')}群组设置</button>
         </div>`;
     }
     for (const m of members) {
@@ -1271,19 +1275,45 @@ async function renderMembersPanel() {
         if (m.role === 'admin') tag = '<span class="member-tag admin">管理员</span>';
         else if (m.is_agent) tag = '<span class="member-tag agent">Agent</span>';
 
-        let removeBtn = '';
+        // Row actions live behind a kebab (⋯) instead of a bare X — the
+        // kebab is a familiar "more actions" affordance (Slack/Linear/
+        // Feishu all use it) and gives us room to add future operations
+        // (mute, promote, …) without further visual clutter. The actual
+        // dropdown is the existing #contextMenu element, populated on
+        // click via showMemberMenu().
+        let actionBtn = '';
         if (canManage && m.id !== group.created_by) {
-            removeBtn = `<button class="icon-btn" style="color:var(--color-danger)" onclick="removeMember('${currentChat.id}','${m.id}')" title="移除">${AgentClubUI.iconHTML('x')}</button>`;
+            const safeName = escHtml(m.display_name || '');
+            actionBtn = `<button class="icon-btn member-kebab" onclick="showMemberMenu(event,'${currentChat.id}','${m.id}','${safeName.replace(/'/g, "\\'")}')" title="更多" aria-label="更多操作">${AgentClubUI.iconHTML('more-horizontal')}</button>`;
         }
 
         const memberAvatarStyle = ` style="${AgentClubUI.avatarStyle(m.display_name || m.id)}"`;
         html += `<div class="member-item">
             <div class="${avatarClass}"${memberAvatarStyle}>${initial}</div>
             <span class="member-name">${escHtml(m.display_name)}</span>
-            ${tag}${removeBtn}
+            ${tag}${actionBtn}
         </div>`;
     }
     document.getElementById('membersList').innerHTML = html;
+}
+
+/* Open the contextMenu dropdown anchored under a member's kebab button.
+ * Reuses the same #contextMenu element used by the chat-list right-click
+ * menu so we don't duplicate styles or document-click handlers. */
+function showMemberMenu(event, groupId, userId, displayName) {
+    event.preventDefault();
+    event.stopPropagation();
+    const menu = document.getElementById('contextMenu');
+    menu.innerHTML = `<button class="danger" onclick="removeMember('${groupId}','${userId}')">移除成员</button>`;
+    // Position right-aligned below the kebab so the dropdown opens
+    // toward the panel's interior (members panel sits on the right edge,
+    // a left-anchored menu would clip on narrow viewports).
+    const rect = event.currentTarget.getBoundingClientRect();
+    menu.classList.remove('hidden');
+    // Force layout so we can read the dropdown width before positioning.
+    const menuW = menu.offsetWidth || 140;
+    menu.style.top = (rect.bottom + 4) + 'px';
+    menu.style.left = Math.max(8, rect.right - menuW) + 'px';
 }
 
 async function toggleMembers() {
@@ -1300,6 +1330,7 @@ async function toggleMembers() {
 }
 
 async function removeMember(groupId, userId) {
+    document.getElementById('contextMenu').classList.add('hidden');
     if (!confirm('确定要移除该成员吗？')) return;
     const res = await fetch(`/api/groups/${groupId}/members/${userId}`, { method: 'DELETE' });
     if (res.ok) {
