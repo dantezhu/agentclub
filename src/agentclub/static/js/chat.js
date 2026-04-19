@@ -1390,7 +1390,7 @@ async function showAddMember(groupId) {
         const tag = u.is_agent ? ' <span class="member-tag agent">Agent</span>' : '';
         html += `<div class="add-user-item" data-user-id="${u.id}">
             <span>${escHtml(u.display_name)}${tag}</span>
-            <button class="btn-sm" onclick="addMember('${groupId}','${u.id}',this)">添加</button>
+            <button class="icon-action" onclick="addMember('${groupId}','${u.id}',this)" title="添加到群组" aria-label="添加到群组">${AgentClubUI.iconHTML('user-plus')}</button>
         </div>`;
     }
     document.getElementById('addMemberUserList').innerHTML = html || '<div style="color:#999;font-size:13px;padding:12px">所有用户都已在群组中</div>';
@@ -1398,9 +1398,12 @@ async function showAddMember(groupId) {
 }
 
 async function addMember(groupId, userId, btn) {
-    const originalText = btn.textContent;
+    // The trigger is now an icon button (.icon-action), so we can't
+    // swap text any more. In-flight = disabled + half-opacity; on
+    // failure we restore the original SVG markup.
+    const originalHTML = btn.innerHTML;
     btn.disabled = true;
-    btn.textContent = '添加中...';
+    btn.style.opacity = '0.5';
     try {
         const res = await fetch(`/api/groups/${groupId}/members`, {
             method: 'POST',
@@ -1410,7 +1413,8 @@ async function addMember(groupId, userId, btn) {
         if (!res.ok) {
             const data = await res.json().catch(() => ({}));
             btn.disabled = false;
-            btn.textContent = originalText;
+            btn.style.opacity = '';
+            btn.innerHTML = originalHTML;
             alert(data.error || '添加失败');
             return;
         }
@@ -1712,7 +1716,7 @@ async function showNewChatModal() {
         const tag = u.is_agent ? ' <span class="member-tag agent">Agent</span>' : '';
         html += `<div class="add-user-item">
             <span>${escHtml(u.display_name)}${tag}</span>
-            <button class="btn-sm" onclick="startDirectChat('${u.id}','${escHtml(u.display_name)}',${!!u.is_agent})">聊天</button>
+            <button class="icon-action" onclick="startDirectChat('${u.id}','${escHtml(u.display_name)}',${!!u.is_agent})" title="发起私聊" aria-label="发起私聊">${AgentClubUI.iconHTML('message-square')}</button>
         </div>`;
     }
     document.getElementById('newChatUserList').innerHTML = html || '<div style="color:#999;font-size:13px;padding:12px">暂无其他用户</div>';

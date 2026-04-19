@@ -128,6 +128,35 @@
             color: #1a1a1a;
             opacity: 1;
         }
+        /* Square ghost icon button used in the agent-list rows. Mirrors
+         * .icon-action in style.css — same 32×32 ghost square the chat
+         * side uses, so the two surfaces feel identical. .danger turns
+         * the icon red on hover for destructive ops (delete agent). */
+        .icon-action {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 32px;
+            height: 32px;
+            background: #fff;
+            color: #4a4a55;
+            border: 1px solid #e1e4e8;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background 0.12s, border-color 0.12s, color 0.12s;
+        }
+        .icon-action:hover {
+            background: #f6f8fa;
+            border-color: #d0d4d9;
+            color: #1a1a1a;
+        }
+        .icon-action.danger:hover {
+            background: #fff5f5;
+            border-color: #ffd6d6;
+            color: #d63031;
+        }
+        .icon-action .icon { width: 16px; height: 16px; }
+        .agent-actions { display: inline-flex; gap: 6px; flex-shrink: 0; }
         .agent-item {
             display: flex;
             align-items: center;
@@ -568,8 +597,10 @@
                     ${descLine}
                     <div class="token">Token: ${esc(a.agent_token)}</div>
                 </div>
-                <button class="btn sm" onclick="editAgent('${a.id}')">编辑</button>
-                <button class="btn sm danger" onclick="deleteAgent('${a.id}','${esc(a.display_name)}')">删除</button>
+                <div class="agent-actions">
+                    <button class="icon-action" onclick="editAgent('${a.id}')" title="编辑" aria-label="编辑">${AgentClubUI.iconHTML('pencil')}</button>
+                    <button class="icon-action danger" onclick="deleteAgent('${a.id}','${esc(a.display_name)}')" title="删除" aria-label="删除">${AgentClubUI.iconHTML('trash-2')}</button>
+                </div>
             </div>`;
         }
         document.getElementById('agentList').innerHTML = html;
