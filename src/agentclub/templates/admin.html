@@ -5,11 +5,39 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Agent Club - 管理后台</title>
     <style>
+        /* Design tokens — kept in sync with static/css/style.css. Inline
+           here so admin.html can be served standalone without the chat
+           stylesheet. */
+        :root {
+            --color-primary: #3370FF;
+            --color-primary-hover: #1d5dff;
+            --color-primary-soft: #eef2ff;
+            --color-danger: #ff4757;
+            --color-text: #1a1a2e;
+            --avatar-fallback: #5E6AD2;
+        }
+        .icon {
+            display: inline-block;
+            width: 1.05em;
+            height: 1.05em;
+            vertical-align: -0.18em;
+            stroke: currentColor;
+            fill: none;
+            pointer-events: none;
+        }
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
             background: #f0f2f5;
             color: #1a1a2e;
+        }
+        .brand-mark {
+            width: 26px; height: 26px; border-radius: 7px;
+            background: var(--color-primary); color: #fff;
+            font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
+            display: inline-flex; align-items: center; justify-content: center;
+            box-shadow: 0 1px 2px rgba(51,112,255,0.25);
+            flex-shrink: 0;
         }
         .topbar {
             background: #fff;
@@ -19,9 +47,21 @@
             align-items: center;
             justify-content: space-between;
         }
-        .topbar h1 { font-size: 18px; color: #667eea; }
+        /* h1 is flex too so the brand mark and the title sit on the
+         * same horizontal centerline regardless of font metrics. The
+         * older `vertical-align: -5px` hack on .brand-mark drifted by
+         * ~2px in Chrome vs Safari and looked obviously off. */
+        .topbar h1 {
+            font-size: 18px;
+            color: var(--color-text);
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            line-height: 1;
+        }
         .topbar a {
-            color: #667eea;
+            color: var(--color-primary);
             text-decoration: none;
             font-size: 14px;
         }
@@ -60,7 +100,7 @@
             font-size: 14px;
             outline: none;
         }
-        .inline-form input:focus { border-color: #667eea; }
+        .inline-form input:focus { border-color: var(--color-primary); }
         /* Bump input font-size to 16px on touch screens so iOS Safari
            doesn't auto-zoom the whole page when the user focuses a form. */
         @media (max-width: 768px) {
@@ -68,7 +108,7 @@
         }
         .btn {
             padding: 10px 18px;
-            background: #667eea;
+            background: var(--color-primary);
             color: #fff;
             border: none;
             border-radius: 8px;
@@ -80,9 +120,9 @@
         .btn.danger { background: #ff4757; }
         .btn.sm { padding: 6px 14px; font-size: 13px; }
         /* Inline avatar picker inside the "create Agent" form: the label
-           toggles between a plain "🖼 头像" prompt and a thumbnail once a
-           file has been selected, so admins get immediate visual
-           confirmation their upload went through. */
+           toggles between a plain "头像" prompt (with an image icon) and
+           a thumbnail once a file has been selected, so admins get
+           immediate visual confirmation their upload went through. */
         .avatar-picker { display: inline-flex; align-items: center; gap: 6px; }
         .avatar-picker img {
             width: 22px; height: 22px; border-radius: 50%;
@@ -101,7 +141,7 @@
             width: 40px;
             height: 40px;
             border-radius: 10px;
-            background: linear-gradient(135deg, #f093fb, #f5576c);
+            background: var(--avatar-fallback);
             color: #fff;
             display: flex;
             align-items: center;
@@ -177,7 +217,7 @@
             width: 80px;
             height: 80px;
             border-radius: 50%;
-            background: linear-gradient(135deg, #f093fb, #f5576c);
+            background: var(--avatar-fallback);
             color: #fff;
             display: inline-flex;
             align-items: center;
@@ -203,11 +243,11 @@
             font-size: 16px;
             outline: none;
         }
-        .modal-field input:focus { border-color: #667eea; }
+        .modal-field input:focus { border-color: var(--color-primary); }
         .modal-save {
             width: 100%;
             padding: 11px;
-            background: #667eea;
+            background: var(--color-primary);
             color: #fff;
             border: none;
             border-radius: 8px;
@@ -216,6 +256,99 @@
         }
         .modal-save:hover { opacity: 0.9; }
         .modal-save:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        /* ── Top-right user menu ──
+         * Replaces the old "返回聊天" link. The trigger is a circular
+         * avatar (initial or uploaded image); clicking opens a small
+         * dropdown with: chat shortcut, profile (TODO), and logout.
+         * Same shape used by GitHub/Vercel/Linear so the affordance is
+         * familiar without explanation. */
+        .user-menu { position: relative; }
+        .user-menu-trigger {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: none;
+            border: none;
+            padding: 4px 8px 4px 4px;
+            border-radius: 999px;
+            cursor: pointer;
+            color: #666;
+            transition: background 0.15s;
+        }
+        .user-menu-trigger:hover { background: #f0f2f5; }
+        .user-menu-trigger .menu-avatar {
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            background: var(--avatar-fallback);
+            color: #fff;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 13px;
+            font-weight: 600;
+            overflow: hidden;
+            flex-shrink: 0;
+        }
+        .user-menu-trigger .menu-avatar img {
+            width: 100%; height: 100%; object-fit: cover;
+        }
+        .user-menu-trigger .menu-caret {
+            width: 14px; height: 14px;
+            stroke: currentColor; fill: none; stroke-width: 2;
+            stroke-linecap: round; stroke-linejoin: round;
+            transition: transform 0.15s;
+        }
+        .user-menu.open .menu-caret { transform: rotate(180deg); }
+        .user-menu-dropdown {
+            position: absolute;
+            top: calc(100% + 6px);
+            right: 0;
+            min-width: 200px;
+            background: #fff;
+            border-radius: 10px;
+            box-shadow: 0 8px 28px rgba(0,0,0,0.12), 0 0 0 1px rgba(0,0,0,0.04);
+            padding: 6px;
+            z-index: 500;
+            display: none;
+        }
+        .user-menu.open .user-menu-dropdown { display: block; }
+        .user-menu-info {
+            padding: 10px 12px 12px;
+            border-bottom: 1px solid #f0f0f0;
+            margin-bottom: 6px;
+        }
+        .user-menu-info .name {
+            font-size: 14px; font-weight: 600; color: var(--color-text);
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .user-menu-info .username {
+            font-size: 12px; color: #999; margin-top: 2px;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .user-menu-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            width: 100%;
+            padding: 9px 12px;
+            background: none;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            color: var(--color-text);
+            cursor: pointer;
+            text-align: left;
+        }
+        .user-menu-item:hover,
+        .user-menu-item:focus {
+            background: #f5f5f7;
+            outline: none;
+        }
+        .user-menu-item.danger { color: var(--color-danger); }
+        .user-menu-item.danger:hover { background: #fff0f0; }
+        .user-menu-item .icon { width: 16px; height: 16px; flex-shrink: 0; }
 
         @media (max-width: 640px) {
             .topbar { padding: 12px 16px; }
@@ -226,11 +359,40 @@
             .agent-item { flex-wrap: wrap; }
         }
     </style>
+    <script src="/static/js/ui-kit.js"></script>
 </head>
 <body>
     <div class="topbar">
-        <h1>管理后台</h1>
-        <a href="/chat">← 返回聊天</a>
+        <h1><span class="brand-mark" aria-hidden="true">AC</span>管理后台</h1>
+        <div class="user-menu" id="userMenu">
+            <button class="user-menu-trigger" id="userMenuTrigger"
+                    onclick="toggleUserMenu(event)" aria-haspopup="menu"
+                    aria-expanded="false" type="button">
+                <span class="menu-avatar" id="userMenuAvatar"></span>
+                <!-- Inline caret kept separate from the .icon class so its
+                     rotation transform doesn't fight the universal icon
+                     stroke rules. -->
+                <svg class="menu-caret" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="m6 9 6 6 6-6"/>
+                </svg>
+            </button>
+            <div class="user-menu-dropdown" role="menu">
+                <div class="user-menu-info">
+                    <div class="name" id="userMenuName"></div>
+                    <div class="username" id="userMenuUsername"></div>
+                </div>
+                <!-- Use <button> for both items so they share the same
+                     hover/focus rules. The earlier <a> for /chat got
+                     re-underlined by the .topbar a:hover rule above
+                     (specificity beat .user-menu-item:hover). -->
+                <button class="user-menu-item" type="button" role="menuitem"
+                        onclick="window.location.href='/chat'"
+                        data-icon="message-square">聊天</button>
+                <button class="user-menu-item danger" type="button"
+                        role="menuitem" onclick="handleLogout()"
+                        data-icon="log-out">退出登录</button>
+            </div>
+        </div>
     </div>
 
     <div class="container">
@@ -242,7 +404,7 @@
                 <input type="text" id="newAgentDisplayName" placeholder="显示名称（选填）">
                 <label class="btn avatar-picker" id="agentAvatarLabel" style="cursor:pointer">
                     <img id="agentAvatarPreview" style="display:none" alt="">
-                    <span id="agentAvatarLabelText">🖼 头像</span>
+                    <span id="agentAvatarLabelText" data-icon="image" style="display:inline-flex;align-items:center;gap:4px">头像</span>
                     <input type="file" accept="image/*" id="agentAvatarFile" style="display:none" onchange="handleAgentAvatarSelect(event)">
                 </label>
                 <button class="btn" onclick="createAgent()">创建 Agent</button>
@@ -259,7 +421,7 @@
         <div class="modal-box">
             <div class="modal-head">
                 <h3>编辑 Agent</h3>
-                <button class="modal-close" onclick="closeEditAgent()">✕</button>
+                <button class="modal-close" onclick="closeEditAgent()" data-icon="x" title="关闭"></button>
             </div>
             <div class="modal-body">
                 <div class="modal-avatar-row">
@@ -303,11 +465,63 @@
         const res = await fetch('/api/me');
         if (!res.ok) { window.location.href = '/'; return; }
         currentUser = await res.json();
+        renderUserMenu();
         if (currentUser.role !== 'admin') {
             document.querySelector('.container').innerHTML = '<div class="card"><p style="text-align:center;padding:40px;color:#999">需要管理员权限</p></div>';
             return;
         }
         await loadAgents();
+    }
+
+    /* ── Top-right user menu ──
+     * Populated from /api/me. Click trigger to toggle; click anywhere
+     * outside or press Escape to close. Same pattern as the chat-side
+     * sidebar menu, kept lightweight so we don't pull in a popover lib. */
+    function renderUserMenu() {
+        const avatar = document.getElementById('userMenuAvatar');
+        const name = currentUser.display_name || currentUser.username || '?';
+        if (currentUser.avatar) {
+            avatar.innerHTML = `<img src="${esc(currentUser.avatar)}">`;
+            avatar.style.background = '';
+        } else {
+            avatar.textContent = name.charAt(0);
+            avatar.style.background = AgentClubUI.avatarColor(name);
+        }
+        document.getElementById('userMenuName').textContent = name;
+        document.getElementById('userMenuUsername').textContent =
+            '@' + currentUser.username;
+    }
+
+    function toggleUserMenu(e) {
+        e.stopPropagation();
+        const menu = document.getElementById('userMenu');
+        const open = menu.classList.toggle('open');
+        document.getElementById('userMenuTrigger')
+            .setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
+
+    function closeUserMenu() {
+        const menu = document.getElementById('userMenu');
+        if (!menu.classList.contains('open')) return;
+        menu.classList.remove('open');
+        document.getElementById('userMenuTrigger')
+            .setAttribute('aria-expanded', 'false');
+    }
+
+    document.addEventListener('click', (e) => {
+        const menu = document.getElementById('userMenu');
+        if (menu && !menu.contains(e.target)) closeUserMenu();
+    });
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') closeUserMenu();
+    });
+
+    async function handleLogout() {
+        try {
+            await fetch('/api/logout', { method: 'POST' });
+        } finally {
+            window.location.href = '/';
+        }
     }
 
     async function loadAgents() {
@@ -326,8 +540,11 @@
             const avatar = a.avatar
                 ? `<img src="${esc(a.avatar)}">`
                 : initial;
+            const avatarStyle = a.avatar
+                ? ''
+                : ` style="${AgentClubUI.avatarStyle(a.display_name || a.username || a.id)}"`;
             html += `<div class="agent-item">
-                <div class="agent-avatar">${avatar}</div>
+                <div class="agent-avatar"${avatarStyle}>${avatar}</div>
                 <div class="agent-info">
                     <div class="name">${dot}${esc(a.display_name)} <span style="color:#999;font-weight:400">(${esc(a.username)})</span></div>
                     <div class="token">Token: ${esc(a.agent_token)}</div>
@@ -339,6 +556,23 @@
         document.getElementById('agentList').innerHTML = html;
     }
 
+    /* The picker label has three visual states:
+     *   default → "<image-icon> 头像"
+     *   pending → "<spinner-icon> 上传中"
+     *   done    → "已选"
+     * Centralised here so the inline JS doesn't need to remember the
+     * exact icon names. */
+    function setPickerLabel(state) {
+        const el = document.getElementById('agentAvatarLabelText');
+        if (state === 'pending') {
+            el.innerHTML = AgentClubUI.iconHTML('loader') + ' 上传中';
+        } else if (state === 'done') {
+            el.textContent = '已选';
+        } else {
+            el.innerHTML = AgentClubUI.iconHTML('image') + ' 头像';
+        }
+    }
+
     function resetAgentAvatarPicker() {
         document.getElementById('agentAvatarUrl').value = '';
         // Clearing the file input's value is important: otherwise picking
@@ -348,18 +582,18 @@
         const preview = document.getElementById('agentAvatarPreview');
         preview.style.display = 'none';
         preview.src = '';
-        document.getElementById('agentAvatarLabelText').textContent = '🖼 头像';
+        setPickerLabel('default');
     }
 
     async function handleAgentAvatarSelect(event) {
         const file = event.target.files[0];
         if (!file) return;
-        const labelText = document.getElementById('agentAvatarLabelText');
         const preview = document.getElementById('agentAvatarPreview');
         // Immediate feedback while the upload is in flight — before this
-        // fix the label stayed on "🖼 头像" through the whole request and
-        // admins couldn't tell whether the file had even been registered.
-        labelText.textContent = '⏳ 上传中';
+        // fix the label stayed on the default text through the whole
+        // request and admins couldn't tell whether the file had even
+        // been registered.
+        setPickerLabel('pending');
         try {
             const formData = new FormData();
             formData.append('file', file);
@@ -372,7 +606,7 @@
             document.getElementById('agentAvatarUrl').value = data.url;
             preview.src = data.url;
             preview.style.display = '';
-            labelText.textContent = '已选';
+            setPickerLabel('done');
         } catch (err) {
             alert(err.message);
             resetAgentAvatarPicker();
@@ -406,13 +640,16 @@
         const el = document.getElementById('editAgentAvatar');
         if (editingAvatar) {
             el.innerHTML = `<img src="${esc(editingAvatar)}">`;
+            el.style.background = '';
         } else {
-            const initial = (
+            const fullName = (
                 document.getElementById('editAgentDisplayName').value
                 || editingAgent?.display_name
+                || editingAgent?.username
                 || '?'
-            ).charAt(0);
-            el.textContent = initial;
+            );
+            el.textContent = fullName.charAt(0);
+            el.style.background = AgentClubUI.avatarColor(fullName);
         }
     }
 
@@ -491,7 +728,7 @@
         const overlay = document.createElement('div');
         overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:999';
         overlay.innerHTML = `<div style="background:#fff;border-radius:12px;padding:24px;max-width:480px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,0.2);position:relative">
-            <button onclick="this.closest('div[style]').parentElement.remove()" style="position:absolute;top:12px;right:12px;background:none;border:none;font-size:18px;cursor:pointer;color:#999">✕</button>
+            <button onclick="this.closest('div[style]').parentElement.remove()" style="position:absolute;top:12px;right:12px;background:none;border:none;cursor:pointer;color:#999;display:inline-flex;padding:4px">${AgentClubUI.iconHTML('x')}</button>
             <h3 style="margin-bottom:6px;font-size:16px">Agent 创建成功</h3>
             <p style="font-size:13px;color:#999;margin-bottom:16px">以下是该 Agent 的连接 Token，请妥善保存。</p>
             <div style="display:flex;gap:8px">

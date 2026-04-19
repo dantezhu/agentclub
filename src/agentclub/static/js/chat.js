@@ -200,8 +200,9 @@ function renderChatList() {
                 : `showChatMenu(event,'group','${g.id}','leave')`;
             const gUnread = unreadCounts[`group_${g.id}`] || 0;
             const gBadge = gUnread ? `<span class="badge">${gUnread > 99 ? '99+' : gUnread}</span>` : '';
+            const gAvatarStyle = g.avatar ? '' : ` style="${AgentClubUI.avatarStyle(g.name)}"`;
             html += `<div class="chat-item ${isActive ? 'active' : ''}" onclick="openChat('group','${g.id}','${escHtml(g.name)}')" oncontextmenu="${menuAction}">
-                <div class="avatar">${g.avatar ? `<img src="${escHtml(g.avatar)}">` : initial}</div>
+                <div class="avatar"${gAvatarStyle}>${g.avatar ? `<img src="${escHtml(g.avatar)}">` : initial}</div>
                 <div class="chat-item-info">
                     <div class="name">${escHtml(g.name)}</div>
                     <div class="preview" id="preview_group_${g.id}">${escHtml(previewText(lastMessages['group_' + g.id]))}</div>
@@ -222,8 +223,9 @@ function renderChatList() {
             const isAgent = !!d.peer_is_agent;
             const avatarClass = isAgent ? 'avatar agent' : 'avatar';
             const agentTag = isAgent ? ' <span class="chat-tag agent">Agent</span>' : '';
+            const dAvatarStyle = d.peer_avatar ? '' : ` style="${AgentClubUI.avatarStyle(d.peer_name || d.id)}"`;
             html += `<div class="chat-item ${isActive ? 'active' : ''}" onclick="openChat('direct','${d.id}','${escHtml(d.peer_name)}',${isAgent})" oncontextmenu="showChatMenu(event,'direct','${d.id}','delete')">
-                <div class="${avatarClass}">${d.peer_avatar ? `<img src="${escHtml(d.peer_avatar)}">` : initial}</div>
+                <div class="${avatarClass}"${dAvatarStyle}>${d.peer_avatar ? `<img src="${escHtml(d.peer_avatar)}">` : initial}</div>
                 <div class="chat-item-info">
                     <div class="name">${dot}${escHtml(d.peer_name)}${agentTag}</div>
                     <div class="preview" id="preview_direct_${d.id}">${escHtml(previewText(lastMessages['direct_' + d.id]))}</div>
@@ -282,6 +284,7 @@ async function openChat(type, id, name, isAgent = false) {
 
         const initial = name.charAt(0);
         avatarEl.innerHTML = group.avatar ? `<img src="${escHtml(group.avatar)}">` : initial;
+        avatarEl.style.background = group.avatar ? '' : AgentClubUI.avatarColor(name);
         avatarEl.classList.remove('hidden');
         // Header avatar is display-only now. Editing (name + avatar) lives
         // in the members panel's "群组设置" button → groupSettingsModal,
@@ -371,12 +374,15 @@ function renderMessage(msg) {
     const initial = (msg.sender_name || '?').charAt(0);
     const avatarClass = isAgent ? 'msg-avatar agent' : 'msg-avatar';
     const avatarContent = msg.sender_avatar ? `<img src="${escHtml(msg.sender_avatar)}">` : initial;
+    const avatarStyle = msg.sender_avatar
+        ? ''
+        : ` style="${AgentClubUI.avatarStyle(msg.sender_name || msg.sender_id)}"`;
     const nameClass = isAgent ? 'msg-sender agent-name' : 'msg-sender';
     const time = formatTime(msg.created_at);
     const content = renderContent(msg);
 
     return `<div class="message ${isSelf ? 'self' : ''}">
-        <div class="${avatarClass}">${avatarContent}</div>
+        <div class="${avatarClass}"${avatarStyle}>${avatarContent}</div>
         <div class="msg-body">
             <div class="msg-header">
                 <span class="${nameClass}">${escHtml(msg.sender_name)}</span>
@@ -463,8 +469,16 @@ function renderAudioPlayer(url, name) {
 
 function renderFileAttachment(url, name) {
     const ext = (name || '').split('.').pop().toLowerCase();
-    const icons = { pdf: '📄', doc: '📝', docx: '📝', xls: '📊', xlsx: '📊', ppt: '📽', zip: '📦', tar: '📦', gz: '📦' };
-    const icon = icons[ext] || '📁';
+    // Map common file extensions to a lucide file-type icon. Anything we
+    // don't recognise falls back to the generic file outline.
+    const iconMap = {
+        pdf: 'file-text', doc: 'file-text', docx: 'file-text',
+        xls: 'file-spreadsheet', xlsx: 'file-spreadsheet',
+        ppt: 'file-text', pptx: 'file-text',
+        zip: 'file-archive', tar: 'file-archive', gz: 'file-archive', '7z': 'file-archive', rar: 'file-archive',
+        md: 'file-text', txt: 'file-text', json: 'file-text', csv: 'file-text',
+    };
+    const icon = AgentClubUI.iconHTML(iconMap[ext] || 'file');
     return `<div class="file-attachment">
         <span class="file-icon">${icon}</span>
         <div class="file-info">
@@ -644,7 +658,7 @@ function renderImagePreview() {
     list.innerHTML = pendingImages.map(img =>
         `<div class="image-preview-item" id="preview_${img.id}">
             <img src="${img.objectUrl}" alt="">
-            <button class="image-preview-remove" onclick="removeImagePreview('${img.id}')">&times;</button>
+            <button class="image-preview-remove" onclick="removeImagePreview('${img.id}')" title="移除">${AgentClubUI.iconHTML('x')}</button>
         </div>`
     ).join('');
 }
@@ -980,11 +994,14 @@ function renderMentionPicker() {
             ? 'mention-picker-avatar all'
             : it.is_agent ? 'mention-picker-avatar agent' : 'mention-picker-avatar';
         const avatar = it.is_all ? '@' : escHtml(it.label.charAt(0));
+        const avatarStyle = it.is_all
+            ? ''
+            : ` style="${AgentClubUI.avatarStyle(it.label || it.id)}"`;
         const tag = it.is_agent ? '<span class="member-tag agent">Agent</span>' : '';
         return `<div class="mention-picker-item ${i === activeIdx ? 'active' : ''}"
                      data-idx="${i}"
                      onmousedown="selectMentionPickerItem(${i}); return false;">
-            <div class="${avatarClass}">${avatar}</div>
+            <div class="${avatarClass}"${avatarStyle}>${avatar}</div>
             <span class="mention-picker-name">${escHtml(it.label)}</span>
             ${tag}
         </div>`;
@@ -1217,7 +1234,7 @@ async function renderMembersPanel() {
     if (canManage) {
         html += `<div style="padding:8px 12px;display:flex;gap:6px;flex-wrap:wrap">
             <button class="btn-sm" onclick="showAddMember('${currentChat.id}')">+ 添加成员</button>
-            <button class="btn-sm" onclick="openGroupSettings('${currentChat.id}')" title="修改群名称和头像">⚙ 群组设置</button>
+            <button class="btn-sm" onclick="openGroupSettings('${currentChat.id}')" title="修改群名称和头像">${AgentClubUI.iconHTML('settings')}群组设置</button>
         </div>`;
     }
     for (const m of members) {
@@ -1233,11 +1250,12 @@ async function renderMembersPanel() {
 
         let removeBtn = '';
         if (canManage && m.id !== group.created_by) {
-            removeBtn = `<button class="icon-btn" style="font-size:13px;color:#ff4757" onclick="removeMember('${currentChat.id}','${m.id}')" title="移除">✕</button>`;
+            removeBtn = `<button class="icon-btn" style="color:var(--color-danger)" onclick="removeMember('${currentChat.id}','${m.id}')" title="移除">${AgentClubUI.iconHTML('x')}</button>`;
         }
 
+        const memberAvatarStyle = ` style="${AgentClubUI.avatarStyle(m.display_name || m.id)}"`;
         html += `<div class="member-item">
-            <div class="${avatarClass}">${initial}</div>
+            <div class="${avatarClass}"${memberAvatarStyle}>${initial}</div>
             <span class="member-name">${escHtml(m.display_name)}</span>
             ${tag}${removeBtn}
         </div>`;
@@ -1333,8 +1351,10 @@ function showProfileModal() {
     const avatar = document.getElementById('profileAvatar');
     if (currentUser.avatar) {
         avatar.innerHTML = `<img src="${escHtml(currentUser.avatar)}">`;
+        avatar.style.background = '';
     } else {
         avatar.textContent = (currentUser.display_name || '?').charAt(0);
+        avatar.style.background = AgentClubUI.avatarColor(currentUser.display_name || currentUser.username);
     }
     document.getElementById('profileDisplayName').value = currentUser.display_name || '';
     document.getElementById('profileModal').classList.remove('hidden');
@@ -1349,7 +1369,9 @@ async function uploadAvatar(event) {
     if (!res.ok) { alert('上传失败'); return; }
     const data = await res.json();
     currentUser.avatar = data.url;
-    document.getElementById('profileAvatar').innerHTML = `<img src="${escHtml(data.url)}">`;
+    const el = document.getElementById('profileAvatar');
+    el.innerHTML = `<img src="${escHtml(data.url)}">`;
+    el.style.background = '';
 }
 
 async function saveProfile() {
@@ -1453,13 +1475,15 @@ function renderGroupSettingsAvatar() {
     if (!groupSettingsState) return;
     if (groupSettingsState.avatar) {
         el.innerHTML = `<img src="${escHtml(groupSettingsState.avatar)}">`;
+        el.style.background = '';
     } else {
-        const seed = (
+        const fullName = (
             document.getElementById('groupSettingsName').value
             || groupSettingsState.name
             || '?'
-        ).charAt(0);
-        el.textContent = seed;
+        );
+        el.textContent = fullName.charAt(0);
+        el.style.background = AgentClubUI.avatarColor(fullName);
     }
 }
 
@@ -1531,6 +1555,8 @@ async function saveGroupSettings() {
                 avatarEl.innerHTML = group.avatar
                     ? `<img src="${escHtml(group.avatar)}">`
                     : (group.name || '?').charAt(0);
+                avatarEl.style.background = group.avatar
+                    ? '' : AgentClubUI.avatarColor(group.name);
             }
         }
         closeModal('groupSettingsModal');

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <meta name="theme-color" content="#667eea">
+    <meta name="theme-color" content="#3370FF">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="mobile-web-app-capable" content="yes">
     <title>Agent Club</title>
@@ -15,14 +15,20 @@
     <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11/build/highlight.min.js"></script>
     <!-- Socket.IO -->
     <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <!-- Shared UI primitives (icons + avatar palette). Loaded before
+         chat.js so AgentClubUI is in scope. -->
+    <script src="/static/js/ui-kit.js"></script>
 </head>
 <body>
     <div id="app">
         <!-- Sidebar -->
         <aside id="sidebar">
             <div class="sidebar-header">
-                <h2>Agent Club</h2>
-                <button class="icon-btn" id="menuBtn" title="菜单">+</button>
+                <h2>
+                    <span class="brand-mark" aria-hidden="true">AC</span>
+                    Agent Club
+                </h2>
+                <button class="icon-btn" id="menuBtn" title="菜单" data-icon="plus"></button>
             </div>
             <div class="sidebar-menu hidden" id="sidebarMenu">
                 <button onclick="showNewChatModal()">发起私聊</button>
@@ -40,20 +46,20 @@
         <!-- Main chat area -->
         <main id="mainArea">
             <div class="empty-state" id="emptyState">
-                <button class="icon-btn mobile-only empty-menu-btn" onclick="toggleSidebar()" title="打开菜单">☰</button>
-                <div class="empty-icon">💬</div>
+                <button class="icon-btn mobile-only empty-menu-btn" onclick="toggleSidebar()" title="打开菜单" data-icon="menu"></button>
+                <div class="empty-icon" data-icon="message-square"></div>
                 <p>选择一个对话开始聊天</p>
             </div>
 
             <div class="chat-container hidden" id="chatContainer">
                 <div class="chat-header" id="chatHeader">
-                    <button class="icon-btn mobile-only" onclick="toggleSidebar()" title="菜单">☰</button>
+                    <button class="icon-btn mobile-only" onclick="toggleSidebar()" title="菜单" data-icon="menu"></button>
                     <div class="chat-header-avatar hidden" id="chatHeaderAvatar"></div>
                     <div class="chat-header-info">
                         <h3 id="chatTitle"></h3>
                         <span id="chatSubtitle" class="subtitle"></span>
                     </div>
-                    <button class="icon-btn" id="chatMembersBtn" onclick="toggleMembers()" title="成员">👥</button>
+                    <button class="icon-btn" id="chatMembersBtn" onclick="toggleMembers()" title="成员" data-icon="users"></button>
                 </div>
 
                 <div class="messages-area" id="messagesArea">
@@ -67,11 +73,11 @@
                         <div class="image-preview-list" id="imagePreviewList"></div>
                     </div>
                     <div class="input-toolbar">
-                        <label class="icon-btn" title="发送图片">
-                            🖼️ <input type="file" id="imageInput" accept="image/*" multiple style="display:none" onchange="handleImageSelect(event)">
+                        <label class="icon-btn" title="发送图片" data-icon="image">
+                            <input type="file" id="imageInput" accept="image/*" multiple style="display:none" onchange="handleImageSelect(event)">
                         </label>
-                        <label class="icon-btn" title="发送文件">
-                            📎 <input type="file" id="fileInput" style="display:none" onchange="handleFileSelect(event)">
+                        <label class="icon-btn" title="发送文件" data-icon="paperclip">
+                            <input type="file" id="fileInput" style="display:none" onchange="handleFileSelect(event)">
                         </label>
                     </div>
                     <div class="input-row">
@@ -90,7 +96,7 @@
             <div class="members-panel hidden" id="membersPanel">
                 <div class="members-header">
                     <h3>成员</h3>
-                    <button class="icon-btn" onclick="toggleMembers()">✕</button>
+                    <button class="icon-btn" onclick="toggleMembers()" data-icon="x" title="关闭"></button>
                 </div>
                 <div id="membersList"></div>
             </div>
@@ -102,7 +108,7 @@
         <div class="modal-content modal-sm">
             <div class="modal-header">
                 <h3>个人设置</h3>
-                <button class="icon-btn" onclick="closeModal('profileModal')">✕</button>
+                <button class="icon-btn" onclick="closeModal('profileModal')" data-icon="x" title="关闭"></button>
             </div>
             <div class="modal-body">
                 <div style="text-align:center;margin-bottom:20px">
@@ -128,7 +134,7 @@
         <div class="modal-content modal-sm">
             <div class="modal-header">
                 <h3>群组设置</h3>
-                <button class="icon-btn" onclick="closeModal('groupSettingsModal')">✕</button>
+                <button class="icon-btn" onclick="closeModal('groupSettingsModal')" data-icon="x" title="关闭"></button>
             </div>
             <div class="modal-body">
                 <div style="text-align:center;margin-bottom:20px">
@@ -151,7 +157,7 @@
         <div class="modal-content modal-sm">
             <div class="modal-header">
                 <h3>发起私聊</h3>
-                <button class="icon-btn" onclick="closeModal('newChatModal')">✕</button>
+                <button class="icon-btn" onclick="closeModal('newChatModal')" data-icon="x" title="关闭"></button>
             </div>
             <div class="modal-body" id="newChatUserList"></div>
         </div>
@@ -162,7 +168,7 @@
         <div class="modal-content modal-sm">
             <div class="modal-header">
                 <h3>添加成员</h3>
-                <button class="icon-btn" onclick="closeModal('addMemberModal')">✕</button>
+                <button class="icon-btn" onclick="closeModal('addMemberModal')" data-icon="x" title="关闭"></button>
             </div>
             <div class="modal-body">
                 <div id="addMemberUserList"></div>
@@ -175,14 +181,14 @@
 
     <!-- Image lightbox -->
     <div class="lightbox hidden" id="lightbox" onclick="closeLightbox(event)">
-        <button class="lightbox-close" onclick="closeLightbox()">&times;</button>
+        <button class="lightbox-close" onclick="closeLightbox()" data-icon="x" title="关闭"></button>
         <img id="lightboxImg" src="" alt="">
     </div>
 
     <!-- Drag-drop overlay -->
     <div class="drop-overlay hidden" id="dropOverlay">
         <div class="drop-hint">
-            <div class="drop-icon">🖼️</div>
+            <div class="drop-icon" data-icon="image"></div>
             <div>松开鼠标发送图片</div>
         </div>
     </div>
