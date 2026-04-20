@@ -1883,7 +1883,18 @@ async function openProfileModal(userId) {
     let tagsHtml = '';
     if (user.role === 'admin') tagsHtml += '<span class="member-tag admin">管理员</span>';
     if (user.is_agent) tagsHtml += '<span class="member-tag agent">Agent</span>';
-    if (user.is_online) tagsHtml += '<span class="online-pill">在线</span>';
+    if (user.is_online) {
+        tagsHtml += '<span class="online-pill">在线</span>';
+    } else {
+        // Offline: reuse the same cascading relative-time label used in
+        // the chat header subtitle (刚刚在线 / X分钟前在线 / 最近在线：…).
+        // Presented as a neutral "last-seen" pill so it sits naturally
+        // next to the admin/agent tags.
+        const lastSeen = formatLastActive(user.last_active_at);
+        if (lastSeen) {
+            tagsHtml += `<span class="last-seen-pill">${escHtml(lastSeen)}</span>`;
+        }
+    }
     tagsEl.innerHTML = tagsHtml;
 
     document.getElementById('profileViewDesc').textContent = user.description || '';

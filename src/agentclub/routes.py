@@ -649,4 +649,10 @@ def _safe_user(user):
         "role": user["role"],
         "is_agent": user["is_agent"],
         "is_online": user["is_online"],
+        # Raw last-active timestamp. Exposed alongside is_online so the
+        # profile modal can render "X 分钟前在线" for offline users. Not a
+        # privacy concern — the same value is already reachable via
+        # /api/presence and /api/direct-chats for peers you share a chat
+        # with, and /api/users restricts its scope the same way.
+        "last_active_at": user.get("last_active_at"),
     }

@@ -957,6 +957,19 @@ button, .icon-btn, .chat-item, .member-item {
  * "3 分钟前在线"; nudge the baseline so the pill sits flush with the
  * 12px subtitle copy rather than poking above the cap-height line. */
 .chat-header-info .subtitle .online-pill { vertical-align: -1px; }
+/* Offline counterpart of .online-pill, used only in the profile modal
+ * tags row so the "last-seen" label sits alongside admin/agent chips
+ * with the same neutral-gray visual weight. Chat-header subtitles
+ * keep plain inline text (see renderPresenceSubtitle). */
+.last-seen-pill {
+    display: inline-flex;
+    align-items: center;
+    font-size: 11px;
+    color: #888;
+    background: #f0f0f0;
+    padding: 2px 8px;
+    border-radius: 4px;
+}
 /* Description: no boxed background — that read like a code block at
  * 13px and made the card feel cluttered. Now it's centered prose
  * with comfortable line-height, capped width to keep lines short. */
