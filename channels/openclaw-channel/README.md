@@ -81,7 +81,7 @@ openclaw plugins uninstall agentclub
 4. **处理**：调用 `runEmbeddedAgent` 将消息交给 OpenClaw agent 处理
 5. **回复**：将 agent 的回复（文本 / 媒体）发送回 IM 服务器
 
-## Agent 开发指南
+## Agent 使用手册
 
 ### 回复文本
 
