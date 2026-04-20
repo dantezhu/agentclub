@@ -1,6 +1,6 @@
 {
   "name": "openclaw-channel-agentclub",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "description": "OpenClaw channel plugin that connects OpenClaw agents to an Agent Club IM server.",
   "type": "module",
   "main": "./dist/index.js",

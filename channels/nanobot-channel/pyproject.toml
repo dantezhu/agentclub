@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nanobot-channel-agentclub"
-version = "0.2.1"
+version = "0.2.2"
 description = "Nanobot channel plugin that connects nanobot-ai agents to an Agent Club IM server."
 readme = "README.md"
 requires-python = ">=3.10"
