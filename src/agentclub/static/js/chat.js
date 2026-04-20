@@ -669,24 +669,7 @@ async function handleFileSelect(event) {
     const file = event.target.files[0];
     if (!file || !currentChat) return;
     event.target.value = '';
-
-    const formData = new FormData();
-    formData.append('file', file);
-
-    try {
-        const res = await fetch('/api/upload', { method: 'POST', body: formData });
-        if (!res.ok) { alert('上传失败'); return; }
-        const data = await res.json();
-
-        socket.emit('send_message', {
-            chat_type: currentChat.type,
-            chat_id: currentChat.id,
-            content: '',
-            content_type: data.content_type,
-            file_url: data.url,
-            file_name: data.filename,
-        });
-    } catch { alert('上传失败'); }
+    await sendFiles([file]);
 }
 
 /* ── Image handling ──
@@ -703,22 +686,35 @@ async function handleImageSelect(event) {
     const files = Array.from(event.target.files).filter(f => f.type.startsWith('image/'));
     event.target.value = '';
     if (!files.length || !currentChat) return;
-    await sendImageFiles(files);
+    await sendFiles(files);
 }
 
-async function sendImageFiles(files) {
+/* Upload-and-send pipeline used by three entry points: drop, paste
+ * image, and (image / file) toolbar button. The server inspects the
+ * filename extension and returns the right content_type (image / audio
+ * / video / file), so the caller doesn't need to know or care — we
+ * just forward whatever came back in the send_message payload. Keeping
+ * a single helper (instead of duplicated "image" / "file" variants)
+ * means drag-drop and the paperclip button share the exact same code
+ * path, which is what the user actually expects.
+ *
+ * Errors are intentionally opaque ("上传失败") — the set of things that
+ * can fail here (too-big, wrong type, network, disk full on server)
+ * isn't actionable per-file, and the toast spam we'd get from per-
+ * item error messages when a multi-file drop fails is worse than the
+ * generic string. */
+async function sendFiles(files) {
     for (const file of files) {
-        if (!file.type.startsWith('image/')) continue;
-        await uploadAndSendImage(file);
+        await uploadAndSendFile(file);
     }
 }
 
-async function uploadAndSendImage(file) {
+async function uploadAndSendFile(file) {
     const formData = new FormData();
     formData.append('file', file);
     try {
         const res = await fetch('/api/upload', { method: 'POST', body: formData });
-        if (!res.ok) { alert('图片上传失败'); return; }
+        if (!res.ok) { alert('上传失败'); return; }
         const data = await res.json();
         socket.emit('send_message', {
             chat_type: currentChat.type,
@@ -728,7 +724,7 @@ async function uploadAndSendImage(file) {
             file_url: data.url,
             file_name: data.filename,
         });
-    } catch { alert('图片上传失败'); }
+    } catch { alert('上传失败'); }
 }
 
 /* ── Lightbox ── */
@@ -830,7 +826,7 @@ function setupInputHandlers() {
             }
             if (imageFiles.length) {
                 e.preventDefault();
-                sendImageFiles(imageFiles);
+                sendFiles(imageFiles);
                 return;
             }
         }
@@ -849,7 +845,7 @@ function setupInputHandlers() {
     mainArea.addEventListener('dragenter', (e) => {
         e.preventDefault();
         dragCounter++;
-        if (currentChat && hasImageFiles(e)) {
+        if (currentChat && hasDraggedFiles(e)) {
             document.getElementById('dropOverlay').classList.remove('hidden');
         }
     });
@@ -872,9 +868,9 @@ function setupInputHandlers() {
         dragCounter = 0;
         document.getElementById('dropOverlay').classList.add('hidden');
         if (!currentChat) return;
-        const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'));
+        const files = Array.from(e.dataTransfer.files);
         if (files.length) {
-            sendImageFiles(files);
+            sendFiles(files);
         }
     });
 
@@ -1168,17 +1164,14 @@ function insertPlainTextAtCaret(text) {
     sel.addRange(range);
 }
 
-function hasImageFiles(e) {
-    if (e.dataTransfer?.types?.includes('Files')) {
-        const items = e.dataTransfer.items;
-        if (items) {
-            for (const item of items) {
-                if (item.type.startsWith('image/')) return true;
-            }
-        }
-        return true; // Can't determine type during dragenter in some browsers
-    }
-    return false;
+/* Gate for the drag-drop overlay: show it whenever the drag payload
+ * contains any file(s). We intentionally do NOT narrow to images — the
+ * drop handler forwards the full set to /api/upload, and the server's
+ * allow-list decides what's accepted per-extension. Narrowing here
+ * would just reintroduce the old "overlay said send, drop silently
+ * ignored non-images" bug. */
+function hasDraggedFiles(e) {
+    return !!e.dataTransfer?.types?.includes('Files');
 }
 
 /* ── Typing indicator ── */

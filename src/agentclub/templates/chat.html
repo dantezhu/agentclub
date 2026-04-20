@@ -256,11 +256,13 @@
         <img id="lightboxImg" src="" alt="">
     </div>
 
-    <!-- Drag-drop overlay -->
+    <!-- Drag-drop overlay. Shown for any file drag (image OR other
+         supported types) — matches the paperclip toolbar button's
+         capability so the affordance isn't misleading. -->
     <div class="drop-overlay hidden" id="dropOverlay">
         <div class="drop-hint">
-            <div class="drop-icon" data-icon="image"></div>
-            <div>松开鼠标发送图片</div>
+            <div class="drop-icon" data-icon="paperclip"></div>
+            <div>松开鼠标上传文件</div>
         </div>
     </div>
 
