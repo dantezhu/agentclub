@@ -2049,48 +2049,34 @@ function formatDateTime(ts) {
          + `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-/* Format a "last active" timestamp for the offline-state subtitle, in
- * the same cascading-granularity style as WeChat / Telegram:
+/* Format a "last active" timestamp for the offline-state subtitle.
+ * Rules (flat, relative up to a week then switches to an absolute
+ * prefix so the reader doesn't need to do "what day is 20 天前?" math):
  *
  *   < 1 min     → "刚刚在线"
- *   < 60 min    → "X 分钟前在线"
- *   < 24 h      → "X 小时前在线"
- *   yesterday   → "昨天 HH:MM 在线"
- *   this week   → "星期X HH:MM 在线"
- *   same year   → "M月D日 在线"
- *   older       → "YYYY年M月D日 在线"
+ *   1–59 min    → "X分钟前在线"
+ *   1–23 h      → "X小时前在线"
+ *   1–6 days    → "X天前在线"
+ *   ≥ 7 days    → "最近在线：YYYY年M月D日 HH:mm"
  *
- * Intentionally a SEPARATE helper from formatTime — that one's for
- * message timestamps (which users scan for chronology) while this one
- * is for presence (where users want a quick social read, not a precise
- * time). Returns "离线" when ts is missing/zero (agent that has never
- * connected, or a user whose last_active_at was never recorded). */
+ * Returns "离线" when ts is missing/zero (agent that has never
+ * connected, or a user whose last_active_at was never recorded).
+ *
+ * Intentionally separate from formatTime() — that one is for message
+ * timestamps (chronological scanning); this one is for presence (quick
+ * social read of "how recently was this person around?"). */
 function formatLastActive(ts) {
     if (!ts) return '离线';
-    const d = new Date(ts * 1000);
-    const now = new Date();
-    const pad = n => String(n).padStart(2, '0');
-    const diffSec = Math.max(0, Math.floor(now.getTime() / 1000 - ts));
+    const now = Math.floor(Date.now() / 1000);
+    const diffSec = Math.max(0, now - ts);
     if (diffSec < 60) return '刚刚在线';
-    if (diffSec < 3600) return `${Math.floor(diffSec / 60)} 分钟前在线`;
-    if (diffSec < 86400 && d.toDateString() === now.toDateString()) {
-        return `${Math.floor(diffSec / 3600)} 小时前在线`;
-    }
-    const timeStr = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
-    const yesterday = new Date(now);
-    yesterday.setDate(now.getDate() - 1);
-    if (d.toDateString() === yesterday.toDateString()) {
-        return `昨天 ${timeStr} 在线`;
-    }
-    // Same calendar week (within last 6 days) → weekday name.
-    if (diffSec < 7 * 86400) {
-        const weekdays = ['星期日','星期一','星期二','星期三','星期四','星期五','星期六'];
-        return `${weekdays[d.getDay()]} ${timeStr} 在线`;
-    }
-    if (d.getFullYear() === now.getFullYear()) {
-        return `${d.getMonth() + 1}月${d.getDate()}日 在线`;
-    }
-    return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日 在线`;
+    if (diffSec < 3600) return `${Math.floor(diffSec / 60)}分钟前在线`;
+    if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}小时前在线`;
+    if (diffSec < 7 * 86400) return `${Math.floor(diffSec / 86400)}天前在线`;
+    const d = new Date(ts * 1000);
+    const pad = n => String(n).padStart(2, '0');
+    return `最近在线：${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日 `
+         + `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 /* HTML fragment for the direct-chat header subtitle. Online → green
