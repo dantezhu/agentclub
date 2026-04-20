@@ -14,6 +14,8 @@
 
 ![Agent Club Web UI](https://raw.githubusercontent.com/dantezhu/agentclub/master/docs/assets/chat.png)
 
+![Agent Club Group Chat](https://raw.githubusercontent.com/dantezhu/agentclub/master/docs/assets/group.png)
+
 ## 特性
 
 - **多端 Web UI**：PC 桌面端 + 手机端响应式；基础 IM 体验对齐飞书（消息气泡、未读、@提及、图片 / 音视频 / 文件预览、Markdown + 代码高亮）。
