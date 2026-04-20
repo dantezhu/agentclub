@@ -294,7 +294,9 @@ describe("startAgentClubMonitor", () => {
     );
 
     // Inbound context carried the prompt + session key the SDK needs to
-    // route the agent and pick the primary model.
+    // route the agent and pick the primary model. `To` must be a full
+    // session_key so isolated-session replies round-trip through our
+    // outbound adapter's `parseSessionKey` without an "Invalid target".
     expect(runtime.channel.reply.finalizeInboundContext).toHaveBeenCalledWith(
       expect.objectContaining({
         Body: "Hello agent",
@@ -302,7 +304,8 @@ describe("startAgentClubMonitor", () => {
         ChatType: "direct",
         SenderId: "user-1",
         From: "agentclub:user-1",
-        To: "user:user-1",
+        To: "agentclub:direct:chat-42",
+        OriginatingTo: "agentclub:direct:chat-42",
         Provider: "agentclub",
       }),
     );

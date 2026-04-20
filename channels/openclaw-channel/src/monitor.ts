@@ -6,6 +6,7 @@ import { AgentClubClient } from "./client.js";
 import { createInboundGateway, type InboundMessage } from "./gateway.js";
 import { setActiveClient, getRuntime } from "./runtime.js";
 import { inferContentTypeFromUploadType } from "./mime.js";
+import { toSessionKey } from "./session.js";
 import { basename } from "node:path";
 
 const CHANNEL_ID = "agentclub";
@@ -422,7 +423,20 @@ async function processInbound(
     return;
   }
 
-  const toField = msg.chatType === "group" ? `chat:${msg.chatId}` : `user:${msg.senderId}`;
+  // `To` / `OriginatingTo` must be a full session_key. When the agent
+  // uses an isolated session (or otherwise replies without specifying a
+  // target), OpenClaw core echoes `OriginatingTo` back to our outbound
+  // adapter, whose `parseSessionKey` requires the `agentclub:{kind}:{id}`
+  // form. Earlier revisions wrote `user:<senderId>` / `chat:<chatId>`
+  // here, which both (a) disagreed with our own `resolveDeliveryTarget`
+  // contract and (b) silently dropped replies as `Invalid target: …`.
+  //
+  // NB for direct chats: the IM server keys a direct conversation by
+  // its own `chat_id` (a uuid distinct from either participant's user
+  // id). That's what `sendMessage({chat_id: msg.chatId})` uses for
+  // replies, so we use the same id here — NOT `senderId` — to keep the
+  // inbound-to-outbound round-trip self-consistent.
+  const toField = toSessionKey(peerKind, msg.chatId);
 
   // 3. For group chats, fetch the current roster so we can (a) teach the
   //    LLM whose user_id maps to which display name and (b) let it mention
