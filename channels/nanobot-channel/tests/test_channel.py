@@ -611,6 +611,100 @@ class TestOutbound:
 
 
 # ---------------------------------------------------------------------
+# list_chats
+# ---------------------------------------------------------------------
+
+
+class _FakeHttpResponse:
+    """Minimal async-context-manager stand-in for ``aiohttp`` responses.
+
+    ``aiohttp.ClientSession.get()`` returns an async context manager whose
+    ``__aenter__`` yields the response — tests only need ``status`` and an
+    awaitable ``json()``, so we avoid the full aiohttp stack.
+    """
+
+    def __init__(self, *, status: int = 200, payload=None, raise_exc=None):
+        self.status = status
+        self._payload = payload
+        self._raise_exc = raise_exc
+
+    async def __aenter__(self):
+        if self._raise_exc is not None:
+            raise self._raise_exc
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def json(self):
+        return self._payload
+
+
+class TestListChats:
+    @pytest.mark.asyncio
+    async def test_list_chats_returns_server_payload_on_200(self, channel):
+        """Happy path — the agent gets back exactly what the IM server sent,
+        so it can scan ``directs[]`` for a ``peer_name`` match."""
+        payload = {
+            "groups": [{"id": "g1", "name": "General"}],
+            "directs": [
+                {"id": "dc-abc", "peer_id": "u-bob", "peer_name": "Bob"},
+            ],
+        }
+        channel._http.get = MagicMock(return_value=_FakeHttpResponse(payload=payload))
+
+        result = await channel.list_chats()
+
+        assert result == payload
+        # Verify the URL is joined against the configured server_url.
+        call_url = channel._http.get.call_args.args[0]
+        assert call_url == "http://localhost:5555/api/agent/chats"
+
+    @pytest.mark.asyncio
+    async def test_list_chats_returns_empty_shape_on_non_200(self, channel):
+        """A 500 from the server must not crash the agent loop — empty
+        shape lets callers fall through to "I don't know that peer"."""
+        channel._http.get = MagicMock(return_value=_FakeHttpResponse(status=500))
+
+        result = await channel.list_chats()
+
+        assert result == {"groups": [], "directs": []}
+
+    @pytest.mark.asyncio
+    async def test_list_chats_returns_empty_shape_on_transport_error(self, channel):
+        channel._http.get = MagicMock(
+            return_value=_FakeHttpResponse(raise_exc=RuntimeError("boom"))
+        )
+
+        result = await channel.list_chats()
+
+        assert result == {"groups": [], "directs": []}
+
+    @pytest.mark.asyncio
+    async def test_list_chats_returns_empty_shape_when_http_is_none(self, channel):
+        """Before ``start()`` is called there is no aiohttp session — the
+        helper must still behave sanely instead of raising AttributeError."""
+        channel._http = None
+
+        result = await channel.list_chats()
+
+        assert result == {"groups": [], "directs": []}
+
+    @pytest.mark.asyncio
+    async def test_list_chats_coerces_unexpected_shapes_to_empty_lists(self, channel):
+        """If the server (or a proxy) returns something weird — a bare
+        list, missing keys, non-list values — we don't want the agent to
+        trip over it. Missing/invalid fields default to ``[]``."""
+        channel._http.get = MagicMock(
+            return_value=_FakeHttpResponse(payload={"groups": "oops"})
+        )
+
+        result = await channel.list_chats()
+
+        assert result == {"groups": [], "directs": []}
+
+
+# ---------------------------------------------------------------------
 # Config / defaults
 # ---------------------------------------------------------------------
 

@@ -1,5 +1,6 @@
 import { io, type Socket } from "socket.io-client";
 import type {
+  AgentChatsResponse,
   AuthOkPayload,
   NewMessagePayload,
   SendMessagePayload,
@@ -209,6 +210,36 @@ export class AgentClubClient {
     } catch (err) {
       this.logger.warn(`listGroupMembers(${groupId}) failed: ${err}`);
       return [];
+    }
+  }
+
+  /**
+   * Fetch every chat the agent is known to participate in — every group
+   * it has joined and every direct chat an operator or another user has
+   * ever opened with it. Intended for the "Agent A, send Bob a reminder"
+   * workflow: the agent can scan ``directs[]`` for a matching ``peer_name``
+   * to find the ``chat_id`` to send to.
+   *
+   * This mirrors the security posture of the server: the IM server only
+   * returns chats the agent is authorized to write to anyway, so a hit
+   * in this list is also an implicit green light to send there.
+   *
+   * Returns ``{ groups: [], directs: [] }`` on any transport failure so
+   * callers can degrade gracefully instead of crashing the agent loop.
+   */
+  async listChats(): Promise<AgentChatsResponse> {
+    try {
+      const resp = await fetch(`${this.serverUrl}/api/agent/chats`, {
+        headers: { Authorization: `Bearer ${this.agentToken}` },
+      });
+      if (!resp.ok) {
+        this.logger.warn(`listChats() → HTTP ${resp.status}`);
+        return { groups: [], directs: [] };
+      }
+      return (await resp.json()) as AgentChatsResponse;
+    } catch (err) {
+      this.logger.warn(`listChats() failed: ${err}`);
+      return { groups: [], directs: [] };
     }
   }
 

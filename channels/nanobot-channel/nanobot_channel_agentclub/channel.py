@@ -823,3 +823,38 @@ class AgentClubChannel(BaseChannel):
         except Exception as exc:
             logger.debug("[agentclub] listGroupMembers({}) error: {}", group_id, exc)
             return []
+
+    async def list_chats(self) -> dict[str, list[dict[str, Any]]]:
+        """Return every group and direct chat this agent participates in.
+
+        Mirrors :meth:`AgentClubClient.listChats` in the OpenClaw channel and
+        targets the same ``/api/agent/chats`` endpoint. Intended for the
+        "reminder to Bob" workflow — an agent scans ``directs[]`` for a
+        ``peer_name`` match to find the ``chat_id`` it should ``send`` to.
+
+        Because the IM server only exposes chats the agent is authorized to
+        write to, a hit in this list is also implicit permission to send
+        there, which keeps agents from having to guess ``chat_id``s.
+
+        Returns ``{"groups": [], "directs": []}`` on any transport failure
+        so the agent loop can degrade gracefully (no name resolution is
+        still better than a crash).
+        """
+        empty: dict[str, list[dict[str, Any]]] = {"groups": [], "directs": []}
+        if self._http is None:
+            return empty
+        url = urljoin(self._server_url + "/", "api/agent/chats")
+        try:
+            async with self._http.get(url) as resp:
+                if resp.status != 200:
+                    logger.debug("[agentclub] listChats() → HTTP {}", resp.status)
+                    return empty
+                data = await resp.json()
+        except Exception as exc:
+            logger.debug("[agentclub] listChats() error: {}", exc)
+            return empty
+        if not isinstance(data, dict):
+            return empty
+        groups = data.get("groups") if isinstance(data.get("groups"), list) else []
+        directs = data.get("directs") if isinstance(data.get("directs"), list) else []
+        return {"groups": groups, "directs": directs}

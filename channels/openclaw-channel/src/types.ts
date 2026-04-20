@@ -84,6 +84,38 @@ export interface UploadResponse {
   content_type: string;
 }
 
+/** One group the agent is a member of, as returned by `/api/agent/chats`. */
+export interface AgentGroupChat {
+  id: string;
+  name: string;
+  avatar?: string | null;
+  description?: string | null;
+  created_at?: number;
+}
+
+/** One direct chat the agent participates in, as returned by `/api/agent/chats`.
+ *
+ * The `id` field is the ``direct_chats.id`` (the ``chat_id`` that must be
+ * passed to ``send_message`` for a direct message). The ``peer_*`` fields
+ * describe the human/agent on the other side of the conversation — look
+ * these up by display name when an operator asks the agent to "send a
+ * message to Bob".
+ */
+export interface AgentDirectChat {
+  id: string;
+  peer_id: string;
+  peer_name: string;
+  peer_avatar?: string | null;
+  peer_description?: string | null;
+  peer_is_agent?: boolean | number;
+}
+
+/** Response from GET /api/agent/chats */
+export interface AgentChatsResponse {
+  groups: AgentGroupChat[];
+  directs: AgentDirectChat[];
+}
+
 // -- runEmbeddedAgent result ------------------------------------------------
 
 export interface RunResultPayload {
