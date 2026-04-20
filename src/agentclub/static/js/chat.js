@@ -184,13 +184,38 @@ async function loadChats() {
     renderChatList();
 }
 
+// Order chats within one section by the timestamp of their most recent
+// message, newest first. Chats with no messages yet (a fresh group you
+// just joined, a direct chat that's never been opened) fall to the
+// bottom — sorting them to the top would bury real conversations under
+// empty shells. Sort is stable: within "no messages" the server's
+// original order (group creation time / direct-chat creation time) is
+// preserved, which matches how users learned to find those items.
+function sortBySectionLastMsg(items, keyPrefix) {
+    const withTime = items.map((it, i) => ({
+        it,
+        i,
+        ts: lastMessages[`${keyPrefix}_${it.id}`]?.created_at ?? null,
+    }));
+    withTime.sort((a, b) => {
+        if (a.ts === null && b.ts === null) return a.i - b.i;
+        if (a.ts === null) return 1;
+        if (b.ts === null) return -1;
+        return b.ts - a.ts;
+    });
+    return withTime.map((e) => e.it);
+}
+
 function renderChatList() {
     const el = document.getElementById('chatList');
     let html = '';
 
-    if (chats.groups.length) {
+    const sortedGroups = sortBySectionLastMsg(chats.groups, 'group');
+    const sortedDirects = sortBySectionLastMsg(chats.directs, 'direct');
+
+    if (sortedGroups.length) {
         html += '<div class="section-label">群组</div>';
-        for (const g of chats.groups) {
+        for (const g of sortedGroups) {
             const isActive = currentChat && currentChat.type === 'group' && currentChat.id === g.id;
             const initial = g.name.charAt(0);
             const isCreator = g.created_by === currentUser.id;
@@ -211,9 +236,9 @@ function renderChatList() {
         }
     }
 
-    if (chats.directs.length) {
+    if (sortedDirects.length) {
         html += '<div class="section-label">私聊</div>';
-        for (const d of chats.directs) {
+        for (const d of sortedDirects) {
             const isActive = currentChat && currentChat.type === 'direct' && currentChat.id === d.id;
             const initial = (d.peer_name || '?').charAt(0);
             const dot = d.peer_online ? '<span class="online-dot"></span>' : '';
@@ -1170,10 +1195,26 @@ function showTyping(name) {
 
 function updateChatPreview(msg) {
     const key = `${msg.chat_type}_${msg.chat_id}`;
-    lastMessages[key] = { sender_name: msg.sender_name, content: msg.content, content_type: msg.content_type };
+    const prevTs = lastMessages[key]?.created_at ?? null;
+    // Keep `created_at` in the cache — the chat-list sort reads it, and
+    // earlier revisions dropped it here, so a live app would keep chats
+    // frozen in the order the initial `/api/last-messages` returned.
+    lastMessages[key] = {
+        sender_name: msg.sender_name,
+        content: msg.content,
+        content_type: msg.content_type,
+        created_at: msg.created_at,
+    };
     const previewEl = document.getElementById(`preview_${key}`);
     if (previewEl) {
         previewEl.textContent = previewText(lastMessages[key]);
+    }
+    // Only re-render when the order could actually change. An echo of
+    // the chat that's already at the top of its section would do useless
+    // work every keystroke. The cheap check: if this message is newer
+    // than what we had, the position might move, so re-render.
+    if (msg.created_at != null && (prevTs == null || msg.created_at > prevTs)) {
+        renderChatList();
     }
 }
 
