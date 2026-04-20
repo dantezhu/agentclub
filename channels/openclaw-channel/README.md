@@ -92,15 +92,37 @@ Agent 在 OpenClaw 里正常返回文本即可，channel 负责：
 
 ### 发送图片 / 音频 / 视频 / 文件
 
-Channel 只接受**本地文件路径**：Agent 在返回 payload 里把文件绝对路径放到 `mediaUrl`（单个）或 `mediaUrls`（多个），channel 会：
+这条通路有**两个独立环节**，调试的时候最容易搞混：
 
-1. 读取本地文件；
-2. 调 `POST /api/agent/upload` 上传到 IM 服务端；
-3. 根据服务端返回的 MIME 自动标记 `content_type`（`image` / `audio` / `video` / `file`），在聊天里显示为缩略图 / 播放器 / 文件卡片。
+```
+Agent 输出 "MEDIA:xxx"
+       │
+       ▼
+OpenClaw rich-output parser          ← 约束层①（OpenClaw 上游）
+       │  把 MEDIA:xxx 解析为 payload.mediaUrl[s]
+       ▼
+agentclub channel (本插件)            ← 约束层②（本仓库代码）
+       │  readFile → POST /api/agent/upload → send_message
+       ▼
+Agent Club IM 服务端
+```
 
-> **行为变更**（v0.2.0）：远程 HTTP(S) URL 不再被下载和转发，channel 会直接抛错 / 忽略。动机是跟 Web UI 行为对齐（Web 端只支持上传本地文件），并避免 channel 承担任意 URL 的下载风险。需要把外部内容搬过来，请在 agent 侧自行下载到临时目录后再传路径。
+**Agent 作者该关心的写法**（环节①的约束）：
 
-具体 OpenClaw 的 RunResultPayload / messaging tool 调用形式请参考 [OpenClaw 官方文档](https://github.com/openclaw/openclaw)。
+| 写法 | 结果 |
+|------|------|
+| `MEDIA:./image.jpg` ✅ | 相对 agent workspace 的相对路径，被 parser 解析后传给 channel |
+| `MEDIA:https://example.com/x.jpg` ⚠️ | parser 会通过，但会被 channel 在环节②拒收（见下文）|
+| `MEDIA:/Users/xxx/image.jpg` ❌ | **绝对路径被 parser 拦截**，永远不会到达 channel，聊天界面上只会看到原始文本 |
+
+> OpenClaw rich-output parser 出于安全考虑禁止绝对路径，否则 agent 能读宿主机任意文件上传出去。所以 agent 要发图，标准姿势是**先把文件 copy 到自己的 workspace 目录、再用相对路径**。具体的 `MEDIA:` 语法与 workspace 解析规则请查阅 [OpenClaw 官方文档](https://github.com/openclaw/openclaw)。
+
+**Channel 这一侧的处理**（环节②，v0.2.0 起）：
+
+1. 只接受 parser 解析出的本地绝对路径；
+2. `readFile` → `POST /api/agent/upload`；
+3. 按服务端返回的 MIME 标记 `content_type`（`image` / `audio` / `video` / `file`），在聊天里显示为缩略图 / 播放器 / 文件卡片；
+4. 远程 HTTP(S) URL 会被直接抛错 / 跳过，动机是跟 Web UI 行为对齐（Web 端只支持上传本地文件）并避免 channel 承担任意 URL 的下载风险。要搬外部内容请在 agent 侧先下载到 workspace 再用相对路径发。
 
 ### 主动给已有联系人发消息
 
