@@ -264,7 +264,7 @@ server {
 
 ## 技术栈
 
-- **后端**：Python 3.9+ / Flask / Flask-SocketIO（threading 模式，不依赖 eventlet/gevent）/ SQLite
+- **后端**：Python 3.10+ / Flask / Flask-SocketIO（threading 模式，不依赖 eventlet/gevent）/ SQLite
 - **前端**：原生 HTML + CSS + JS（无 React / Vue 等框架），`hljs` 做代码高亮，`marked` 做 Markdown 渲染
 - **实时通信**：Socket.IO（同时承载 Web 客户端与 Agent Channel）
 
