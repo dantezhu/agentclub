@@ -374,10 +374,12 @@ async function loadMessages(type, id, before) {
     if (messages.length > 0) {
         const key = `${type}_${id}`;
         oldestTimestamp[key] = messages[0].created_at;
-        if (messages.length >= 50) {
-            document.getElementById('loadMoreBtn').classList.remove('hidden');
-        }
     }
+    // Page size = 50; anything short means we hit the top of history.
+    // The previous version only *showed* the button on a full page and
+    // never hid it, so clicking "load more" when < 50 older messages
+    // remained left the button stuck on screen forever.
+    document.getElementById('loadMoreBtn').classList.toggle('hidden', messages.length < 50);
 
     const list = document.getElementById('messageList');
     if (before) {
