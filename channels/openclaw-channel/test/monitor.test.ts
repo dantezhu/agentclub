@@ -29,16 +29,30 @@ vi.mock("openclaw/plugin-sdk/channel-core", () => ({
 // `vi.hoisted` is needed because `vi.mock` factories run before top-level
 // `const` declarations — without it the factory would close over an
 // undefined reference.
-const { loadWebMediaMock } = vi.hoisted(() => ({
-  loadWebMediaMock: vi.fn(async (mediaUrl: string) => ({
-    buffer: Buffer.from(`bytes-for-${mediaUrl}`),
-    contentType: "image/png",
-    fileName: mediaUrl.split("/").pop() ?? "file",
-    kind: "image",
-  })),
-}));
+const { loadWebMediaMock, getAgentScopedMediaLocalRootsMock } = vi.hoisted(
+  () => ({
+    loadWebMediaMock: vi.fn(async (mediaUrl: string) => ({
+      buffer: Buffer.from(`bytes-for-${mediaUrl}`),
+      contentType: "image/png",
+      fileName: mediaUrl.split("/").pop() ?? "file",
+      kind: "image",
+    })),
+    // Stubbed agent-scoped roots resolver. In production this returns the
+    // default media roots plus the agent's workspace; the tests just need
+    // a known array so we can assert it was threaded into `loadWebMedia`.
+    getAgentScopedMediaLocalRootsMock: vi.fn(
+      (_cfg: unknown, _agentId?: string) => [
+        "/tmp/workspace",
+        "/tmp/default-root",
+      ],
+    ),
+  }),
+);
 vi.mock("openclaw/plugin-sdk/web-media", () => ({
   loadWebMedia: loadWebMediaMock,
+}));
+vi.mock("openclaw/plugin-sdk/agent-media-payload", () => ({
+  getAgentScopedMediaLocalRoots: getAgentScopedMediaLocalRootsMock,
 }));
 
 // Mock socket.io-client
@@ -91,6 +105,11 @@ beforeEach(() => {
     fileName: mediaUrl.split("/").pop() ?? "file",
     kind: "image",
   }));
+  getAgentScopedMediaLocalRootsMock.mockClear();
+  getAgentScopedMediaLocalRootsMock.mockImplementation(() => [
+    "/tmp/workspace",
+    "/tmp/default-root",
+  ]);
 });
 
 function makeAccount(overrides: Partial<ResolvedAccount> = {}): ResolvedAccount {
@@ -585,15 +604,29 @@ describe("startAgentClubMonitor", () => {
     await new Promise((r) => setTimeout(r, 150));
 
     // Both media inputs went through the SDK helper, with the workspace
-    // dir forwarded so relative paths resolve correctly.
+    // dir AND the agent-scoped local-roots forwarded. Without the roots,
+    // absolute paths under a non-default agent's workspace would be
+    // rejected as "path-not-allowed" (the bug this helper plugs).
     expect(loadWebMediaMock).toHaveBeenCalledTimes(2);
     expect(loadWebMediaMock).toHaveBeenCalledWith(
       "https://cdn.example.com/cat.jpg",
-      expect.objectContaining({ workspaceDir: "/tmp/workspace" }),
+      expect.objectContaining({
+        workspaceDir: "/tmp/workspace",
+        localRoots: ["/tmp/workspace", "/tmp/default-root"],
+      }),
     );
     expect(loadWebMediaMock).toHaveBeenCalledWith(
       "./workspace-relative.png",
-      expect.objectContaining({ workspaceDir: "/tmp/workspace" }),
+      expect.objectContaining({
+        workspaceDir: "/tmp/workspace",
+        localRoots: ["/tmp/workspace", "/tmp/default-root"],
+      }),
+    );
+    // Roots must be computed per-agent; the helper receives the agent id
+    // the route picked, not `undefined`.
+    expect(getAgentScopedMediaLocalRootsMock).toHaveBeenCalledWith(
+      expect.anything(),
+      "main",
     );
 
     const sendCalls = mockSocket.emit.mock.calls.filter(

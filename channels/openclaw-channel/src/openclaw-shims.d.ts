@@ -46,8 +46,15 @@ declare module "openclaw/plugin-sdk/channel-core" {
 
   export interface PluginRuntime {
     agent: {
-      resolveAgentDir: (cfg: OpenClawConfig) => string;
-      resolveAgentWorkspaceDir: (cfg: OpenClawConfig) => string;
+      resolveAgentDir: (cfg: OpenClawConfig, agentId?: string) => string;
+      /**
+       * Returns the absolute path of the agent's workspace directory.
+       * For the default agent this is `~/.openclaw/workspace`; non-default
+       * agents get their own subdirectory. Pass `agentId` explicitly when
+       * dispatching for a specific agent — the no-arg form resolves to the
+       * default agent, which is the wrong base for relative `MEDIA:` paths.
+       */
+      resolveAgentWorkspaceDir: (cfg: OpenClawConfig, agentId?: string) => string;
       resolveAgentTimeoutMs: (cfg: OpenClawConfig) => number;
       runEmbeddedAgent: (params: {
         sessionId: string;
@@ -331,6 +338,26 @@ declare module "openclaw/plugin-sdk/web-media" {
     mediaUrl: string,
     options?: WebMediaOptions,
   ): Promise<WebMediaResult>;
+}
+
+// ---------------------------------------------------------------------------
+// openclaw/plugin-sdk/agent-media-payload
+// ---------------------------------------------------------------------------
+// `getAgentScopedMediaLocalRoots(cfg, agentId)` is the same helper core
+// uses in `deliver.ts` (via `resolveAgentScopedOutboundMediaAccess`) to
+// compute the allowlist passed into an outbound adapter's `sendMedia`.
+// Channels that hand-roll their own reply dispatch — like we do in
+// `monitor.ts` via `dispatchReplyWithBufferedBlockDispatcher` — have to
+// call this themselves; otherwise `loadWebMedia` falls back to
+// `getDefaultLocalRoots()`, which doesn't cover non-default agent
+// workspaces and rejects their absolute paths as `path-not-allowed`.
+declare module "openclaw/plugin-sdk/agent-media-payload" {
+  import type { OpenClawConfig } from "openclaw/plugin-sdk/channel-core";
+
+  export function getAgentScopedMediaLocalRoots(
+    cfg: OpenClawConfig,
+    agentId?: string,
+  ): readonly string[];
 }
 
 // ---------------------------------------------------------------------------

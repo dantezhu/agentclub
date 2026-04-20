@@ -1,5 +1,6 @@
 import type { PluginLogger, OpenClawConfig } from "openclaw/plugin-sdk/channel-core";
 import { loadWebMedia } from "openclaw/plugin-sdk/web-media";
+import { getAgentScopedMediaLocalRoots } from "openclaw/plugin-sdk/agent-media-payload";
 import type { ResolvedAccount, NewMessagePayload } from "./types.js";
 import { AgentClubClient } from "./client.js";
 import { createInboundGateway, type InboundMessage } from "./gateway.js";
@@ -140,13 +141,54 @@ export interface MonitorContext {
  * relative paths (`MEDIA:./image.png`) consistently. Returns undefined on
  * any failure — `loadWebMedia` then falls back to its default roots,
  * which on a real host already include the canonical workspace.
+ *
+ * The `agentId` argument matters for non-default agents: without it the
+ * SDK resolves to the default agent's workspace, and relative paths from
+ * a non-default agent would anchor to the wrong directory.
  */
-function resolveAgentWorkspace(cfg: OpenClawConfig): string | undefined {
+function resolveAgentWorkspace(
+  cfg: OpenClawConfig,
+  agentId?: string,
+): string | undefined {
   try {
-    return getRuntime().agent.resolveAgentWorkspaceDir(cfg);
+    return getRuntime().agent.resolveAgentWorkspaceDir(cfg, agentId);
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Mirrors OpenClaw core's own `resolveAgentScopedOutboundMediaAccess` by
+ * returning the agent-scoped `localRoots` allowlist (default roots PLUS
+ * the agent's workspace). The core injects this into outbound adapters'
+ * contexts automatically, but `dispatchReplyWithBufferedBlockDispatcher`
+ * hands us raw payloads instead — so without this helper, `loadWebMedia`
+ * falls back to `getDefaultLocalRoots()` and rejects absolute paths
+ * under a non-default agent's workspace as `path-not-allowed`.
+ */
+function resolveMediaLocalRoots(
+  cfg: OpenClawConfig,
+  agentId?: string,
+): readonly string[] | undefined {
+  try {
+    return getAgentScopedMediaLocalRoots(cfg, agentId);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * `loadWebMedia` throws a `LocalMediaAccessError` with a machine-readable
+ * `.code` (e.g. `not-found`, `path-not-allowed`, `invalid-file-url`). We
+ * surface that code in the error log so "the agent's MEDIA: got silently
+ * dropped" bug reports can be triaged without attaching a debugger. We
+ * duck-type on `.code` rather than `instanceof` because the SDK's error
+ * class isn't exported as a stable type.
+ */
+function extractMediaErrorCode(err: unknown): string | undefined {
+  if (typeof err !== "object" || err === null) return undefined;
+  const code = (err as { code?: unknown }).code;
+  return typeof code === "string" ? code : undefined;
 }
 
 /**
@@ -499,11 +541,20 @@ async function processInbound(
           // Resolve media inputs through the SDK helper so remote URLs,
           // absolute paths (allowlist-checked), and relative paths
           // (workspace-anchored) all work out of the box — same contract
-          // as feishu / telegram / matrix / discord / whatsapp.
-          const workspaceDir = resolveAgentWorkspace(cfg);
+          // as feishu / telegram / matrix / discord / whatsapp. We pass
+          // the agent-scoped roots explicitly because the buffered-block
+          // dispatcher bypasses the outbound adapter, so core doesn't
+          // inject `mediaLocalRoots` for us (canonical call site is
+          // `deliver.ts` → `resolveAgentScopedOutboundMediaAccess` in
+          // the SDK).
+          const workspaceDir = resolveAgentWorkspace(cfg, route.agentId);
+          const localRoots = resolveMediaLocalRoots(cfg, route.agentId);
           for (const path of mediaUrls) {
             try {
-              const loaded = await loadWebMedia(path, { workspaceDir });
+              const loaded = await loadWebMedia(path, {
+                workspaceDir,
+                localRoots,
+              });
               const fileName =
                 loaded.fileName ?? (basename(path) || "file");
               const upload = await client.uploadFile(
@@ -521,8 +572,15 @@ async function processInbound(
                 file_name: upload.filename,
               });
             } catch (err) {
+              // Tag the LocalMediaAccessError `.code` into the log so
+              // `not-found` vs `path-not-allowed` vs `invalid-file-url`
+              // is visible at a glance — that's usually enough to tell
+              // "agent typo" from "need to configure mediaLocalRoots".
+              const code = extractMediaErrorCode(err);
               log.error(
-                `Failed to deliver media (${path}): ${formatLogArg(err)}`,
+                `Failed to deliver media (path=${path}, code=${
+                  code ?? "<unknown>"
+                }): ${formatLogArg(err)}`,
               );
             }
           }
