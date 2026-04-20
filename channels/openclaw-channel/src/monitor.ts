@@ -1,10 +1,10 @@
 import type { PluginLogger, OpenClawConfig } from "openclaw/plugin-sdk/channel-core";
+import { loadWebMedia } from "openclaw/plugin-sdk/web-media";
 import type { ResolvedAccount, NewMessagePayload } from "./types.js";
 import { AgentClubClient } from "./client.js";
 import { createInboundGateway, type InboundMessage } from "./gateway.js";
 import { setActiveClient, getRuntime } from "./runtime.js";
-import { inferContentTypeFromUploadType, isRemoteHttpUrl } from "./mime.js";
-import { readFile } from "node:fs/promises";
+import { inferContentTypeFromUploadType } from "./mime.js";
 import { basename } from "node:path";
 
 const CHANNEL_ID = "agentclub";
@@ -133,6 +133,20 @@ export interface MonitorContext {
   cfg: OpenClawConfig;
   abortSignal: AbortSignal;
   log: PluginLogger;
+}
+
+/**
+ * Returns the agent's workspace dir so `loadWebMedia` can resolve
+ * relative paths (`MEDIA:./image.png`) consistently. Returns undefined on
+ * any failure — `loadWebMedia` then falls back to its default roots,
+ * which on a real host already include the canonical workspace.
+ */
+function resolveAgentWorkspace(cfg: OpenClawConfig): string | undefined {
+  try {
+    return getRuntime().agent.resolveAgentWorkspaceDir(cfg);
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -482,27 +496,27 @@ async function processInbound(
                 : {}),
             });
           }
+          // Resolve media inputs through the SDK helper so remote URLs,
+          // absolute paths (allowlist-checked), and relative paths
+          // (workspace-anchored) all work out of the box — same contract
+          // as feishu / telegram / matrix / discord / whatsapp.
+          const workspaceDir = resolveAgentWorkspace(cfg);
           for (const path of mediaUrls) {
             try {
-              // Mirror the Web UI: only local file paths are accepted.
-              // Remote http(s) URLs are skipped with a warning so the
-              // agent's logs make the misuse obvious — agents must
-              // download the asset locally first and hand us the path.
-              if (isRemoteHttpUrl(path)) {
-                log.warn(
-                  `Skipping remote URL in agent reply (only local files are supported): ${path}`,
-                );
-                continue;
-              }
+              const loaded = await loadWebMedia(path, { workspaceDir });
+              const fileName =
+                loaded.fileName ?? (basename(path) || "file");
               const upload = await client.uploadFile(
-                new Uint8Array(await readFile(path)),
-                basename(path),
+                new Uint8Array(loaded.buffer),
+                fileName,
               );
               client.sendMessage({
                 chat_type: msg.chatType as "group" | "direct",
                 chat_id: msg.chatId,
                 content: "",
-                content_type: inferContentTypeFromUploadType(upload.content_type),
+                content_type: inferContentTypeFromUploadType(
+                  loaded.contentType ?? upload.content_type,
+                ),
                 file_url: upload.url,
                 file_name: upload.filename,
               });

@@ -92,37 +92,45 @@ Agent 在 OpenClaw 里正常返回文本即可，channel 负责：
 
 ### 发送图片 / 音频 / 视频 / 文件
 
-这条通路有**两个独立环节**，调试的时候最容易搞混：
+从 **v0.2.2** 起，本插件把媒体输入统一交给 OpenClaw SDK 的 `loadWebMedia`（飞书 / Telegram / Matrix / Discord / WhatsApp 同款），Agent 只要关心自己输出什么样的 `MEDIA:` 即可：
+
+| 写法 | 结果 |
+|------|------|
+| `MEDIA:./image.jpg` ✅ | 相对 agent workspace 解析，最稳，推荐 |
+| `MEDIA:/abs/path/image.jpg` ✅ | 绝对路径，前提是落在 `mediaLocalRoots` 白名单（默认包含 agent workspace）里 |
+| `MEDIA:https://cdn.example.com/x.jpg` ✅ | SDK 负责下载（带 SSRF 防护 + 大小上限）|
+
+底层链路：
 
 ```
 Agent 输出 "MEDIA:xxx"
        │
        ▼
-OpenClaw rich-output parser          ← 约束层①（OpenClaw 上游）
+OpenClaw rich-output parser
        │  把 MEDIA:xxx 解析为 payload.mediaUrl[s]
        ▼
-agentclub channel (本插件)            ← 约束层②（本仓库代码）
-       │  readFile → POST /api/agent/upload → send_message
+agentclub channel (本插件)
+       │  loadWebMedia → POST /api/agent/upload → send_message
        ▼
 Agent Club IM 服务端
 ```
 
-**Agent 作者该关心的写法**（环节①的约束）：
+`loadWebMedia` 帮我们处理掉了：
 
-| 写法 | 结果 |
-|------|------|
-| `MEDIA:./image.jpg` ✅ | 相对 agent workspace 的相对路径，被 parser 解析后传给 channel |
-| `MEDIA:https://example.com/x.jpg` ⚠️ | parser 会通过，但会被 channel 在环节②拒收（见下文）|
-| `MEDIA:/Users/xxx/image.jpg` ❌ | **绝对路径被 parser 拦截**，永远不会到达 channel，聊天界面上只会看到原始文本 |
+1. 远程 URL 下载（含 SSRF 黑名单：loopback / link-local / 私网默认拒，除非操作者显式放开）；
+2. 绝对路径的 `localRoots` 白名单校验（CVE-2026-26321 后的强化路径）；
+3. 相对路径按 agent workspace 解析；
+4. 大小上限、MIME 嗅探、文件名回填。
 
-> OpenClaw rich-output parser 出于安全考虑禁止绝对路径，否则 agent 能读宿主机任意文件上传出去。所以 agent 要发图，标准姿势是**先把文件 copy 到自己的 workspace 目录、再用相对路径**。具体的 `MEDIA:` 语法与 workspace 解析规则请查阅 [OpenClaw 官方文档](https://github.com/openclaw/openclaw)。
+插件侧只负责：
 
-**Channel 这一侧的处理**（环节②，v0.2.0 起）：
+1. 拿 `loadWebMedia` 返回的 buffer；
+2. `POST /api/agent/upload` 上传到 IM；
+3. 按服务端返回的 MIME 标记 `content_type`（`image` / `audio` / `video` / `file`），在聊天里显示为缩略图 / 播放器 / 文件卡片。
 
-1. 只接受 parser 解析出的本地绝对路径；
-2. `readFile` → `POST /api/agent/upload`；
-3. 按服务端返回的 MIME 标记 `content_type`（`image` / `audio` / `video` / `file`），在聊天里显示为缩略图 / 播放器 / 文件卡片；
-4. 远程 HTTP(S) URL 会被直接抛错 / 跳过，动机是跟 Web UI 行为对齐（Web 端只支持上传本地文件）并避免 channel 承担任意 URL 的下载风险。要搬外部内容请在 agent 侧先下载到 workspace 再用相对路径发。
+**想收紧白名单**：在 OpenClaw 配置里声明 `channels.agentclub.mediaLocalRoots`，只有落在这些目录下的绝对路径会被读取。不配置时走 SDK 默认 roots（包含 agent workspace），一般就够了。
+
+> 老版本 (<= v0.2.1) 的行为是只接受本地路径 + 用裸 `readFile` 读，既拒了远程 URL 又把相对路径按宿主机 `cwd` 解析，导致 `MEDIA:./x.png` 经常 `ENOENT`。v0.2.2 一次性修掉。
 
 ### 主动给已有联系人发消息
 

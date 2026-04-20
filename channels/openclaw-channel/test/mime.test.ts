@@ -1,8 +1,5 @@
 import { describe, it, expect } from "vitest";
-import {
-  inferContentTypeFromUploadType,
-  isRemoteHttpUrl,
-} from "../src/mime.js";
+import { inferContentTypeFromUploadType } from "../src/mime.js";
 
 describe("inferContentTypeFromUploadType", () => {
   it("accepts server bucket names", () => {
@@ -31,18 +28,3 @@ describe("inferContentTypeFromUploadType", () => {
   });
 });
 
-describe("isRemoteHttpUrl", () => {
-  it("recognises http and https", () => {
-    expect(isRemoteHttpUrl("http://example.com/a.png")).toBe(true);
-    expect(isRemoteHttpUrl("https://example.com/a.png")).toBe(true);
-    expect(isRemoteHttpUrl("HTTPS://EXAMPLE.COM/a.png")).toBe(true);
-  });
-
-  it("rejects non-http schemes and bare paths", () => {
-    expect(isRemoteHttpUrl("file:///tmp/a.png")).toBe(false);
-    expect(isRemoteHttpUrl("/tmp/a.png")).toBe(false);
-    expect(isRemoteHttpUrl("./a.png")).toBe(false);
-    expect(isRemoteHttpUrl("data:image/png;base64,xxx")).toBe(false);
-    expect(isRemoteHttpUrl("")).toBe(false);
-  });
-});

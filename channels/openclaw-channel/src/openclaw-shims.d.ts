@@ -296,6 +296,44 @@ declare module "openclaw/plugin-sdk/channel-core" {
 }
 
 // ---------------------------------------------------------------------------
+// openclaw/plugin-sdk/web-media
+// ---------------------------------------------------------------------------
+// Used to resolve outbound media inputs from three shapes — remote http(s)
+// URLs, absolute local paths (allowlisted via `localRoots`), and relative
+// paths (resolved against `workspaceDir`) — into a single Buffer ready for
+// upload. This is the same helper the bundled feishu / telegram / matrix
+// / discord / whatsapp channels use; going through it gets us their SSRF
+// policy, byte-cap, and `CVE-2026-26321` path-allowlist checks for free.
+declare module "openclaw/plugin-sdk/web-media" {
+  export interface WebMediaResult {
+    buffer: Buffer;
+    contentType?: string;
+    kind?: string;
+    fileName?: string;
+  }
+
+  export interface WebMediaOptions {
+    maxBytes?: number;
+    /**
+     * Roots under which absolute local paths are allowed. `"any"` disables
+     * the check and is deprecated upstream — pass an explicit list instead.
+     * `undefined` falls back to the SDK's default roots (which include the
+     * active agent workspace, so most legitimate `MEDIA:./x.png` paths
+     * just work without any cfg).
+     */
+    localRoots?: readonly string[] | "any";
+    /** Base directory used to resolve relative paths like `./a.png`. */
+    workspaceDir?: string;
+    optimizeImages?: boolean;
+  }
+
+  export function loadWebMedia(
+    mediaUrl: string,
+    options?: WebMediaOptions,
+  ): Promise<WebMediaResult>;
+}
+
+// ---------------------------------------------------------------------------
 // openclaw/plugin-sdk/runtime-store
 // ---------------------------------------------------------------------------
 declare module "openclaw/plugin-sdk/runtime-store" {

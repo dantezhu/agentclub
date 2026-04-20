@@ -3,13 +3,13 @@ import {
   createChannelPluginBase,
 } from "openclaw/plugin-sdk/channel-core";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/channel-core";
+import { loadWebMedia } from "openclaw/plugin-sdk/web-media";
 import type { AgentClubConfig, ResolvedAccount } from "./types.js";
 import { resolveAccount, inspectAccount } from "./setup.js";
 import { parseSessionKey } from "./session.js";
-import { getActiveClient } from "./runtime.js";
+import { getActiveClient, tryGetRuntime } from "./runtime.js";
 import { startAgentClubMonitor } from "./monitor.js";
-import { inferContentTypeFromUploadType, isRemoteHttpUrl } from "./mime.js";
-import { readFile } from "node:fs/promises";
+import { inferContentTypeFromUploadType } from "./mime.js";
 import { basename } from "node:path";
 
 export { resolveAccount, inspectAccount } from "./setup.js";
@@ -23,6 +23,26 @@ function getAgentClubSection(cfg: OpenClawConfig | Record<string, unknown>): Age
     | undefined;
   const section = channels?.["agentclub"] as AgentClubConfig | undefined;
   return section ?? null;
+}
+
+/**
+ * Best-effort resolver for the agent's workspace directory, used by
+ * `loadWebMedia` to anchor relative paths (`MEDIA:./image.png`).
+ *
+ * The runtime store is populated by the plugin entry on startup, so this
+ * only returns `undefined` in synthetic test contexts where we're calling
+ * `sendMedia` without booting the full plugin. In that case `loadWebMedia`
+ * falls back to `getDefaultLocalRoots()`, which already includes the
+ * canonical agent workspace on a real host.
+ */
+function resolveWorkspaceDir(cfg: OpenClawConfig): string | undefined {
+  const runtime = tryGetRuntime();
+  if (!runtime) return undefined;
+  try {
+    return runtime.agent.resolveAgentWorkspaceDir(cfg);
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -138,43 +158,49 @@ export const agentClubPlugin = createChatChannelPlugin<ResolvedAccount>({
       async sendMedia(params) {
         const parsed = parseSessionKey(params.to);
         if (!parsed) throw new Error(`Invalid target: ${params.to}`);
+        if (!params.mediaUrl) return {};
 
         const client = getActiveClient();
         const caption = params.text || "";
 
-        // Mirror the Web UI: only local file paths are accepted. Both
-        // `mediaUrl` and `mediaLocalRoots` are treated as paths, uploaded
-        // to `/api/agent/upload`, and sent as file bubbles referencing the
-        // server-issued `/media/uploads/...` URL. Remote http(s) URLs are
-        // rejected — agents wanting to forward a remote asset must
-        // download it locally first.
-        const paths: string[] = [];
-        if (params.mediaUrl) paths.push(params.mediaUrl);
-        for (const p of params.mediaLocalRoots ?? []) {
-          if (p) paths.push(p);
-        }
+        // Funnel every outbound media input through the SDK's
+        // `loadWebMedia` — same helper feishu / telegram / matrix /
+        // discord / whatsapp call. It accepts three shapes:
+        //   * `https?://…`           — fetched with SSRF + byte cap
+        //   * absolute path          — allowlisted against `localRoots`
+        //   * relative path          — resolved against `workspaceDir`
+        // so we don't have to replicate any of that (including the
+        // post-CVE-2026-26321 allowlist check) in plugin code.
+        //
+        // `mediaLocalRoots` comes from the outbound context (core reads
+        // it out of `channels.agentclub.mediaLocalRoots` if the operator
+        // configured one) and is an allowlist, NOT a list of paths to
+        // upload — older revisions of this plugin got that wrong.
+        const workspaceDir = resolveWorkspaceDir(params.cfg);
+        const loaded = await loadWebMedia(params.mediaUrl, {
+          localRoots: params.mediaLocalRoots?.length
+            ? params.mediaLocalRoots
+            : undefined,
+          workspaceDir,
+        });
 
-        for (let i = 0; i < paths.length; i++) {
-          const path = paths[i]!;
-          if (isRemoteHttpUrl(path)) {
-            throw new Error(
-              `sendMedia: remote URLs are not supported, only local file paths (got: ${path}). ` +
-                `Download the file locally first, then pass its path.`,
-            );
-          }
-          const upload = await client.uploadFile(
-            new Uint8Array(await readFile(path)),
-            basename(path),
-          );
-          client.sendMessage({
-            chat_type: parsed.chatType,
-            chat_id: parsed.chatId,
-            content: i === 0 ? caption : "",
-            content_type: inferContentTypeFromUploadType(upload.content_type),
-            file_url: upload.url,
-            file_name: upload.filename,
-          });
-        }
+        const fileName =
+          loaded.fileName ??
+          (basename(params.mediaUrl) || "file");
+        const upload = await client.uploadFile(
+          new Uint8Array(loaded.buffer),
+          fileName,
+        );
+        client.sendMessage({
+          chat_type: parsed.chatType,
+          chat_id: parsed.chatId,
+          content: caption,
+          content_type: inferContentTypeFromUploadType(
+            loaded.contentType ?? upload.content_type,
+          ),
+          file_url: upload.url,
+          file_name: upload.filename,
+        });
 
         return {};
       },

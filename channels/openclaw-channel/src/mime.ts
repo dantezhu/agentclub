@@ -19,12 +19,3 @@ export function inferContentTypeFromUploadType(
   return "file";
 }
 
-/**
- * True if `url` looks like an http(s) URL. Used to reject remote URLs in
- * agent replies — mirroring the web UI, channels only accept local file
- * paths that can be uploaded to the IM server. Agents wanting to forward
- * a remote asset must download it locally first.
- */
-export function isRemoteHttpUrl(url: string): boolean {
-  return /^https?:\/\//i.test(url);
-}

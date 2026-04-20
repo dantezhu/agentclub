@@ -21,6 +21,26 @@ vi.mock("openclaw/plugin-sdk/channel-core", () => ({
   defineSetupPluginEntry: vi.fn((opts: any) => opts),
 }));
 
+// Stub the SDK's web-media loader. Real implementation handles remote
+// fetch + local allowlist + workspace-relative resolution; the tests only
+// need to observe what we feed it and return a canned buffer so the
+// downstream `uploadFile` / `send_message` path still exercises.
+//
+// `vi.hoisted` is needed because `vi.mock` factories run before top-level
+// `const` declarations — without it the factory would close over an
+// undefined reference.
+const { loadWebMediaMock } = vi.hoisted(() => ({
+  loadWebMediaMock: vi.fn(async (mediaUrl: string) => ({
+    buffer: Buffer.from(`bytes-for-${mediaUrl}`),
+    contentType: "image/png",
+    fileName: mediaUrl.split("/").pop() ?? "file",
+    kind: "image",
+  })),
+}));
+vi.mock("openclaw/plugin-sdk/web-media", () => ({
+  loadWebMedia: loadWebMediaMock,
+}));
+
 // Mock socket.io-client
 const _handlers: Record<string, Function[]> = {};
 const mockSocket = {
@@ -64,6 +84,13 @@ vi.stubGlobal("fetch", fetchMock);
 beforeEach(() => {
   fetchMock.mockReset();
   fetchMock.mockResolvedValue(new Response("[]", { status: 200 }));
+  loadWebMediaMock.mockClear();
+  loadWebMediaMock.mockImplementation(async (mediaUrl: string) => ({
+    buffer: Buffer.from(`bytes-for-${mediaUrl}`),
+    contentType: "image/png",
+    fileName: mediaUrl.split("/").pop() ?? "file",
+    kind: "image",
+  }));
 });
 
 function makeAccount(overrides: Partial<ResolvedAccount> = {}): ResolvedAccount {
@@ -512,18 +539,119 @@ describe("startAgentClubMonitor", () => {
     await monitorPromise;
   });
 
-  it("skips remote http(s) URLs in agent replies with a warning, mirroring the Web UI", async () => {
-    // Policy: agents can only attach local files, exactly like human
-    // users uploading from the Web UI. Remote URLs are logged and
-    // dropped so the agent's maintainer can see the misuse in the
-    // plugin log and teach the agent to download first.
+  it("relays reply media via loadWebMedia → upload → send_message", async () => {
+    // `loadWebMedia` is the single entrypoint for three input shapes —
+    // https URLs, absolute paths (allowlisted), and relative paths
+    // (resolved against the agent's workspace). The monitor must hand
+    // each one to the SDK helper and wire the returned buffer through
+    // `client.uploadFile` into a media-bearing `send_message`.
+    fetchMock.mockImplementation(async (input: any) => {
+      const url = typeof input === "string" ? input : input.url;
+      if (url.endsWith("/api/agent/upload")) {
+        return new Response(
+          JSON.stringify({
+            url: "/media/uploads/fake.png",
+            filename: "fake.png",
+            content_type: "image/png",
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response("[]", { status: 200 });
+    });
+
     const runtime = makeRuntime({
       replyPayload: {
         text: "Here you go:",
         mediaUrls: [
           "https://cdn.example.com/cat.jpg",
-          "http://example.com/voice.mp3",
+          "./workspace-relative.png",
         ] as unknown as string[],
+      } as any,
+    });
+    const log = makeLogger();
+    setRuntime(runtime as any);
+    const monitorPromise = startAgentClubMonitor({
+      account: makeAccount(),
+      cfg: {} as any,
+      abortSignal: abortController.signal,
+      log,
+    });
+
+    triggerSocketEvent("auth_ok", AUTH_OK);
+    await new Promise((r) => setTimeout(r, 50));
+
+    triggerSocketEvent("new_message", makeInboundMsg());
+    await new Promise((r) => setTimeout(r, 150));
+
+    // Both media inputs went through the SDK helper, with the workspace
+    // dir forwarded so relative paths resolve correctly.
+    expect(loadWebMediaMock).toHaveBeenCalledTimes(2);
+    expect(loadWebMediaMock).toHaveBeenCalledWith(
+      "https://cdn.example.com/cat.jpg",
+      expect.objectContaining({ workspaceDir: "/tmp/workspace" }),
+    );
+    expect(loadWebMediaMock).toHaveBeenCalledWith(
+      "./workspace-relative.png",
+      expect.objectContaining({ workspaceDir: "/tmp/workspace" }),
+    );
+
+    const sendCalls = mockSocket.emit.mock.calls.filter(
+      (c: unknown[]) => c[0] === "send_message",
+    );
+    // One text bubble + two media bubbles.
+    expect(sendCalls).toHaveLength(3);
+    const mediaSends = sendCalls.slice(1).map((c) => c[1]);
+    for (const sent of mediaSends) {
+      expect(sent).toMatchObject({
+        chat_type: "direct",
+        chat_id: "chat-42",
+        content: "",
+        content_type: "image",
+        file_url: "/media/uploads/fake.png",
+      });
+    }
+
+    abortController.abort();
+    await monitorPromise;
+  });
+
+  it("logs and skips a single media input on loadWebMedia failure without aborting the rest", async () => {
+    // Bad path / SSRF reject / over-limit — any `loadWebMedia` reject
+    // should be caught so one bad attachment doesn't block the others
+    // or the text reply. The upstream prompt explicitly teaches agents
+    // which path shapes are allowed, so an error here is usually an
+    // agent-authoring issue we just want surfaced in the plugin log.
+    loadWebMediaMock.mockImplementation(async (mediaUrl: string) => {
+      if (mediaUrl.includes("bad")) {
+        throw new Error("Path outside allowed file-read boundary");
+      }
+      return {
+        buffer: Buffer.from("ok"),
+        contentType: "image/png",
+        fileName: "good.png",
+        kind: "image",
+      };
+    });
+    fetchMock.mockImplementation(async (input: any) => {
+      const url = typeof input === "string" ? input : input.url;
+      if (url.endsWith("/api/agent/upload")) {
+        return new Response(
+          JSON.stringify({
+            url: "/media/uploads/good.png",
+            filename: "good.png",
+            content_type: "image/png",
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response("[]", { status: 200 });
+    });
+
+    const runtime = makeRuntime({
+      replyPayload: {
+        text: "Report:",
+        mediaUrls: ["/bad/abs/path.png", "./good.png"] as unknown as string[],
       } as any,
     });
     const log = makeLogger();
@@ -544,16 +672,16 @@ describe("startAgentClubMonitor", () => {
     const sendCalls = mockSocket.emit.mock.calls.filter(
       (c: unknown[]) => c[0] === "send_message",
     );
-    // Only the text bubble — both remote URLs were dropped.
-    expect(sendCalls).toHaveLength(1);
-    expect(sendCalls[0][1]).toMatchObject({ content_type: "text" });
+    // Text + one successful media (the bad one was dropped).
+    expect(sendCalls).toHaveLength(2);
+    expect(sendCalls[1][1]).toMatchObject({ content_type: "image" });
 
-    // Both URLs logged as warnings with an actionable message.
-    const warnMessages = log.warn.mock.calls.map((c: unknown[]) => c[0]);
-    expect(warnMessages.some((m: string) => m.includes("cat.jpg"))).toBe(true);
-    expect(warnMessages.some((m: string) => m.includes("voice.mp3"))).toBe(true);
+    // Error surfaced with the offending path embedded for debuggability.
+    const errorMessages = log.error.mock.calls.map((c: unknown[]) => c[0]);
     expect(
-      warnMessages.every((m: string) => m.includes("only local files")),
+      errorMessages.some(
+        (m: string) => m.includes("/bad/abs/path.png") && m.includes("Failed"),
+      ),
     ).toBe(true);
 
     abortController.abort();

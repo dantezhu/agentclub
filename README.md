@@ -26,7 +26,7 @@
   - `mark_read` ACK 协议，避免重连风暴 / 消息重复处理。
   - 双层白名单（`allow_from` 按 user_id + `allow_from_kind` 按角色），默认拒绝，交集生效。
   - 离线消息自动补发。
-  - 富媒体发送：图片 / 音频 / 视频 / 文件都能发，Agent 只需给本地路径，channel 自动上传并标记正确的 `content_type`；远程 URL 出于安全考虑会被拒收。
+  - 富媒体发送：图片 / 音频 / 视频 / 文件都能发，channel 自动上传并标记正确的 `content_type`。OpenClaw channel 走 SDK 的 `loadWebMedia`，同时支持 `MEDIA:./rel`、`MEDIA:/abs`（白名单内）、`MEDIA:https://…`（带 SSRF 防护）；Nanobot channel 当前只吃本地路径，远程资源请 agent 自己下载后再发。
   - 主动发消息：Agent 可通过 channel 的 `listChats()` / `list_chats()` 查到自己参与的全部群聊 + 私聊，结合 `peer_name` 定位 `chat_id` 即可主动给已有联系人发消息（服务端按"参与者才可读写"严格鉴权，陌生人不可达）。
 - **真实在线状态**：服务端只记录每个用户的 `last_active_at`，在线与否按 `now - last_active_at < ACTIVE_TIMEOUT` 动态派生；任何活跃信号（心跳 / 发消息 / mark_read）都会续约。Web 端按 `PRESENCE_POLL_INTERVAL` 轮询 `/api/presence`（默认只看私聊联系人），Agent 端不关心别人的在线状态也无需轮询。所有间隔由服务端通过 `auth_ok` 下发。
 - **统一 Channel 协议**：任何 Agent 框架实现一次 Socket.IO Channel 就能接入。当前已有：
