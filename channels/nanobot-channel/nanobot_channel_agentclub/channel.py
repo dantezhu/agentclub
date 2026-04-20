@@ -621,9 +621,19 @@ class AgentClubChannel(BaseChannel):
 
         # Upload any attachments first. Each one becomes its own
         # ``send_message`` call so the IM UI renders file bubbles
-        # separately from the reply text.
+        # separately from the reply text. Mirroring the Web UI, only
+        # local file paths are accepted — remote http(s) URLs are
+        # skipped with a warning so the agent's logs make the misuse
+        # obvious.
         media_paths: list[str] = list(getattr(msg, "media", None) or [])
         for path in media_paths:
+            if self._looks_like_remote_url(path):
+                logger.warning(
+                    "[agentclub] skipping remote URL in agent reply "
+                    "(only local files are supported): {}",
+                    path,
+                )
+                continue
             uploaded = await self._upload_attachment(path)
             if not uploaded:
                 continue
@@ -695,6 +705,19 @@ class AgentClubChannel(BaseChannel):
             logger.warning("[agentclub] send_message skipped: not connected")
             return
         await self._sio.emit("send_message", payload)
+
+    @staticmethod
+    def _looks_like_remote_url(path: str) -> bool:
+        """True if ``path`` looks like an http(s) URL.
+
+        Mirrors ``isRemoteHttpUrl`` on the TypeScript side — agents must
+        download remote assets locally before handing us the path, same
+        as human users uploading from the Web UI.
+        """
+        if not path:
+            return False
+        lower = path.lower()
+        return lower.startswith("http://") or lower.startswith("https://")
 
     @staticmethod
     def _normalize_upload_content_type(value: str | None) -> str:

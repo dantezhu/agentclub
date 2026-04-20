@@ -512,17 +512,17 @@ describe("startAgentClubMonitor", () => {
     await monitorPromise;
   });
 
-  it("infers content_type for remote media URLs so images/audio render as previews, not file icons", async () => {
-    // Regression test for the bug where every media URL was sent with
-    // `content_type: "file"`, which made the Web UI render images as
-    // non-clickable file attachments instead of inline previews.
+  it("skips remote http(s) URLs in agent replies with a warning, mirroring the Web UI", async () => {
+    // Policy: agents can only attach local files, exactly like human
+    // users uploading from the Web UI. Remote URLs are logged and
+    // dropped so the agent's maintainer can see the misuse in the
+    // plugin log and teach the agent to download first.
     const runtime = makeRuntime({
       replyPayload: {
         text: "Here you go:",
         mediaUrls: [
-          "https://cdn.example.com/cat.jpg?v=2",
-          "https://cdn.example.com/voice.mp3",
-          "https://cdn.example.com/scroll.mov#t=5",
+          "https://cdn.example.com/cat.jpg",
+          "http://example.com/voice.mp3",
         ] as unknown as string[],
       } as any,
     });
@@ -544,25 +544,17 @@ describe("startAgentClubMonitor", () => {
     const sendCalls = mockSocket.emit.mock.calls.filter(
       (c: unknown[]) => c[0] === "send_message",
     );
-    // One text bubble + three media bubbles.
-    expect(sendCalls).toHaveLength(4);
+    // Only the text bubble — both remote URLs were dropped.
+    expect(sendCalls).toHaveLength(1);
+    expect(sendCalls[0][1]).toMatchObject({ content_type: "text" });
 
-    const mediaPayloads = sendCalls.slice(1).map((c) => c[1]);
-    expect(mediaPayloads[0]).toMatchObject({
-      content_type: "image",
-      file_url: "https://cdn.example.com/cat.jpg?v=2",
-      file_name: "cat.jpg",
-    });
-    expect(mediaPayloads[1]).toMatchObject({
-      content_type: "audio",
-      file_url: "https://cdn.example.com/voice.mp3",
-      file_name: "voice.mp3",
-    });
-    expect(mediaPayloads[2]).toMatchObject({
-      content_type: "video",
-      file_url: "https://cdn.example.com/scroll.mov#t=5",
-      file_name: "scroll.mov",
-    });
+    // Both URLs logged as warnings with an actionable message.
+    const warnMessages = log.warn.mock.calls.map((c: unknown[]) => c[0]);
+    expect(warnMessages.some((m: string) => m.includes("cat.jpg"))).toBe(true);
+    expect(warnMessages.some((m: string) => m.includes("voice.mp3"))).toBe(true);
+    expect(
+      warnMessages.every((m: string) => m.includes("only local files")),
+    ).toBe(true);
 
     abortController.abort();
     await monitorPromise;

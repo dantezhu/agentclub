@@ -1,14 +1,9 @@
 import type { PluginLogger, OpenClawConfig } from "openclaw/plugin-sdk/channel-core";
-import type { ResolvedAccount, NewMessagePayload, ContentType } from "./types.js";
+import type { ResolvedAccount, NewMessagePayload } from "./types.js";
 import { AgentClubClient } from "./client.js";
 import { createInboundGateway, type InboundMessage } from "./gateway.js";
 import { setActiveClient, getRuntime } from "./runtime.js";
-import {
-  inferContentTypeFromUrl,
-  inferContentTypeFromUploadType,
-  isRemoteHttpUrl,
-  stripFileScheme,
-} from "./mime.js";
+import { inferContentTypeFromUploadType, isRemoteHttpUrl } from "./mime.js";
 import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
 
@@ -487,46 +482,33 @@ async function processInbound(
                 : {}),
             });
           }
-          for (const url of mediaUrls) {
+          for (const path of mediaUrls) {
             try {
-              let content_type: ContentType;
-              let file_url: string;
-              let file_name: string | undefined;
-
-              if (isRemoteHttpUrl(url)) {
-                // Remote URL: the browser will fetch it directly. Infer
-                // content_type from the extension so the Web UI renders it
-                // as image / audio / video instead of a generic file bubble.
-                content_type = inferContentTypeFromUrl(url);
-                file_url = url;
-                file_name = basename(url.split("?")[0].split("#")[0]) || undefined;
-              } else {
-                // Bare path or file:// URI — the LLM produced a local file,
-                // which the IM server has no way to serve until we upload it.
-                // Read, POST to /api/agent/upload, then reference the
-                // server-issued URL (/media/uploads/...).
-                const localPath = stripFileScheme(url);
-                const buf = await readFile(localPath);
-                const upload = await client.uploadFile(
-                  new Uint8Array(buf),
-                  basename(localPath),
+              // Mirror the Web UI: only local file paths are accepted.
+              // Remote http(s) URLs are skipped with a warning so the
+              // agent's logs make the misuse obvious — agents must
+              // download the asset locally first and hand us the path.
+              if (isRemoteHttpUrl(path)) {
+                log.warn(
+                  `Skipping remote URL in agent reply (only local files are supported): ${path}`,
                 );
-                content_type = inferContentTypeFromUploadType(upload.content_type);
-                file_url = upload.url;
-                file_name = upload.filename;
+                continue;
               }
-
+              const upload = await client.uploadFile(
+                new Uint8Array(await readFile(path)),
+                basename(path),
+              );
               client.sendMessage({
                 chat_type: msg.chatType as "group" | "direct",
                 chat_id: msg.chatId,
                 content: "",
-                content_type,
-                file_url,
-                file_name,
+                content_type: inferContentTypeFromUploadType(upload.content_type),
+                file_url: upload.url,
+                file_name: upload.filename,
               });
             } catch (err) {
               log.error(
-                `Failed to deliver media (${url}): ${formatLogArg(err)}`,
+                `Failed to deliver media (${path}): ${formatLogArg(err)}`,
               );
             }
           }

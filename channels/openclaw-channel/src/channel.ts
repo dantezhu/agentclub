@@ -8,12 +8,7 @@ import { resolveAccount, inspectAccount } from "./setup.js";
 import { parseSessionKey } from "./session.js";
 import { getActiveClient } from "./runtime.js";
 import { startAgentClubMonitor } from "./monitor.js";
-import {
-  inferContentTypeFromUrl,
-  inferContentTypeFromUploadType,
-  isRemoteHttpUrl,
-  stripFileScheme,
-} from "./mime.js";
+import { inferContentTypeFromUploadType, isRemoteHttpUrl } from "./mime.js";
 import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
 
@@ -147,66 +142,37 @@ export const agentClubPlugin = createChatChannelPlugin<ResolvedAccount>({
         const client = getActiveClient();
         const caption = params.text || "";
 
-        // Build the list of (file_url, file_name, content_type) tuples to
-        // emit. Remote http(s) URLs are referenced as-is (the browser fetches
-        // them directly); anything else — bare filesystem paths, `file://`
-        // URIs, or entries in `mediaLocalRoots` — is read locally and
-        // uploaded so the IM server gets a canonical `/media/uploads/...`
-        // URL it can serve. Emitting as a flat array lets us attach the
-        // caption only to the first message (see the loop below), keeping
-        // "one caption per sendMedia call" semantics even when multiple
-        // files are supplied.
-        type OutboundBubble = {
-          file_url: string;
-          file_name?: string;
-          content_type: ReturnType<typeof inferContentTypeFromUrl>;
-        };
-        const bubbles: OutboundBubble[] = [];
+        // Mirror the Web UI: only local file paths are accepted. Both
+        // `mediaUrl` and `mediaLocalRoots` are treated as paths, uploaded
+        // to `/api/agent/upload`, and sent as file bubbles referencing the
+        // server-issued `/media/uploads/...` URL. Remote http(s) URLs are
+        // rejected — agents wanting to forward a remote asset must
+        // download it locally first.
+        const paths: string[] = [];
+        if (params.mediaUrl) paths.push(params.mediaUrl);
+        for (const p of params.mediaLocalRoots ?? []) {
+          if (p) paths.push(p);
+        }
 
-        if (params.mediaUrl) {
-          if (isRemoteHttpUrl(params.mediaUrl)) {
-            bubbles.push({
-              file_url: params.mediaUrl,
-              file_name: basename(params.mediaUrl.split("?")[0].split("#")[0]) || undefined,
-              content_type: inferContentTypeFromUrl(params.mediaUrl),
-            });
-          } else {
-            const localPath = stripFileScheme(params.mediaUrl);
-            const upload = await client.uploadFile(
-              new Uint8Array(await readFile(localPath)),
-              basename(localPath),
+        for (let i = 0; i < paths.length; i++) {
+          const path = paths[i]!;
+          if (isRemoteHttpUrl(path)) {
+            throw new Error(
+              `sendMedia: remote URLs are not supported, only local file paths (got: ${path}). ` +
+                `Download the file locally first, then pass its path.`,
             );
-            bubbles.push({
-              file_url: upload.url,
-              file_name: upload.filename,
-              content_type: inferContentTypeFromUploadType(upload.content_type),
-            });
           }
-        }
-
-        for (const root of params.mediaLocalRoots ?? []) {
-          if (!root) continue;
-          const localPath = stripFileScheme(root);
           const upload = await client.uploadFile(
-            new Uint8Array(await readFile(localPath)),
-            basename(localPath),
+            new Uint8Array(await readFile(path)),
+            basename(path),
           );
-          bubbles.push({
-            file_url: upload.url,
-            file_name: upload.filename,
-            content_type: inferContentTypeFromUploadType(upload.content_type),
-          });
-        }
-
-        for (let i = 0; i < bubbles.length; i++) {
-          const b = bubbles[i]!;
           client.sendMessage({
             chat_type: parsed.chatType,
             chat_id: parsed.chatId,
             content: i === 0 ? caption : "",
-            content_type: b.content_type,
-            file_url: b.file_url,
-            file_name: b.file_name,
+            content_type: inferContentTypeFromUploadType(upload.content_type),
+            file_url: upload.url,
+            file_name: upload.filename,
           });
         }
 

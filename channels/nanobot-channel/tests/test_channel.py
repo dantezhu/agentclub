@@ -515,6 +515,39 @@ class TestOutbound:
         assert emits[1][1]["content"] == "see attached"
 
     @pytest.mark.asyncio
+    async def test_send_skips_remote_urls_in_media(self, channel, tmp_path):
+        """Agents can only attach local files (mirrors the Web UI)."""
+        fpath = tmp_path / "local.png"
+        fpath.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+        channel._upload_attachment = AsyncMock(
+            return_value={
+                "url": "/media/uploads/abc_local.png",
+                "filename": "local.png",
+                "content_type": "image",
+            }
+        )
+
+        outbound = OutboundMessage(
+            channel="agentclub",
+            chat_id="pr_chat-1",
+            content="",
+            media=[
+                "https://cdn.example.com/cat.jpg",
+                str(fpath),
+                "http://example.com/voice.mp3",
+            ],
+        )
+        await channel.send(outbound)
+
+        # Only the local file is uploaded; remote URLs are dropped.
+        channel._upload_attachment.assert_awaited_once_with(str(fpath))
+        emits = [call.args for call in channel._sio.emit.await_args_list]
+        assert len(emits) == 1
+        assert emits[0][1]["file_url"] == "/media/uploads/abc_local.png"
+        assert emits[0][1]["content_type"] == "image"
+
+    @pytest.mark.asyncio
     async def test_send_uploads_image_sets_image_content_type(self, channel, tmp_path):
         """Regression: images were being sent as content_type="file", which
         made the Web UI render them as plain file bubbles instead of
@@ -566,6 +599,15 @@ class TestOutbound:
     def test_normalize_upload_content_type_handles_empty(self):
         assert AgentClubChannel._normalize_upload_content_type("") == "file"
         assert AgentClubChannel._normalize_upload_content_type(None) == "file"
+
+    def test_looks_like_remote_url(self):
+        assert AgentClubChannel._looks_like_remote_url("http://example.com/a.png")
+        assert AgentClubChannel._looks_like_remote_url("https://example.com/a.png")
+        assert AgentClubChannel._looks_like_remote_url("HTTPS://EXAMPLE.COM/")
+        assert not AgentClubChannel._looks_like_remote_url("/tmp/a.png")
+        assert not AgentClubChannel._looks_like_remote_url("./a.png")
+        assert not AgentClubChannel._looks_like_remote_url("file:///tmp/a.png")
+        assert not AgentClubChannel._looks_like_remote_url("")
 
 
 # ---------------------------------------------------------------------
