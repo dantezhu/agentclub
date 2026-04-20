@@ -184,25 +184,20 @@ async function loadChats() {
     renderChatList();
 }
 
-// Order chats within one section by the timestamp of their most recent
-// message, newest first. Chats with no messages yet (a fresh group you
-// just joined, a direct chat that's never been opened) fall to the
-// bottom — sorting them to the top would bury real conversations under
-// empty shells. Sort is stable: within "no messages" the server's
-// original order (group creation time / direct-chat creation time) is
-// preserved, which matches how users learned to find those items.
+// Order chats within one section by "activation time", newest first.
+// Activation time = timestamp of the last message, or — for chats that
+// haven't received any message yet (freshly created group, new direct
+// chat) — the chat's own `created_at`. Both columns are unix seconds
+// (REAL) on the server, so they compose into a single ordering without
+// unit conversion. This keeps a just-created group near the top until
+// it either gets a message (real activation) or gets pushed down by
+// newer chats, instead of stranding it at the bottom.
 function sortBySectionLastMsg(items, keyPrefix) {
-    const withTime = items.map((it, i) => ({
-        it,
-        i,
-        ts: lastMessages[`${keyPrefix}_${it.id}`]?.created_at ?? null,
-    }));
-    withTime.sort((a, b) => {
-        if (a.ts === null && b.ts === null) return a.i - b.i;
-        if (a.ts === null) return 1;
-        if (b.ts === null) return -1;
-        return b.ts - a.ts;
+    const withTime = items.map((it, i) => {
+        const lastMsgTs = lastMessages[`${keyPrefix}_${it.id}`]?.created_at;
+        return { it, i, ts: lastMsgTs ?? it.created_at ?? 0 };
     });
+    withTime.sort((a, b) => (b.ts - a.ts) || (a.i - b.i));
     return withTime.map((e) => e.it);
 }
 
