@@ -9,4 +9,4 @@ The CLI entry point is ``agentclub.cli:main`` (installed as ``agentclub``
 by ``pyproject.toml``).
 """
 
-__version__ = "0.1.15"
+__version__ = "0.1.16"

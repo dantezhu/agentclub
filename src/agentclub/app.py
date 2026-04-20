@@ -9,7 +9,7 @@ agentclub.app`` also work for quick local iteration.
 import logging
 import os
 from datetime import timedelta
-from flask import Flask, render_template, jsonify, request
+from flask import Flask, render_template, jsonify, request, session, redirect, url_for
 from werkzeug.exceptions import HTTPException
 from flask_socketio import SocketIO
 from .config import Config
@@ -52,18 +52,37 @@ def _inject_branding():
     }
 
 
+# Page-level auth gating happens here, *before* HTML/CSS hits the browser.
+# Without this the previous flow was: server unconditionally returns the
+# requested HTML → page renders → JS fetches /api/me → JS redirects. That
+# made every reopen of /chat (with cookie) flash login.html for ~200ms,
+# and vice versa. By 302-ing on the server we skip the wrong-template
+# render entirely. Login.html still keeps a JS fallback fetch('/api/me')
+# in case the cookie was forged/empty in some odd state.
 @app.route("/")
 def index():
+    if "user_id" in session:
+        return redirect(url_for("chat_page"))
     return render_template("login.html")
 
 
 @app.route("/chat")
 def chat_page():
+    if "user_id" not in session:
+        return redirect(url_for("index"))
     return render_template("chat.html")
 
 
 @app.route("/admin")
 def admin_page():
+    # /admin checks login here but NOT role — admin.html still calls
+    # /api/me to surface a friendly "需要管理员权限" message rather than a
+    # raw 403, and the actual admin APIs are gated by @admin_required on
+    # the server side. So this redirect just shaves the login flash for
+    # the common case (admin reopens browser); non-admin users still hit
+    # the in-page check.
+    if "user_id" not in session:
+        return redirect(url_for("index"))
     return render_template("admin.html")
 
 
