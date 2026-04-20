@@ -11,6 +11,31 @@ let presencePollIntervalMs = 30_000;
 let unreadCounts = {};
 let lastMessages = {};
 
+// Original tab title (the Jinja-rendered `{{ site_name }}`). Captured
+// once at module load so `updateTabUnreadTitle` can restore it when the
+// unread total drops back to zero — without this we'd permanently glue
+// "(0)" onto the tab. Feishu / Lark / WeChat Web all do the same thing:
+// `(N) <site name>` when N > 0, plain name otherwise.
+const BASE_TAB_TITLE = document.title;
+
+/* Sync the browser tab title with the running unread total. Called from
+ * the tail of `renderChatList()`, which is the single chokepoint for
+ * every unread mutation (initial fetch, socket `unread_updated`, open
+ * chat clear, new message arrival on a non-active chat). Format mirrors
+ * Feishu / Lark: `<site name> (N)` with the count as a trailing suffix.
+ * Capping at 99+ matches the sidebar badge convention so the two stay
+ * visually in sync. */
+function updateTabUnreadTitle() {
+    let total = 0;
+    for (const k in unreadCounts) total += unreadCounts[k] || 0;
+    if (total > 0) {
+        const label = total > 99 ? '99+' : String(total);
+        document.title = `${BASE_TAB_TITLE} (${label})`;
+    } else {
+        document.title = BASE_TAB_TITLE;
+    }
+}
+
 /* ── Init ── */
 async function init() {
     try {
@@ -277,6 +302,7 @@ function renderChatList() {
     }
 
     el.innerHTML = html;
+    updateTabUnreadTitle();
 }
 
 /* ── Open Chat ── */
