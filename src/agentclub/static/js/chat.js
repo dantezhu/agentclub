@@ -229,14 +229,14 @@ function renderChatList() {
         for (const g of sortedGroups) {
             const isActive = currentChat && currentChat.type === 'group' && currentChat.id === g.id;
             const initial = g.name.charAt(0);
-            const isCreator = g.created_by === currentUser.id;
-            const menuAction = isCreator
-                ? `showChatMenu(event,'group','${g.id}','dissolve')`
-                : `showChatMenu(event,'group','${g.id}','leave')`;
             const gUnread = unreadCounts[`group_${g.id}`] || 0;
             const gBadge = gUnread ? `<span class="badge">${gUnread > 99 ? '99+' : gUnread}</span>` : '';
             const gAvatarStyle = g.avatar ? '' : ` style="${AgentClubUI.avatarStyle(g.name)}"`;
-            html += `<div class="chat-item ${isActive ? 'active' : ''}" onclick="openChat('group','${g.id}','${escHtml(g.name)}')" oncontextmenu="${menuAction}">
+            // No right-click / long-press menu on sidebar rows — destructive
+            // actions (退出群组 / 解散群组 / 群组设置) all live behind the
+            // chat header's kebab (#chatActionsBtn, showChatActionsMenu) so
+            // there is exactly one entry point that works on every device.
+            html += `<div class="chat-item ${isActive ? 'active' : ''}" onclick="openChat('group','${g.id}','${escHtml(g.name)}')">
                 <div class="avatar"${gAvatarStyle}>${g.avatar ? `<img src="${escHtml(g.avatar)}">` : initial}</div>
                 <div class="chat-item-info">
                     <div class="name">${escHtml(g.name)}</div>
@@ -259,7 +259,9 @@ function renderChatList() {
             const avatarClass = isAgent ? 'avatar agent' : 'avatar';
             const agentTag = isAgent ? ' <span class="chat-tag agent">Agent</span>' : '';
             const dAvatarStyle = d.peer_avatar ? '' : ` style="${AgentClubUI.avatarStyle(d.peer_name || d.id)}"`;
-            html += `<div class="chat-item ${isActive ? 'active' : ''}" onclick="openChat('direct','${d.id}','${escHtml(d.peer_name)}',${isAgent})" oncontextmenu="showChatMenu(event,'direct','${d.id}','delete')">
+            // See note above on groups: no right-click on sidebar rows.
+            // 删除会话 is reachable from the chat header kebab instead.
+            html += `<div class="chat-item ${isActive ? 'active' : ''}" onclick="openChat('direct','${d.id}','${escHtml(d.peer_name)}',${isAgent})">
                 <div class="${avatarClass}"${dAvatarStyle}>${d.peer_avatar ? `<img src="${escHtml(d.peer_avatar)}">` : initial}</div>
                 <div class="chat-item-info">
                     <div class="name">${dot}${escHtml(d.peer_name)}${agentTag}</div>
@@ -1303,8 +1305,8 @@ async function renderMembersPanel() {
     // that's about *the member list itself*. 群组设置 / 退出群组 / 解散
     // 群组 are about *the chat*, so they live in the chat header's kebab
     // (#chatActionsBtn) instead. Splitting by responsibility keeps each
-    // surface uncluttered and gives mobile users a tappable entry point
-    // without right-click.
+    // surface uncluttered and gives every device a single tappable entry
+    // point (we no longer bind context menus on sidebar rows).
     const headerActions = document.getElementById('membersHeaderActions');
     if (canManage) {
         headerActions.innerHTML = `
@@ -1351,8 +1353,9 @@ async function renderMembersPanel() {
 }
 
 /* Open the contextMenu dropdown anchored under a member's kebab button.
- * Reuses the same #contextMenu element used by the chat-list right-click
- * menu so we don't duplicate styles or document-click handlers.
+ * Reuses the same #contextMenu element used by the chat-header kebab
+ * (showChatActionsMenu) so we don't duplicate styles or document-click
+ * handlers.
  *
  * Items (rendered in this order, each gated):
  *   • 查看信息  → opens the read-only profile modal (always)
@@ -1537,19 +1540,18 @@ async function saveProfile() {
     }
 }
 
-/* Chat-header kebab → dropdown for the *currently open* chat. Mirrors
- * showChatMenu (which is bound to right-click on sidebar rows) so mobile
- * users — who have no right-click — can still reach 删除会话 / 退出群组
- * / 群组设置 / 解散群组. Items are decided here at click time based on
- * currentChat:
+/* Chat-header kebab → dropdown for the *currently open* chat. This is
+ * the single entry point for destructive chat actions on every device
+ * (desktop and mobile alike) — we deliberately don't bind right-click
+ * / long-press menus on sidebar rows. Items are decided here at click
+ * time based on currentChat:
  *
  *   direct                         → 删除会话
  *   group, regular member          → 退出群组
  *   group, creator (or admin)      → 群组设置 + 解散群组
  *
- * Reuses the same #contextMenu element used by sidebar right-click and
- * member kebab dropdowns, so a single document-click handler dismisses
- * all of them. */
+ * Reuses the same #contextMenu element used by the member kebab
+ * dropdowns, so a single document-click handler dismisses both. */
 function showChatActionsMenu(event) {
     event.preventDefault();
     event.stopPropagation();
@@ -1584,25 +1586,6 @@ function showChatActionsMenu(event) {
     if (left < 8) left = 8;
     menu.style.left = left + 'px';
     menu.style.top = (rect.bottom + 4) + 'px';
-}
-
-/* ── Context menu for chat list ── */
-function showChatMenu(event, chatType, chatId, action) {
-    event.preventDefault();
-    event.stopPropagation();
-    const menu = document.getElementById('contextMenu');
-    let html = '';
-    if (chatType === 'group' && action === 'dissolve') {
-        html = `<button class="danger" onclick="dissolveGroup('${chatId}')">解散群组</button>`;
-    } else if (chatType === 'group' && action === 'leave') {
-        html = `<button class="danger" onclick="leaveGroup('${chatId}')">退出群组</button>`;
-    } else if (chatType === 'direct') {
-        html = `<button class="danger" onclick="deleteDirectChat('${chatId}')">删除会话</button>`;
-    }
-    menu.innerHTML = html;
-    menu.style.left = event.clientX + 'px';
-    menu.style.top = event.clientY + 'px';
-    menu.classList.remove('hidden');
 }
 
 document.addEventListener('click', () => {
