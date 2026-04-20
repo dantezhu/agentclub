@@ -100,9 +100,19 @@ def register_events(socketio):
         if not chat_id:
             return
 
-        # Permission check
-        if chat_type == "group" and not models.is_group_member(chat_id, user_id):
-            emit("error", {"message": "你不在这个群组中"})
+        # Permission check — prevent IDOR: anyone with a leaked/guessed
+        # chat_id could otherwise write into a conversation they're not
+        # part of. Uniform gate for humans and agents; groups check
+        # membership, direct chats check participation.
+        if not models.can_access_chat(chat_type, chat_id, user_id):
+            emit(
+                "error",
+                {
+                    "message": "你不在这个群组中"
+                    if chat_type == "group"
+                    else "你不在这个对话中",
+                },
+            )
             return
 
         result = models.save_message(

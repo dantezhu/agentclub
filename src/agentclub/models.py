@@ -542,6 +542,37 @@ def is_group_member(group_id, user_id):
     return row is not None
 
 
+def is_direct_chat_participant(chat_id, user_id):
+    """True if ``user_id`` is one of the two parties in the direct chat.
+
+    The only gate that prevents anyone who has guessed or leaked a
+    ``direct_chats.id`` from writing / reading messages in that chat —
+    callers MUST consult this before accepting a write or returning
+    history for a ``chat_type == "direct"`` request.
+    """
+    db = get_db()
+    row = db.execute(
+        "SELECT 1 FROM direct_chats WHERE id = ? AND (user1_id = ? OR user2_id = ?)",
+        (chat_id, user_id, user_id),
+    ).fetchone()
+    db.close()
+    return row is not None
+
+
+def can_access_chat(chat_type, chat_id, user_id):
+    """Unified "is this user allowed to read/write this chat?" gate.
+
+    Wraps :func:`is_group_member` and :func:`is_direct_chat_participant`
+    so callers in routes.py and socket_events.py share the exact same
+    authorization rule (and unknown ``chat_type`` values default-deny).
+    """
+    if chat_type == "group":
+        return is_group_member(chat_id, user_id)
+    if chat_type == "direct":
+        return is_direct_chat_participant(chat_id, user_id)
+    return False
+
+
 # ── Direct chat operations ──
 
 def delete_direct_chat(chat_id, user_id):

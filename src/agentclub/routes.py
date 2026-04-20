@@ -478,6 +478,12 @@ def last_messages():
 @api.route("/api/messages/<chat_type>/<chat_id>")
 @login_required
 def get_messages(chat_type, chat_id):
+    # Permission check — prevent IDOR: the login_required decorator only
+    # proves "some logged-in user", it doesn't verify the user is a party
+    # to this conversation. Without this gate, anyone with a leaked chat_id
+    # can pull arbitrary message history.
+    if not models.can_access_chat(chat_type, chat_id, request.current_user["id"]):
+        return jsonify({"error": "无权访问该会话"}), 403
     before = request.args.get("before", type=float)
     limit = min(request.args.get("limit", Config.MESSAGE_PAGE_SIZE, type=int), 100)
     messages = models.get_messages(chat_type, chat_id, before=before, limit=limit)
@@ -547,6 +553,10 @@ def agent_get_messages(chat_type, chat_id):
     if not user:
         return jsonify({"error": "无效的 Token"}), 401
 
+    # Same IDOR guard as the web endpoint — token auth only proves
+    # "some valid agent", not "agent is a party to this chat".
+    if not models.can_access_chat(chat_type, chat_id, user["id"]):
+        return jsonify({"error": "无权访问该会话"}), 403
     before = request.args.get("before", type=float)
     limit = min(request.args.get("limit", Config.MESSAGE_PAGE_SIZE, type=int), 100)
     messages = models.get_messages(chat_type, chat_id, before=before, limit=limit)

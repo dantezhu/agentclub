@@ -415,6 +415,201 @@ class TestFileUpload:
         assert res.get_json()["content_type"] == "audio"
 
 
+# ── Permission / IDOR Tests ──
+#
+# These cover the "anyone with a leaked chat_id can write/read it" hole
+# that used to exist before `can_access_chat` gated every write/read path.
+# The chat_id is a UUID so not trivially guessable, but we still must not
+# rely on obscurity as the only defence — a group roster export, a leaked
+# URL, or a compromised member's browser history can all surface it.
+
+
+class TestChatPermissions:
+    @staticmethod
+    def _logged_in_client(username, password):
+        """Create a user directly in the DB and inject a Flask session for them.
+
+        We bypass ``/api/register`` because the endpoint is gated by
+        ``Config.ALLOW_REGISTRATION`` which defaults to ``False`` once the
+        first admin exists — tests that rely on it only pass when the env
+        is explicitly opted in. For our permission checks we just need a
+        legitimately-logged-in outsider, so forge the session directly.
+        """
+        uid = models.create_user(username, hash_password(password), username.title())
+        c = app.test_client()
+        with c.session_transaction() as sess:
+            sess["user_id"] = uid
+        return c
+
+    def _setup_outsider_and_chat(self, admin_client):
+        """Create (alice, bob) direct chat + an outsider 'mallory' not in it.
+
+        Returns ``(direct_chat_id, mallory_client, mallory_agent_token)``.
+        """
+        # Admin creates the direct chat's two parties (admin_client is Alice).
+        alice = admin_client.get("/api/me").get_json()
+        bob_id = models.create_user("bob", hash_password("bobpass"), "Bob")
+        direct = models.get_or_create_direct_chat(alice["id"], bob_id)
+
+        # Outsider: a second regular human + an agent owned by nobody relevant.
+        mallory_client = self._logged_in_client("mallory", "malpass")
+        agent_res = admin_client.post("/api/agents", json={"username": "snoopbot"})
+        agent_token = agent_res.get_json()["agent_token"]
+
+        return direct["id"], mallory_client, agent_token
+
+    def _setup_outsider_and_group(self, admin_client):
+        """Create group with (alice, bob) + an outsider not in it."""
+        alice = admin_client.get("/api/me").get_json()
+        bob_id = models.create_user("bob", hash_password("bobpass"), "Bob")
+        gid = models.create_group("Private", alice["id"])
+        models.add_group_member(gid, bob_id)
+
+        mallory_client = self._logged_in_client("mallory", "malpass")
+        agent_res = admin_client.post("/api/agents", json={"username": "snoopbot"})
+        agent_token = agent_res.get_json()["agent_token"]
+
+        return gid, mallory_client, agent_token
+
+    # -- can_access_chat helper -------------------------------------------
+
+    def test_can_access_chat_group(self):
+        owner = models.create_user("u1", hash_password("pw"), "U1")
+        outsider = models.create_user("u2", hash_password("pw"), "U2")
+        gid = models.create_group("G", owner)
+        assert models.can_access_chat("group", gid, owner) is True
+        assert models.can_access_chat("group", gid, outsider) is False
+
+    def test_can_access_chat_direct(self):
+        u1 = models.create_user("u1", hash_password("pw"), "U1")
+        u2 = models.create_user("u2", hash_password("pw"), "U2")
+        u3 = models.create_user("u3", hash_password("pw"), "U3")
+        chat = models.get_or_create_direct_chat(u1, u2)
+        assert models.can_access_chat("direct", chat["id"], u1) is True
+        assert models.can_access_chat("direct", chat["id"], u2) is True
+        assert models.can_access_chat("direct", chat["id"], u3) is False
+
+    def test_can_access_chat_unknown_type_denies(self):
+        u1 = models.create_user("u1", hash_password("pw"), "U1")
+        assert models.can_access_chat("bogus", "whatever", u1) is False
+
+    # -- Socket send_message ---------------------------------------------
+
+    def test_socket_direct_send_rejects_non_participant(self, admin_client):
+        chat_id, mallory_client, _ = self._setup_outsider_and_chat(admin_client)
+        sio = socketio.test_client(app, flask_test_client=mallory_client)
+        sio.get_received()
+        sio.emit(
+            "send_message",
+            {
+                "chat_type": "direct",
+                "chat_id": chat_id,
+                "content": "pwned",
+                "content_type": "text",
+            },
+        )
+        received = sio.get_received()
+        # Must get an error, NOT a new_message — the write must not have landed.
+        errors = [r for r in received if r["name"] == "error"]
+        msgs = [r for r in received if r["name"] == "new_message"]
+        assert errors, "expected an error event, got: {!r}".format(received)
+        assert not msgs
+        # And the DB must be untouched for this chat.
+        assert models.get_messages("direct", chat_id) == []
+        sio.disconnect()
+
+    def test_socket_agent_direct_send_rejects_non_participant(self, admin_client):
+        chat_id, _, agent_token = self._setup_outsider_and_chat(admin_client)
+        agent_sio = socketio.test_client(app, auth={"agent_token": agent_token})
+        agent_sio.get_received()
+        agent_sio.emit(
+            "send_message",
+            {
+                "chat_type": "direct",
+                "chat_id": chat_id,
+                "content": "agent pwn",
+                "content_type": "text",
+            },
+        )
+        received = agent_sio.get_received()
+        assert any(r["name"] == "error" for r in received)
+        assert not any(r["name"] == "new_message" for r in received)
+        assert models.get_messages("direct", chat_id) == []
+        agent_sio.disconnect()
+
+    def test_socket_group_send_rejects_non_member_agent(self, admin_client):
+        gid, _, agent_token = self._setup_outsider_and_group(admin_client)
+        agent_sio = socketio.test_client(app, auth={"agent_token": agent_token})
+        agent_sio.get_received()
+        agent_sio.emit(
+            "send_message",
+            {
+                "chat_type": "group",
+                "chat_id": gid,
+                "content": "agent pwn",
+                "content_type": "text",
+            },
+        )
+        received = agent_sio.get_received()
+        assert any(r["name"] == "error" for r in received)
+        assert models.get_messages("group", gid) == []
+        agent_sio.disconnect()
+
+    # -- HTTP GET /api/messages/<type>/<id> ------------------------------
+
+    def test_http_read_direct_history_rejects_non_participant(self, admin_client):
+        chat_id, mallory_client, _ = self._setup_outsider_and_chat(admin_client)
+        res = mallory_client.get(f"/api/messages/direct/{chat_id}")
+        assert res.status_code == 403
+
+    def test_http_read_group_history_rejects_non_member(self, admin_client):
+        gid, mallory_client, _ = self._setup_outsider_and_group(admin_client)
+        res = mallory_client.get(f"/api/messages/group/{gid}")
+        assert res.status_code == 403
+
+    def test_http_read_history_allows_participant(self, admin_client):
+        alice = admin_client.get("/api/me").get_json()
+        bob_id = models.create_user("bob", hash_password("pw"), "Bob")
+        chat = models.get_or_create_direct_chat(alice["id"], bob_id)
+        res = admin_client.get(f"/api/messages/direct/{chat['id']}")
+        assert res.status_code == 200
+
+    # -- HTTP GET /api/agent/messages/<type>/<id> ------------------------
+
+    def test_agent_http_read_direct_history_rejects_non_participant(self, admin_client):
+        chat_id, _, agent_token = self._setup_outsider_and_chat(admin_client)
+        c = app.test_client()
+        res = c.get(
+            f"/api/agent/messages/direct/{chat_id}",
+            headers={"Authorization": f"Bearer {agent_token}"},
+        )
+        assert res.status_code == 403
+
+    def test_agent_http_read_group_history_rejects_non_member(self, admin_client):
+        gid, _, agent_token = self._setup_outsider_and_group(admin_client)
+        c = app.test_client()
+        res = c.get(
+            f"/api/agent/messages/group/{gid}",
+            headers={"Authorization": f"Bearer {agent_token}"},
+        )
+        assert res.status_code == 403
+
+    def test_agent_http_read_allows_participant(self, admin_client):
+        """Sanity: the gate only blocks outsiders, not legitimate members."""
+        alice = admin_client.get("/api/me").get_json()
+        gid = models.create_group("G", alice["id"])
+        agent_res = admin_client.post("/api/agents", json={"username": "friendly"})
+        agent = agent_res.get_json()
+        admin_client.post(f"/api/groups/{gid}/members", json={"user_id": agent["id"]})
+
+        c = app.test_client()
+        res = c.get(
+            f"/api/agent/messages/group/{gid}",
+            headers={"Authorization": f"Bearer {agent['agent_token']}"},
+        )
+        assert res.status_code == 200
+
+
 # ── Model Tests ──
 
 class TestModels:
