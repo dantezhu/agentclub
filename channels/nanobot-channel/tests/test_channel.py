@@ -485,11 +485,13 @@ class TestOutbound:
         fpath = tmp_path / "note.txt"
         fpath.write_text("hi")
 
+        # Mirror what the real IM server returns from /api/agent/upload:
+        # `content_type` is the already-bucketed name, not a MIME type.
         channel._upload_attachment = AsyncMock(
             return_value={
                 "url": "/media/uploads/abc_note.txt",
                 "filename": "note.txt",
-                "content_type": "text/plain",
+                "content_type": "file",
             }
         )
 
@@ -506,17 +508,64 @@ class TestOutbound:
         # First: file bubble with URL + filename, no text
         assert emits[0][0] == "send_message"
         assert emits[0][1]["content"] == ""
+        assert emits[0][1]["content_type"] == "file"
         assert emits[0][1]["file_url"] == "/media/uploads/abc_note.txt"
         assert emits[0][1]["file_name"] == "note.txt"
         # Second: text bubble
         assert emits[1][1]["content"] == "see attached"
 
-    def test_guess_content_bucket(self):
-        assert AgentClubChannel._guess_content_bucket("image/png") == "image"
-        assert AgentClubChannel._guess_content_bucket("audio/mpeg") == "audio"
-        assert AgentClubChannel._guess_content_bucket("video/mp4") == "video"
-        assert AgentClubChannel._guess_content_bucket("application/pdf") == "file"
-        assert AgentClubChannel._guess_content_bucket("") == "file"
+    @pytest.mark.asyncio
+    async def test_send_uploads_image_sets_image_content_type(self, channel, tmp_path):
+        """Regression: images were being sent as content_type="file", which
+        made the Web UI render them as plain file bubbles instead of
+        showing an inline preview. The fix in _normalize_upload_content_type
+        accepts the server's bare bucket name ("image")."""
+        fpath = tmp_path / "cat.png"
+        fpath.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+        channel._upload_attachment = AsyncMock(
+            return_value={
+                "url": "/media/uploads/abc_cat.png",
+                "filename": "cat.png",
+                "content_type": "image",
+            }
+        )
+
+        outbound = OutboundMessage(
+            channel="agentclub",
+            chat_id="pr_chat-1",
+            content="",
+            media=[str(fpath)],
+        )
+        await channel.send(outbound)
+
+        emits = [call.args for call in channel._sio.emit.await_args_list]
+        assert len(emits) == 1
+        assert emits[0][1]["content_type"] == "image"
+        assert emits[0][1]["file_url"] == "/media/uploads/abc_cat.png"
+
+    def test_normalize_upload_content_type_accepts_mime_types(self):
+        assert AgentClubChannel._normalize_upload_content_type("image/png") == "image"
+        assert AgentClubChannel._normalize_upload_content_type("audio/mpeg") == "audio"
+        assert AgentClubChannel._normalize_upload_content_type("video/mp4") == "video"
+        assert AgentClubChannel._normalize_upload_content_type("application/pdf") == "file"
+
+    def test_normalize_upload_content_type_accepts_bucket_names(self):
+        # Regression: the IM server's /api/agent/upload actually returns
+        # the already-bucketed name (not a MIME type), so we must accept
+        # "image" / "audio" / "video" / "file" directly. Previously this
+        # slipped through because the helper only checked for "image/"
+        # prefix, mis-classifying every upload as a plain file.
+        assert AgentClubChannel._normalize_upload_content_type("image") == "image"
+        assert AgentClubChannel._normalize_upload_content_type("audio") == "audio"
+        assert AgentClubChannel._normalize_upload_content_type("video") == "video"
+        assert AgentClubChannel._normalize_upload_content_type("file") == "file"
+        # Case insensitive.
+        assert AgentClubChannel._normalize_upload_content_type("IMAGE") == "image"
+
+    def test_normalize_upload_content_type_handles_empty(self):
+        assert AgentClubChannel._normalize_upload_content_type("") == "file"
+        assert AgentClubChannel._normalize_upload_content_type(None) == "file"
 
 
 # ---------------------------------------------------------------------

@@ -632,7 +632,7 @@ class AgentClubChannel(BaseChannel):
                     "chat_type": chat_type,
                     "chat_id": chat_id,
                     "content": "",
-                    "content_type": self._guess_content_bucket(uploaded["content_type"]),
+                    "content_type": self._normalize_upload_content_type(uploaded.get("content_type")),
                     "file_url": uploaded["url"],
                     "file_name": uploaded["filename"],
                 }
@@ -697,16 +697,23 @@ class AgentClubChannel(BaseChannel):
         await self._sio.emit("send_message", payload)
 
     @staticmethod
-    def _guess_content_bucket(mime: str | None) -> str:
-        """Map an upload mime type to the IM ``content_type`` bucket."""
-        if not mime:
+    def _normalize_upload_content_type(value: str | None) -> str:
+        """Normalize the ``content_type`` echoed by ``/api/agent/upload``.
+
+        The IM server currently returns the already-bucketed value
+        (``"image"`` / ``"audio"`` / ``"video"`` / ``"file"``), but we
+        also accept real MIME strings (``"image/png"``) so this helper
+        stays correct if the server ever switches formats. Anything
+        unrecognised falls back to ``"file"``.
+        """
+        if not value:
             return "file"
-        mime = mime.lower()
-        if mime.startswith("image/"):
+        lower = value.lower()
+        if lower == "image" or lower.startswith("image/"):
             return "image"
-        if mime.startswith("audio/"):
+        if lower == "audio" or lower.startswith("audio/"):
             return "audio"
-        if mime.startswith("video/"):
+        if lower == "video" or lower.startswith("video/"):
             return "video"
         return "file"
 
