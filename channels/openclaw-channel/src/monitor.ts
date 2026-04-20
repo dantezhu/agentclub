@@ -509,7 +509,15 @@ async function processInbound(
       cfg,
       dispatcherOptions: {
         deliver: async (payload, info) => {
-          if (info?.kind === "tool") return;
+          // Only relay the `final` chunk to the IM. OpenClaw's buffered
+          // dispatcher also surfaces interim `block` events that carry
+          // the same rich-output payload (agent text + media) — acting
+          // on both would double-send every attachment. `tool` chunks
+          // are internal and also irrelevant to the user. `final` is
+          // the single authoritative chunk per reply, so keying on it
+          // is strictly correct and much simpler than trying to dedupe
+          // by content hash across events.
+          if (info?.kind !== "final") return;
 
           const text = payload.text?.trim() ?? "";
           const mediaUrls = payload.mediaUrls?.length

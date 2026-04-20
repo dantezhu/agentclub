@@ -379,6 +379,44 @@ describe("startAgentClubMonitor", () => {
     await monitorPromise;
   });
 
+  it("suppresses interim `block` payloads to avoid double-sending media", async () => {
+    // OpenClaw 2026.4.15+ emits both a `block` and a `final` event per
+    // rich-output reply with the SAME media payload. Acting on both
+    // would upload each attachment twice — we only relay `final`.
+    const runtime = makeRuntime({
+      replyPayload: {
+        text: "interim",
+        mediaUrls: ["./preview.png"] as unknown as string[],
+      } as any,
+      replyInfo: { kind: "block" },
+    });
+
+    const log = makeLogger();
+    setRuntime(runtime as any);
+    const monitorPromise = startAgentClubMonitor({
+      account: makeAccount(),
+      cfg: {} as any,
+      abortSignal: abortController.signal,
+      log,
+    });
+
+    triggerSocketEvent("auth_ok", AUTH_OK);
+    await new Promise((r) => setTimeout(r, 50));
+
+    triggerSocketEvent("new_message", makeInboundMsg());
+    await new Promise((r) => setTimeout(r, 150));
+
+    // Nothing was sent — text bubble skipped AND media upload skipped.
+    const sendCalls = mockSocket.emit.mock.calls.filter(
+      (c: unknown[]) => c[0] === "send_message",
+    );
+    expect(sendCalls).toHaveLength(0);
+    expect(loadWebMediaMock).not.toHaveBeenCalled();
+
+    abortController.abort();
+    await monitorPromise;
+  });
+
   it("handles dispatch errors gracefully", async () => {
     const runtime = makeRuntime({ dispatchError: new Error("Provider error") });
 
