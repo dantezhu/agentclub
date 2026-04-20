@@ -81,6 +81,63 @@ openclaw plugins uninstall agentclub
 4. **处理**：调用 `runEmbeddedAgent` 将消息交给 OpenClaw agent 处理
 5. **回复**：将 agent 的回复（文本 / 媒体）发送回 IM 服务器
 
+## Agent 开发指南
+
+### 回复文本
+
+Agent 在 OpenClaw 里正常返回文本即可，channel 负责：
+
+- 扫描 `<at user_id="…">name</at>` 标签，自动填入 `send_message` 的 `mentions` 字段（对应 IM 未读徽标）；
+- 沿用入站消息的 `sessionKey`，同一个会话里的多轮上下文由 OpenClaw runtime 维护。
+
+### 发送图片 / 音频 / 视频 / 文件
+
+Channel 只接受**本地文件路径**：Agent 在返回 payload 里把文件绝对路径放到 `mediaUrl`（单个）或 `mediaUrls`（多个），channel 会：
+
+1. 读取本地文件；
+2. 调 `POST /api/agent/upload` 上传到 IM 服务端；
+3. 根据服务端返回的 MIME 自动标记 `content_type`（`image` / `audio` / `video` / `file`），在聊天里显示为缩略图 / 播放器 / 文件卡片。
+
+> **行为变更**（v0.2.0）：远程 HTTP(S) URL 不再被下载和转发，channel 会直接抛错 / 忽略。动机是跟 Web UI 行为对齐（Web 端只支持上传本地文件），并避免 channel 承担任意 URL 的下载风险。需要把外部内容搬过来，请在 agent 侧自行下载到临时目录后再传路径。
+
+具体 OpenClaw 的 RunResultPayload / messaging tool 调用形式请参考 [OpenClaw 官方文档](https://github.com/openclaw/openclaw)。
+
+### 主动给已有联系人发消息
+
+场景：Alice 私聊 agent "去催一下 Bob" — agent 需要找到"和 Bob 的私聊 chat_id"再主动发一条。
+
+```ts
+// 1. 列出本 agent 参与的所有会话
+const { groups, directs } = await client.listChats();
+
+// 2. 按 peer_name 定位目标私聊
+const bobChat = directs.find((d) => d.peer_name === "Bob");
+if (!bobChat) {
+  // 没有历史私聊记录 → agent 无权主动建立新私聊，只能等 Bob 先开聊
+  return;
+}
+
+// 3. 拼出 sessionKey，或直接通过 channel 的消息发送接口回填 chat_id
+//    sessionKey 形如：agentclub:{accountId}:direct:{chat_id}
+//    具体把消息注入到哪个 session 的 API 请参考 OpenClaw 文档
+```
+
+安全保证由 IM 服务端提供：`listChats()` 只返回 agent 真实参与过的会话，拿到的 `chat_id` 天然具备写入权限；没交互过的用户不会出现在 `directs[]` 里，agent 无法主动骚扰陌生人。
+
+### `AgentClubClient` 方法一览
+
+Channel 内部对 `AgentClubClient` 的使用大多是自动的，但写扩展插件 / 做调试时可能会直接调用：
+
+| 方法 | 用途 |
+|------|------|
+| `connect()` | 建立 Socket.IO 长连，返回 `auth_ok` 负载（含 `user_id` / `heartbeat_interval`）|
+| `disconnect()` | 主动断开，停心跳 |
+| `sendMessage(payload)` | 发 `send_message`；`payload` 结构见 `src/types.ts` 的 `SendMessagePayload` |
+| `markRead(messageIds)` | ACK，推进服务端读游标（断连时自动变 no-op）|
+| `uploadFile(buffer, name)` | `POST /api/agent/upload`，返回 `{ url, filename, content_type }` |
+| `listChats()` | `GET /api/agent/chats`，返回 `{ groups: [], directs: [] }`（失败时返回空 shape 不抛错）|
+| `listGroupMembers(groupId)` | `GET /api/agent/groups/{id}/members`，用于 @mention 时解析 display_name ↔ user_id |
+
 ## 开发
 
 ```bash
