@@ -285,11 +285,15 @@ describe("startAgentClubMonitor", () => {
     triggerSocketEvent("new_message", makeInboundMsg());
     await new Promise((r) => setTimeout(r, 150));
 
-    // Route resolution forwarded the peer correctly.
+    // Route resolution forwarded the peer correctly. peer.id is the
+    // agentclub `chat_id` (NOT the sender's user id) — deleting and
+    // recreating a direct chat gets a new chat_id and therefore a new
+    // OpenClaw session, which is the intended "fresh conversation → fresh
+    // state" semantics. See monitor.ts for the full reasoning.
     expect(runtime.channel.routing.resolveAgentRoute).toHaveBeenCalledWith(
       expect.objectContaining({
         channel: "agentclub",
-        peer: { kind: "direct", id: "user-1" },
+        peer: { kind: "direct", id: "chat-42" },
       }),
     );
 

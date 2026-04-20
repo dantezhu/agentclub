@@ -405,10 +405,27 @@ async function processInbound(
   }
 
   // 2. Resolve the agent route (session key, agent id) from the user's
-  //    config, keyed by channel + accountId + peer. This mirrors the
-  //    feishu-lark plugin's `dispatch-context.ts`.
+  //    config, keyed by channel + accountId + peer.
+  //
+  //    IMPORTANT — what counts as "peer.id" here:
+  //    agentclub conversations are first-class server records with their
+  //    own synthetic ids (`direct_chats.id` / `groups.id`). A "delete and
+  //    recreate" action produces a NEW id even when the human participants
+  //    haven't changed. Users expect that to be a fresh start (fresh agent
+  //    memory, fresh binding) — so we key peer.id on `msg.chatId` for
+  //    BOTH direct and group chats. This differs from feishu, where the
+  //    equivalent is `open_id` (stable per user, no transient conversation
+  //    row), but matches agentclub's actual semantics and keeps the whole
+  //    inbound→outbound round-trip consistent: the SDK-built sessionKey,
+  //    our own `toSessionKey(...)`, the conversationId in `To`, and the
+  //    `chat_id` we hand back to `client.sendMessage` on reply all share
+  //    the exact same id. An earlier revision used `msg.senderId` for
+  //    direct, which collapsed every conversation with the same peer
+  //    into one OpenClaw session; after the server started enforcing
+  //    per-chat participation on `send_message`, replies were rejected
+  //    as "你不在这个对话中" once the original chat had been deleted.
   const peerKind: "direct" | "group" = msg.chatType === "group" ? "group" : "direct";
-  const peerId = msg.chatType === "group" ? msg.chatId : msg.senderId;
+  const peerId = msg.chatId;
   const accountId = account.accountId || "default";
   let route: { sessionKey: string; accountId: string; agentId: string };
   try {
@@ -419,23 +436,20 @@ async function processInbound(
       peer: { kind: peerKind, id: peerId },
     });
   } catch (err) {
+    // `msg.sessionKey` here is the channel-side conversation key
+    // (`agentclub:<type>:<chatId>`), NOT the OpenClaw SDK agent session
+    // key (`agent:<agentId>:<channel>:<type>:<peerId>`) returned above.
     log.error(`Route resolution failed for ${msg.sessionKey}: ${formatLogArg(err)}`);
     return;
   }
 
-  // `To` / `OriginatingTo` must be a full session_key. When the agent
-  // uses an isolated session (or otherwise replies without specifying a
-  // target), OpenClaw core echoes `OriginatingTo` back to our outbound
-  // adapter, whose `parseSessionKey` requires the `agentclub:{kind}:{id}`
-  // form. Earlier revisions wrote `user:<senderId>` / `chat:<chatId>`
-  // here, which both (a) disagreed with our own `resolveDeliveryTarget`
-  // contract and (b) silently dropped replies as `Invalid target: …`.
-  //
-  // NB for direct chats: the IM server keys a direct conversation by
-  // its own `chat_id` (a uuid distinct from either participant's user
-  // id). That's what `sendMessage({chat_id: msg.chatId})` uses for
-  // replies, so we use the same id here — NOT `senderId` — to keep the
-  // inbound-to-outbound round-trip self-consistent.
+  // `To` / `OriginatingTo` must be a full channel-side session key, in
+  // our case `agentclub:{kind}:{chatId}`. When the agent uses an isolated
+  // session (or otherwise replies without specifying a target), OpenClaw
+  // core echoes `OriginatingTo` back to our outbound adapter, whose
+  // `parseSessionKey` recovers `chatId` and hands it to the server. So
+  // the tail here MUST be the same `chat_id` the server knows about —
+  // the exact value `client.sendMessage({chat_id})` will need on reply.
   const toField = toSessionKey(peerKind, msg.chatId);
 
   // 3. For group chats, fetch the current roster so we can (a) teach the
