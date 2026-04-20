@@ -517,7 +517,23 @@ async function processInbound(
           // the single authoritative chunk per reply, so keying on it
           // is strictly correct and much simpler than trying to dedupe
           // by content hash across events.
-          if (info?.kind !== "final") return;
+          //
+          // We log the skip at info level rather than dropping
+          // silently: if the SDK ever renames "final" or stops emitting
+          // it, the reply would just vanish and we'd have no trail.
+          // This line lets operators notice "agent was chatty but
+          // nothing went out" without attaching a debugger.
+          if (info?.kind !== "final") {
+            const mediaCount =
+              payload.mediaUrls?.length ??
+              (payload.mediaUrl ? 1 : 0);
+            log.info(
+              `Skipping non-final reply chunk (kind=${
+                info?.kind ?? "<none>"
+              }, text_len=${payload.text?.length ?? 0}, media=${mediaCount})`,
+            );
+            return;
+          }
 
           const text = payload.text?.trim() ?? "";
           const mediaUrls = payload.mediaUrls?.length
