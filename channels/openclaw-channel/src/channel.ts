@@ -3,11 +3,17 @@ import {
   createChannelPluginBase,
 } from "openclaw/plugin-sdk/channel-core";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/channel-core";
-import type { AgentClubConfig, ResolvedAccount, ContentType } from "./types.js";
+import type { AgentClubConfig, ResolvedAccount } from "./types.js";
 import { resolveAccount, inspectAccount } from "./setup.js";
 import { parseSessionKey } from "./session.js";
 import { getActiveClient } from "./runtime.js";
 import { startAgentClubMonitor } from "./monitor.js";
+import {
+  inferContentTypeFromUrl,
+  inferContentTypeFromUploadType,
+  isRemoteHttpUrl,
+  stripFileScheme,
+} from "./mime.js";
 import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
 
@@ -15,14 +21,6 @@ export { resolveAccount, inspectAccount } from "./setup.js";
 
 /** Single-account plugin uses this constant for the only account id. */
 const DEFAULT_ACCOUNT_ID = "default";
-
-function inferContentType(mime: string): ContentType {
-  const lower = mime.toLowerCase();
-  if (lower === "image" || lower.startsWith("image/")) return "image";
-  if (lower === "audio" || lower.startsWith("audio/")) return "audio";
-  if (lower === "video" || lower.startsWith("video/")) return "video";
-  return "file";
-}
 
 function getAgentClubSection(cfg: OpenClawConfig | Record<string, unknown>): AgentClubConfig | null {
   const channels = (cfg as Record<string, unknown>).channels as
@@ -147,31 +145,68 @@ export const agentClubPlugin = createChatChannelPlugin<ResolvedAccount>({
         if (!parsed) throw new Error(`Invalid target: ${params.to}`);
 
         const client = getActiveClient();
+        const caption = params.text || "";
+
+        // Build the list of (file_url, file_name, content_type) tuples to
+        // emit. Remote http(s) URLs are referenced as-is (the browser fetches
+        // them directly); anything else — bare filesystem paths, `file://`
+        // URIs, or entries in `mediaLocalRoots` — is read locally and
+        // uploaded so the IM server gets a canonical `/media/uploads/...`
+        // URL it can serve. Emitting as a flat array lets us attach the
+        // caption only to the first message (see the loop below), keeping
+        // "one caption per sendMedia call" semantics even when multiple
+        // files are supplied.
+        type OutboundBubble = {
+          file_url: string;
+          file_name?: string;
+          content_type: ReturnType<typeof inferContentTypeFromUrl>;
+        };
+        const bubbles: OutboundBubble[] = [];
 
         if (params.mediaUrl) {
-          client.sendMessage({
-            chat_type: parsed.chatType,
-            chat_id: parsed.chatId,
-            content: params.text || "",
-            content_type: "file",
-            file_url: params.mediaUrl,
-          });
-          return {};
+          if (isRemoteHttpUrl(params.mediaUrl)) {
+            bubbles.push({
+              file_url: params.mediaUrl,
+              file_name: basename(params.mediaUrl.split("?")[0].split("#")[0]) || undefined,
+              content_type: inferContentTypeFromUrl(params.mediaUrl),
+            });
+          } else {
+            const localPath = stripFileScheme(params.mediaUrl);
+            const upload = await client.uploadFile(
+              new Uint8Array(await readFile(localPath)),
+              basename(localPath),
+            );
+            bubbles.push({
+              file_url: upload.url,
+              file_name: upload.filename,
+              content_type: inferContentTypeFromUploadType(upload.content_type),
+            });
+          }
         }
 
-        if (params.mediaLocalRoots?.length) {
-          const filePath = params.mediaLocalRoots[0] as string;
-          const fileBuffer = await readFile(filePath);
-          const fileName = basename(filePath);
-          const upload = await client.uploadFile(new Uint8Array(fileBuffer), fileName);
+        for (const root of params.mediaLocalRoots ?? []) {
+          if (!root) continue;
+          const localPath = stripFileScheme(root);
+          const upload = await client.uploadFile(
+            new Uint8Array(await readFile(localPath)),
+            basename(localPath),
+          );
+          bubbles.push({
+            file_url: upload.url,
+            file_name: upload.filename,
+            content_type: inferContentTypeFromUploadType(upload.content_type),
+          });
+        }
 
+        for (let i = 0; i < bubbles.length; i++) {
+          const b = bubbles[i]!;
           client.sendMessage({
             chat_type: parsed.chatType,
             chat_id: parsed.chatId,
-            content: params.text || "",
-            content_type: inferContentType(upload.content_type),
-            file_url: upload.url,
-            file_name: upload.filename,
+            content: i === 0 ? caption : "",
+            content_type: b.content_type,
+            file_url: b.file_url,
+            file_name: b.file_name,
           });
         }
 

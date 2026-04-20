@@ -512,6 +512,62 @@ describe("startAgentClubMonitor", () => {
     await monitorPromise;
   });
 
+  it("infers content_type for remote media URLs so images/audio render as previews, not file icons", async () => {
+    // Regression test for the bug where every media URL was sent with
+    // `content_type: "file"`, which made the Web UI render images as
+    // non-clickable file attachments instead of inline previews.
+    const runtime = makeRuntime({
+      replyPayload: {
+        text: "Here you go:",
+        mediaUrls: [
+          "https://cdn.example.com/cat.jpg?v=2",
+          "https://cdn.example.com/voice.mp3",
+          "https://cdn.example.com/scroll.mov#t=5",
+        ] as unknown as string[],
+      } as any,
+    });
+    const log = makeLogger();
+    setRuntime(runtime as any);
+    const monitorPromise = startAgentClubMonitor({
+      account: makeAccount(),
+      cfg: {} as any,
+      abortSignal: abortController.signal,
+      log,
+    });
+
+    triggerSocketEvent("auth_ok", AUTH_OK);
+    await new Promise((r) => setTimeout(r, 50));
+
+    triggerSocketEvent("new_message", makeInboundMsg());
+    await new Promise((r) => setTimeout(r, 150));
+
+    const sendCalls = mockSocket.emit.mock.calls.filter(
+      (c: unknown[]) => c[0] === "send_message",
+    );
+    // One text bubble + three media bubbles.
+    expect(sendCalls).toHaveLength(4);
+
+    const mediaPayloads = sendCalls.slice(1).map((c) => c[1]);
+    expect(mediaPayloads[0]).toMatchObject({
+      content_type: "image",
+      file_url: "https://cdn.example.com/cat.jpg?v=2",
+      file_name: "cat.jpg",
+    });
+    expect(mediaPayloads[1]).toMatchObject({
+      content_type: "audio",
+      file_url: "https://cdn.example.com/voice.mp3",
+      file_name: "voice.mp3",
+    });
+    expect(mediaPayloads[2]).toMatchObject({
+      content_type: "video",
+      file_url: "https://cdn.example.com/scroll.mov#t=5",
+      file_name: "scroll.mov",
+    });
+
+    abortController.abort();
+    await monitorPromise;
+  });
+
   it("processes offline messages", async () => {
     const runtime = makeRuntime();
     const log = makeLogger();
