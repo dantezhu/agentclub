@@ -1970,21 +1970,38 @@ function scrollToBottom() {
 }
 
 /**
- * Scroll to the bottom now AND re-scroll as any currently-pending images
- * finish loading. Called on chat open so that history containing images
- * still lands at the bottom after all images have laid out. Without this,
- * `scrollToBottom()` runs before images have measurable height, so the
- * final resting scroll position is several images short.
+ * Scroll to the bottom now AND re-scroll as any currently-pending media
+ * finish laying out. Called on chat open so that history containing
+ * images, videos, etc. still lands at the bottom after all media have
+ * measurable dimensions. Without this the initial `scrollToBottom()`
+ * runs against a list whose media boxes are still 0-height, so the
+ * final resting position is several items short of the real end.
+ *
+ * Three element types are tracked:
+ *   - <img>: `load`/`error` — dimensions known after decode.
+ *   - <video preload="metadata">: `loadedmetadata`/`error` — dimensions
+ *     known once the container/codec header is parsed. Earlier revisions
+ *     only handled <img>, which is why chats with videos would "sometimes"
+ *     fail to pin to the bottom.
+ *   - <audio>/<file card>: fixed CSS size, no async layout shift, so
+ *     intentionally not tracked.
  */
 function scrollToBottomWhenReady() {
     scrollToBottom();
     const list = document.getElementById('messageList');
     if (!list) return;
+    const rescroll = () => scrollToBottom();
     list.querySelectorAll('img').forEach((img) => {
         if (img.complete && img.naturalHeight > 0) return;
-        const rescroll = () => scrollToBottom();
         img.addEventListener('load', rescroll, { once: true });
         img.addEventListener('error', rescroll, { once: true });
+    });
+    list.querySelectorAll('video').forEach((video) => {
+        // readyState >= 1 (HAVE_METADATA) means dimensions are already
+        // known, nothing to wait for on this element.
+        if (video.readyState >= 1 && video.videoHeight > 0) return;
+        video.addEventListener('loadedmetadata', rescroll, { once: true });
+        video.addEventListener('error', rescroll, { once: true });
     });
 }
 
