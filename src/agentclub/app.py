@@ -8,6 +8,7 @@ agentclub.app`` also work for quick local iteration.
 """
 import logging
 import os
+from datetime import timedelta
 from flask import Flask, render_template, jsonify, request
 from werkzeug.exceptions import HTTPException
 from flask_socketio import SocketIO
@@ -21,6 +22,13 @@ app = Flask(__name__, static_folder="static", template_folder="templates")
 app.config.from_object(Config)
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+# Persistent login: by default Flask's session cookie is "browser session"
+# (no Expires/Max-Age) and dies when the user quits the browser. For an IM
+# app that's a worse experience than every comparable product (Feishu /
+# WeChat Web etc. all keep you logged in for weeks). We mark the session
+# permanent in login()/register() and cap it at 90 days here so the cookie
+# carries Max-Age=90d. Idle users get re-prompted only after the cap.
+app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=90)
 
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading",
                    max_http_buffer_size=50 * 1024 * 1024)

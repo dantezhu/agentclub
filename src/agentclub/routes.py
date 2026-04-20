@@ -67,6 +67,7 @@ def register():
     role = "admin" if not users else "user"
 
     uid = models.create_user(username, hash_password(password), display_name, role=role)
+    session.permanent = True
     session["user_id"] = uid
     user = models.get_user_by_id(uid)
     return jsonify(_safe_user(user)), 201
@@ -93,6 +94,7 @@ def login():
         log.warning("login failed: username=%r ip=%s", username, request.remote_addr)
         return jsonify({"error": "用户名或密码错误"}), 401
 
+    session.permanent = True
     session["user_id"] = user["id"]
     log.info("login ok: user=%s (%s) ip=%s", user["username"], user["id"], request.remote_addr)
     return jsonify(_safe_user(user))
