@@ -503,6 +503,12 @@ describe("startAgentClubMonitor", () => {
     expect(ctx.Body).toMatch(/"agent-1".+refers to you/);
     // Mentioned flag propagates to the SDK.
     expect(ctx.WasMentioned).toBe(true);
+    // Group session_key round-trips through outbound adapter: when an
+    // agent replies via isolated session, OpenClaw echoes
+    // `OriginatingTo` back to `sendText/sendMedia`, so it has to be
+    // parseable as `agentclub:group:<chatId>`.
+    expect(ctx.To).toBe("agentclub:group:group-7");
+    expect(ctx.OriginatingTo).toBe("agentclub:group:group-7");
 
     abortController.abort();
     await monitorPromise;
