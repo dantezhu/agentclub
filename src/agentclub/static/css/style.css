@@ -933,9 +933,12 @@ button, .icon-btn, .chat-item, .member-item {
 }
 .profile-view-tags:empty { display: none; }
 .profile-view-tags .member-tag { font-size: 11px; padding: 2px 8px; }
-/* Online dot variant for the profile card — slightly larger than the
- * 8px dot used in chat list rows so it reads at the avatar scale. */
-.profile-view-tags .online-pill {
+/* Online pill — reused in three places: the profile-modal tags row, the
+ * chat header's subtitle (for direct chats), and anywhere we need a
+ * "green dot + 在线" label. Keep it a top-level class so every caller
+ * gets the same visuals; size/shape adjustments per surface go in
+ * scoped rules below. */
+.online-pill {
     display: inline-flex;
     align-items: center;
     gap: 4px;
@@ -945,11 +948,15 @@ button, .icon-btn, .chat-item, .member-item {
     padding: 2px 8px;
     border-radius: 4px;
 }
-.profile-view-tags .online-pill::before {
+.online-pill::before {
     content: "";
     width: 6px; height: 6px; border-radius: 50%;
     background: #2ed573;
 }
+/* Chat header subtitle uses the pill inline with offline text like
+ * "3 分钟前在线"; nudge the baseline so the pill sits flush with the
+ * 12px subtitle copy rather than poking above the cap-height line. */
+.chat-header-info .subtitle .online-pill { vertical-align: -1px; }
 /* Description: no boxed background — that read like a code block at
  * 13px and made the card feel cluttered. Now it's centered prose
  * with comfortable line-height, capped width to keep lines short. */

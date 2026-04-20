@@ -151,17 +151,33 @@ async function refreshPresence() {
         if (!res.ok) return;
         const rows = await res.json();
         const byId = new Map(rows.map((r) => [r.user_id, r]));
-        let changed = false;
+        let sidebarDirty = false;
         for (const d of chats.directs) {
             const row = byId.get(d.peer_id);
             const next = row ? !!row.is_online : false;
             const prev = !!d.peer_online;
+            // Keep last_active_at in sync too — the chat header's
+            // offline subtitle ("X 分钟前在线") reads from it, so if we
+            // only updated is_online the header relative-time would
+            // drift until the next openChat().
+            if (row) d.peer_last_active_at = row.last_active_at;
             if (prev !== next) {
                 d.peer_online = next ? 1 : 0;
-                changed = true;
+                sidebarDirty = true;
             }
         }
-        if (changed) renderChatList();
+        if (sidebarDirty) renderChatList();
+        // Live-refresh the header subtitle when the currently open chat
+        // is a direct chat — do it unconditionally (not only on change)
+        // so the relative "X 分钟前在线" text ticks forward every poll
+        // cycle without waiting for a state flip.
+        if (currentChat && currentChat.type === 'direct') {
+            const open = chats.directs.find(c => c.id === currentChat.id);
+            if (open) {
+                document.getElementById('chatSubtitle').innerHTML =
+                    renderPresenceSubtitle(!!open.peer_online, open.peer_last_active_at);
+            }
+        }
     } catch {
         // Network blip — ignore; next tick will try again.
     }
@@ -319,20 +335,23 @@ async function openChat(type, id, name, isAgent = false) {
         avatarEl.title = '查看群组信息';
         avatarEl.onclick = () => openGroupInfoModal(id);
     } else {
-        // For direct chats we surface the peer's avatar + (for agents)
-        // their description. Both come from chats.directs which the
-        // sidebar already pulled — looking them up here avoids re-
-        // fetching and avoids threading the values through openChat()'s
-        // string-concat call site (which would force escaping).
+        // Direct-chat header: surface peer avatar + presence. We read the
+        // peer's online state from the sidebar's chats.directs cache
+        // rather than re-fetching, so the header always agrees with the
+        // sidebar's green dot (both are driven by the same
+        // /api/presence polling loop in refreshPresence).
+        //
+        // Subtitle used to show the agent description for agent directs
+        // and nothing for user directs — inconsistent and low-signal
+        // (description already lives one tap away in the profile modal).
+        // Now every direct chat, agent or human, shows presence here.
         const peer = (chats.directs || []).find(c => c.id === id);
         const peerAvatar = peer && peer.peer_avatar;
         const peerName = (peer && peer.peer_name) || name;
         const peerId = peer && peer.peer_id;
-        let subtitle = '';
-        if (isAgent && peer) {
-            subtitle = peer.peer_description || '';
-        }
-        document.getElementById('chatSubtitle').textContent = subtitle;
+        const peerOnline = !!(peer && peer.peer_online);
+        const peerLastActive = peer && peer.peer_last_active_at;
+        document.getElementById('chatSubtitle').innerHTML = renderPresenceSubtitle(peerOnline, peerLastActive);
         document.getElementById('chatMembersBtn').classList.add('hidden');
         document.getElementById('chatActionsBtn').classList.remove('hidden');
         // Render the peer avatar in the same slot the group avatar uses
@@ -2028,6 +2047,63 @@ function formatDateTime(ts) {
     const pad = n => String(n).padStart(2, '0');
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} `
          + `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/* Format a "last active" timestamp for the offline-state subtitle, in
+ * the same cascading-granularity style as WeChat / Telegram:
+ *
+ *   < 1 min     → "刚刚在线"
+ *   < 60 min    → "X 分钟前在线"
+ *   < 24 h      → "X 小时前在线"
+ *   yesterday   → "昨天 HH:MM 在线"
+ *   this week   → "星期X HH:MM 在线"
+ *   same year   → "M月D日 在线"
+ *   older       → "YYYY年M月D日 在线"
+ *
+ * Intentionally a SEPARATE helper from formatTime — that one's for
+ * message timestamps (which users scan for chronology) while this one
+ * is for presence (where users want a quick social read, not a precise
+ * time). Returns "离线" when ts is missing/zero (agent that has never
+ * connected, or a user whose last_active_at was never recorded). */
+function formatLastActive(ts) {
+    if (!ts) return '离线';
+    const d = new Date(ts * 1000);
+    const now = new Date();
+    const pad = n => String(n).padStart(2, '0');
+    const diffSec = Math.max(0, Math.floor(now.getTime() / 1000 - ts));
+    if (diffSec < 60) return '刚刚在线';
+    if (diffSec < 3600) return `${Math.floor(diffSec / 60)} 分钟前在线`;
+    if (diffSec < 86400 && d.toDateString() === now.toDateString()) {
+        return `${Math.floor(diffSec / 3600)} 小时前在线`;
+    }
+    const timeStr = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    const yesterday = new Date(now);
+    yesterday.setDate(now.getDate() - 1);
+    if (d.toDateString() === yesterday.toDateString()) {
+        return `昨天 ${timeStr} 在线`;
+    }
+    // Same calendar week (within last 6 days) → weekday name.
+    if (diffSec < 7 * 86400) {
+        const weekdays = ['星期日','星期一','星期二','星期三','星期四','星期五','星期六'];
+        return `${weekdays[d.getDay()]} ${timeStr} 在线`;
+    }
+    if (d.getFullYear() === now.getFullYear()) {
+        return `${d.getMonth() + 1}月${d.getDate()}日 在线`;
+    }
+    return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日 在线`;
+}
+
+/* HTML fragment for the direct-chat header subtitle. Online → green
+ * pill matching the profile modal's badge style; offline → plain gray
+ * text with a relative last-active timestamp. Returning HTML (rather
+ * than plain text) lets the caller feed it straight into the
+ * #chatSubtitle span's innerHTML without an extra DOM dance.
+ *
+ * NOT used in the sidebar — that view keeps its compact "dot before
+ * name" convention and has no room for prose. */
+function renderPresenceSubtitle(isOnline, lastActiveAt) {
+    if (isOnline) return '<span class="online-pill">在线</span>';
+    return escHtml(formatLastActive(lastActiveAt));
 }
 
 function previewText(msg) {
