@@ -10,7 +10,6 @@ let presencePollTimer = null;
 let presencePollIntervalMs = 30_000;
 let unreadCounts = {};
 let lastMessages = {};
-let pendingImages = []; // Files queued for preview before sending
 
 /* ── Init ── */
 async function init() {
@@ -630,11 +629,6 @@ function sendMessage() {
     const input = document.getElementById('messageInput');
     if (!currentChat) return;
 
-    // Send pending images first
-    if (pendingImages.length > 0) {
-        sendPendingImages();
-    }
-
     const { text, mentions } = serializeInput(input);
     if (!text.trim()) return;
 
@@ -673,64 +667,27 @@ async function handleFileSelect(event) {
     } catch { alert('上传失败'); }
 }
 
-/* ── Image handling ── */
+/* ── Image handling ──
+ *
+ * WeChat-style "pick and it's gone" UX: no preview bar, no confirm-to-send
+ * step. Matches the behaviour of `handleFileSelect` for non-image files, so
+ * the two attachment buttons feel the same to users. If we ever want a
+ * Telegram-style preview + caption flow it should cover files too, not just
+ * images — a half-baked preview that only applies to one mime class is
+ * worse than no preview at all (users get confused by the inconsistency).
+ */
 
-function handleImageSelect(event) {
-    const files = Array.from(event.target.files);
+async function handleImageSelect(event) {
+    const files = Array.from(event.target.files).filter(f => f.type.startsWith('image/'));
     event.target.value = '';
     if (!files.length || !currentChat) return;
-    addImagesToPending(files.filter(f => f.type.startsWith('image/')));
+    await sendImageFiles(files);
 }
 
-function addImagesToPending(files) {
+async function sendImageFiles(files) {
     for (const file of files) {
         if (!file.type.startsWith('image/')) continue;
-        const id = Math.random().toString(36).slice(2);
-        const objectUrl = URL.createObjectURL(file);
-        pendingImages.push({ id, file, objectUrl });
-    }
-    renderImagePreview();
-}
-
-function renderImagePreview() {
-    const bar = document.getElementById('imagePreviewBar');
-    const list = document.getElementById('imagePreviewList');
-    if (!pendingImages.length) {
-        bar.classList.add('hidden');
-        list.innerHTML = '';
-        return;
-    }
-    bar.classList.remove('hidden');
-    list.innerHTML = pendingImages.map(img =>
-        `<div class="image-preview-item" id="preview_${img.id}">
-            <img src="${img.objectUrl}" alt="">
-            <button class="image-preview-remove" onclick="removeImagePreview('${img.id}')" title="移除">${AgentClubUI.iconHTML('x')}</button>
-        </div>`
-    ).join('');
-}
-
-function removeImagePreview(id) {
-    const idx = pendingImages.findIndex(img => img.id === id);
-    if (idx >= 0) {
-        URL.revokeObjectURL(pendingImages[idx].objectUrl);
-        pendingImages.splice(idx, 1);
-    }
-    renderImagePreview();
-}
-
-function clearImagePreviews() {
-    for (const img of pendingImages) {
-        URL.revokeObjectURL(img.objectUrl);
-    }
-    pendingImages = [];
-    renderImagePreview();
-}
-
-async function sendPendingImages() {
-    const images = [...pendingImages];
-    clearImagePreviews();
-    for (const img of images) {
-        await uploadAndSendImage(img.file);
+        await uploadAndSendImage(file);
     }
 }
 
@@ -851,7 +808,7 @@ function setupInputHandlers() {
             }
             if (imageFiles.length) {
                 e.preventDefault();
-                addImagesToPending(imageFiles);
+                sendImageFiles(imageFiles);
                 return;
             }
         }
@@ -895,7 +852,7 @@ function setupInputHandlers() {
         if (!currentChat) return;
         const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'));
         if (files.length) {
-            addImagesToPending(files);
+            sendImageFiles(files);
         }
     });
 
