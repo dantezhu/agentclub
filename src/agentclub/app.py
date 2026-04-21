@@ -63,7 +63,17 @@ def _inject_branding():
 def index():
     if "user_id" in session:
         return redirect(url_for("chat_page"))
-    return render_template("login.html")
+    # Decide registration UI on the server so the "注册" tab and the
+    # form DOM never ship to the browser when the gate is closed —
+    # eliminates the previous flash where the tab was visible until an
+    # async ``/api/registration-status`` fetch hid it, and stops a
+    # devtools-savvy visitor from un-hiding the form locally and
+    # POSTing to ``/api/register`` (which would still 403, but better
+    # to not ship the temptation at all).
+    return render_template(
+        "login.html",
+        allow_registration=bool(Config.ALLOW_REGISTRATION),
+    )
 
 
 @app.route("/chat")

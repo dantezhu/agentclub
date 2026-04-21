@@ -122,6 +122,25 @@ class TestAuth:
         res = client.get("/api/registration-status")
         assert res.get_json() == {"allow_registration": True}
 
+    def test_login_page_omits_register_when_disabled(self, client, monkeypatch):
+        # The "注册" tab button and the registerForm DOM must both be
+        # absent server-side — guarantees no flash + no devtools-bypass
+        # when ALLOW_REGISTRATION is off.
+        monkeypatch.setattr(config.Config, "ALLOW_REGISTRATION", False)
+        res = client.get("/")
+        assert res.status_code == 200
+        body = res.get_data(as_text=True)
+        assert "switchTab('register')" not in body
+        assert 'id="registerForm"' not in body
+
+    def test_login_page_includes_register_when_enabled(self, client, monkeypatch):
+        monkeypatch.setattr(config.Config, "ALLOW_REGISTRATION", True)
+        res = client.get("/")
+        assert res.status_code == 200
+        body = res.get_data(as_text=True)
+        assert "switchTab('register')" in body
+        assert 'id="registerForm"' in body
+
     def test_login_success(self, client):
         # Seed via models so we exercise /api/login in isolation from
         # the (separately-gated) /api/register endpoint.

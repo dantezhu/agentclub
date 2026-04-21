@@ -147,7 +147,7 @@
         <p class="subtitle">与 AI Agent 实时聊天</p>
         <div class="tabs">
             <button class="active" onclick="switchTab('login')">登录</button>
-            <button onclick="switchTab('register')">注册</button>
+            {% if allow_registration %}<button onclick="switchTab('register')">注册</button>{% endif %}
         </div>
         <div class="error" id="error"></div>
 
@@ -163,6 +163,7 @@
             <button type="submit" class="btn">登录</button>
         </form>
 
+        {% if allow_registration %}
         <form id="registerForm" class="hidden" onsubmit="return handleRegister(event)">
             <div class="form-group">
                 <label>用户名</label>
@@ -178,6 +179,7 @@
             </div>
             <button type="submit" class="btn">注册</button>
         </form>
+        {% endif %}
     </div>
 
     <script>
@@ -236,12 +238,9 @@
     // Auto-redirect if already logged in
     fetch('/api/me').then(r => { if (r.ok) window.location.href = '/chat'; });
 
-    // Hide register tab if registration is disabled
-    fetch('/api/registration-status').then(r => r.json()).then(data => {
-        if (!data.allow_registration) {
-            document.querySelectorAll('.tabs button')[1].style.display = 'none';
-        }
-    });
+    // Note: whether the "注册" tab and form exist at all is decided
+    // server-side in the index route via the ``allow_registration``
+    // template flag — no client-side hide step needed.
     </script>
 </body>
 </html>
