@@ -1,4 +1,13 @@
-"""Smoke test against running server: register, login, create group, agent connects, exchange messages."""
+"""Smoke test against running server: login, create group, agent connects, exchange messages.
+
+Assumes an admin account named ``smoke_admin`` / ``test1234`` already exists.
+Seed it once via CLI before the first run::
+
+    agentclub user create smoke_admin --role admin --password test1234
+
+(the web ``/api/register`` endpoint is closed by default and never mints
+admins — admin bootstrap is an out-of-band, CLI-only operation.)
+"""
 import sys
 import time
 import requests
@@ -21,9 +30,9 @@ def main():
             print(f"  ❌ {name}")
             failed += 1
 
-    print("\n=== 1. 用户注册 ===")
-    r = s.post(f"{BASE}/api/register", json={"username": "smoke_admin", "password": "test1234", "display_name": "管理员"})
-    check("注册第一个用户（管理员）", r.status_code == 201 and r.json()["role"] == "admin")
+    print("\n=== 1. 管理员登录 ===")
+    r = s.post(f"{BASE}/api/login", json={"username": "smoke_admin", "password": "test1234"})
+    check("登录管理员账号", r.status_code == 200 and r.json()["role"] == "admin")
 
     print("\n=== 2. 获取当前用户 ===")
     r = s.get(f"{BASE}/api/me")

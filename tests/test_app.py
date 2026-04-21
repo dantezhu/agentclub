@@ -42,66 +42,97 @@ def client():
 
 @pytest.fixture
 def admin_client(client):
-    """Client logged in as admin."""
-    client.post("/api/register", json={
-        "username": "admin1", "password": "admin123", "display_name": "Admin"
-    })
+    """Client logged in as admin.
+
+    Seeds the admin directly via ``models.create_user`` rather than going
+    through ``/api/register`` because the HTTP endpoint (a) is closed by
+    default (``ALLOW_REGISTRATION=False``) and (b) only ever mints
+    ``role=user`` — admins are a CLI/bootstrap concern. Then we ``POST
+    /api/login`` to materialize the session cookie the tests will ride.
+    """
+    models.create_user(
+        "admin1", hash_password("admin123"), "Admin", role="admin"
+    )
+    client.post("/api/login", json={"username": "admin1", "password": "admin123"})
     return client
 
 
 @pytest.fixture
 def user_client():
-    """A second client logged in as regular user."""
+    """A second client logged in as regular user. Same seeding rationale
+    as ``admin_client``: skip the registration gate, insert directly."""
     app.config["TESTING"] = True
     c = app.test_client()
-    # Create admin first
-    c2 = app.test_client()
-    c2.post("/api/register", json={"username": "admin_pre", "password": "admin123"})
-    # Now create regular user
-    c.post("/api/register", json={"username": "user1", "password": "user123", "display_name": "User1"})
+    # Seed an admin too so role-based tests have the full cast available.
+    models.create_user(
+        "admin_pre", hash_password("admin123"), "Admin", role="admin"
+    )
+    models.create_user(
+        "user1", hash_password("user123"), "User1", role="user"
+    )
+    c.post("/api/login", json={"username": "user1", "password": "user123"})
     return c
 
 
 # ── Auth Tests ──
 
 class TestAuth:
-    def test_register_first_user_is_admin(self, client):
+    def test_register_blocked_by_default(self, client):
+        # ``ALLOW_REGISTRATION`` defaults to False — the endpoint is
+        # closed even on an empty db. The only way to get the very
+        # first account in is via the CLI (``agentclub onboard``).
+        res = client.post("/api/register", json={
+            "username": "first", "password": "password123"
+        })
+        assert res.status_code == 403
+
+    def test_register_works_when_flag_enabled(self, client, monkeypatch):
+        monkeypatch.setattr(config.Config, "ALLOW_REGISTRATION", True)
         res = client.post("/api/register", json={
             "username": "first", "password": "password123"
         })
         assert res.status_code == 201
         data = res.get_json()
-        assert data["role"] == "admin"
+        # Even when registration is open, the web endpoint refuses to
+        # mint admins — preserves the invariant that admin creation is
+        # an explicit, out-of-band operation.
+        assert data["role"] == "user"
         assert data["username"] == "first"
 
-    def test_register_second_user_is_regular(self, client):
-        client.post("/api/register", json={"username": "first", "password": "password123"})
-        c2 = app.test_client()
-        res = c2.post("/api/register", json={"username": "second", "password": "password123"})
-        assert res.status_code == 201
-        assert res.get_json()["role"] == "user"
-
-    def test_register_duplicate_username(self, client):
+    def test_register_duplicate_username(self, client, monkeypatch):
+        monkeypatch.setattr(config.Config, "ALLOW_REGISTRATION", True)
         client.post("/api/register", json={"username": "dup", "password": "password123"})
         c2 = app.test_client()
         res = c2.post("/api/register", json={"username": "dup", "password": "other123"})
         assert res.status_code == 409
 
-    def test_register_validation(self, client):
+    def test_register_validation(self, client, monkeypatch):
+        monkeypatch.setattr(config.Config, "ALLOW_REGISTRATION", True)
         res = client.post("/api/register", json={"username": "", "password": "123456"})
         assert res.status_code == 400
         res = client.post("/api/register", json={"username": "ok", "password": "12"})
         assert res.status_code == 400
 
+    def test_registration_status_reflects_flag(self, client, monkeypatch):
+        # Closed by default, no empty-db special case any more.
+        monkeypatch.setattr(config.Config, "ALLOW_REGISTRATION", False)
+        res = client.get("/api/registration-status")
+        assert res.get_json() == {"allow_registration": False}
+        monkeypatch.setattr(config.Config, "ALLOW_REGISTRATION", True)
+        res = client.get("/api/registration-status")
+        assert res.get_json() == {"allow_registration": True}
+
     def test_login_success(self, client):
-        client.post("/api/register", json={"username": "logintest", "password": "password123"})
+        # Seed via models so we exercise /api/login in isolation from
+        # the (separately-gated) /api/register endpoint.
+        models.create_user("logintest", hash_password("password123"), "logintest", role="user")
         c2 = app.test_client()
         res = c2.post("/api/login", json={"username": "logintest", "password": "password123"})
         assert res.status_code == 200
         assert res.get_json()["username"] == "logintest"
 
     def test_login_wrong_password(self, client):
-        client.post("/api/register", json={"username": "logintest", "password": "password123"})
+        models.create_user("logintest", hash_password("password123"), "logintest", role="user")
         c2 = app.test_client()
         res = c2.post("/api/login", json={"username": "logintest", "password": "wrong"})
         assert res.status_code == 401
@@ -355,10 +386,9 @@ class TestSocketIO:
         gres = admin_client.post("/api/groups", json={"name": "G1"})
         gid = gres.get_json()["id"]
 
-        # Create second user
+        # Create second user directly — /api/register is closed by default.
         c2 = app.test_client()
-        admin_client.post("/api/register", json={"username": "user2", "password": "pass123"})
-        # Add user2 to admin's register context won't work, let's use models
+        models.create_user("user2", hash_password("pass123"), "user2", role="user")
         u2 = models.get_user_by_username("user2")
         if u2:
             models.add_group_member(gid, u2["id"])
@@ -429,11 +459,10 @@ class TestChatPermissions:
     def _logged_in_client(username, password):
         """Create a user directly in the DB and inject a Flask session for them.
 
-        We bypass ``/api/register`` because the endpoint is gated by
-        ``Config.ALLOW_REGISTRATION`` which defaults to ``False`` once the
-        first admin exists — tests that rely on it only pass when the env
-        is explicitly opted in. For our permission checks we just need a
-        legitimately-logged-in outsider, so forge the session directly.
+        We bypass ``/api/register`` because that endpoint is closed by
+        default (``Config.ALLOW_REGISTRATION`` defaults to False and
+        never mints admins) and we only need a legitimately-logged-in
+        outsider for the permission checks. Forge the session directly.
         """
         uid = models.create_user(username, hash_password(password), username.title())
         c = app.test_client()

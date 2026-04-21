@@ -10,10 +10,11 @@ Sibling of ``agentclub agent``. The split is intentional:
 
 Why CLI at all when the admin web UI exists? Two real reasons:
 
-  1. ``ALLOW_REGISTRATION`` defaults to False. After the very first
-     account (created by ``onboard``), the web sign-up form is closed
-     — a deployer who wants to add a teammate has nowhere to do it
-     except this CLI (or hand-editing the DB).
+  1. ``ALLOW_REGISTRATION`` defaults to False and the web register
+     endpoint **never** mints ``role=admin`` (it only ever creates
+     regular users, even on an empty db). The initial admin therefore
+     has to come from somewhere else — ``agentclub onboard`` seeds it
+     on first deploy, and ``user create --role admin`` adds more.
   2. Lost-password recovery. ``user edit alice --password ...`` works
      before the server is even running.
 

@@ -46,8 +46,11 @@ def _safe_filename(filename):
 
 @api.route("/api/register", methods=["POST"])
 def register():
-    users = models.list_users()
-    if users and not Config.ALLOW_REGISTRATION:
+    # Registration is gated purely by ``ALLOW_REGISTRATION``. The first
+    # admin is bootstrapped via the CLI (``agentclub onboard``) — the web
+    # endpoint never mints admin accounts, so a leaked/unpatched server
+    # can't be turned into one by whoever hits /api/register first.
+    if not Config.ALLOW_REGISTRATION:
         return jsonify({"error": "注册功能已关闭"}), 403
 
     data = request.get_json()
@@ -65,9 +68,7 @@ def register():
     if models.get_user_by_username(username):
         return jsonify({"error": "用户名已存在"}), 409
 
-    role = "admin" if not users else "user"
-
-    uid = models.create_user(username, hash_password(password), display_name, role=role)
+    uid = models.create_user(username, hash_password(password), display_name, role="user")
     session.permanent = True
     session["user_id"] = uid
     user = models.get_user_by_id(uid)
@@ -76,9 +77,7 @@ def register():
 
 @api.route("/api/registration-status")
 def registration_status():
-    users = models.list_users()
-    allow = not users or Config.ALLOW_REGISTRATION
-    return jsonify({"allow_registration": allow})
+    return jsonify({"allow_registration": bool(Config.ALLOW_REGISTRATION)})
 
 
 @api.route("/api/login", methods=["POST"])
