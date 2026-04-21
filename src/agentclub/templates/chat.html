@@ -7,6 +7,10 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="mobile-web-app-capable" content="yes">
     <title>{{ site_name }}</title>
+    {% if site_logo %}
+    <link rel="icon" href="{{ site_logo }}">
+    <link rel="apple-touch-icon" href="{{ site_logo }}">
+    {% endif %}
     <link rel="stylesheet" href="/static/css/style.css">
     <!-- Markdown rendering -->
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>

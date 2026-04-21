@@ -4,6 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>{{ site_name }} - 登录</title>
+    {% if site_logo %}
+    <link rel="icon" href="{{ site_logo }}">
+    <link rel="apple-touch-icon" href="{{ site_logo }}">
+    {% endif %}
     <style>
         :root {
             --color-primary: #3370FF;
