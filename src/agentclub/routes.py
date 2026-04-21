@@ -2,6 +2,7 @@ import logging
 import os
 import json
 import sqlite3
+import uuid
 from flask import Blueprint, request, session, jsonify, send_from_directory
 from werkzeug.utils import secure_filename
 from .config import Config
@@ -503,7 +504,10 @@ def upload_file():
         return jsonify({"error": "不支持的文件类型"}), 400
 
     filename = _safe_filename(f.filename)
-    unique_name = f"{models.new_id()}_{filename}"
+    # Filenames are not entity IDs — keep them out of the prefixed
+    # ``new_id()`` namespace so a leaked URL can't be mistaken for a
+    # real ``user/group/direct/message`` id by the assert_kind guards.
+    unique_name = f"{uuid.uuid4().hex}_{filename}"
     filepath = os.path.join(Config.UPLOAD_FOLDER, unique_name)
     os.makedirs(Config.UPLOAD_FOLDER, exist_ok=True)
     f.save(filepath)
@@ -531,7 +535,8 @@ def agent_upload_file():
         return jsonify({"error": "不支持的文件类型"}), 400
 
     filename = _safe_filename(f.filename)
-    unique_name = f"{models.new_id()}_{filename}"
+    # See comment in ``upload_file`` — bare uuid for filenames, not new_id.
+    unique_name = f"{uuid.uuid4().hex}_{filename}"
     filepath = os.path.join(Config.UPLOAD_FOLDER, unique_name)
     os.makedirs(Config.UPLOAD_FOLDER, exist_ok=True)
     f.save(filepath)

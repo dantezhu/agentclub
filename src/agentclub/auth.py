@@ -21,7 +21,16 @@ def verify_password(password, password_hash):
 
 
 def generate_agent_token():
-    return secrets.token_urlsafe(32)
+    # ``sk_`` is the de-facto "this is a secret key" signal (cf. Stripe
+    # ``sk_live_…`` / ``sk_test_…``, GitHub ``ghp_…``, and the
+    # OpenAI/Anthropic ``sk-…`` family — we pick the underscore variant
+    # to stay consistent with the project's entity-id prefix convention
+    # (``u_`` / ``gc_`` / ``dc_`` / ``msg_``)). The ``agt`` segment
+    # namespaces the credential to Agent Club's agent role so a leak
+    # is both *recognizable as a secret* and *attributable to us* the
+    # moment it lands in a log line, gist, or screenshot. Entropy still
+    # comes from the trailing 32 url-safe bytes.
+    return "sk_agt_" + secrets.token_urlsafe(32)
 
 
 def login_required(f):

@@ -225,14 +225,80 @@ def now():
     return time.time()
 
 
-def new_id():
-    return uuid.uuid4().hex
+# ── ID prefix scheme ──────────────────────────────────────────────────
+# Stripe-style: every primary key is ``<prefix>_<uuid4_hex>``. Reasons:
+#   * Mismatched-id bugs (e.g. passing a group_id where a user_id is
+#     expected) become visible at a glance instead of hiding behind
+#     opaque 32-char strings.
+#   * Logs / exception payloads / DB dumps gain instant entity-type
+#     legibility.
+#   * Agents share the ``users`` table and namespace — they're a *role*,
+#     not a separate entity, so they MUST carry the same ``u_`` prefix.
+#     Splitting agents into their own ``a_`` prefix would fracture
+#     foreign keys (groups.created_by, messages.sender_id, …) along an
+#     attribute that isn't part of the relational identity.
+#   * The ``dc_`` (direct chat) and ``gc_`` (group chat) prefixes are
+#     deliberately symmetric: first letter switches on chat *kind*
+#     (direct vs group), second letter is anchored on "chat" — so
+#     they map 1:1 onto the ``chat_type ∈ {'direct', 'group'}`` column
+#     and leave no room for the "is this a group or a private repo?"
+#     ambiguity that ``pr_`` invited. Channels (``nanobot-channel``)
+#     used to synthesize prefixes on top of bare uuids; promoting the
+#     scheme to a server-side invariant lets that encode/decode layer
+#     go away entirely.
+#
+# Kinds are exposed as module-level constants so call sites read as
+# ``new_id(KIND_USER)`` instead of ``new_id("user")`` — typos become
+# NameError at import time instead of ValueError at runtime.
+KIND_USER = "user"
+KIND_GROUP = "group"
+KIND_DIRECT = "direct"
+KIND_MESSAGE = "message"
+
+_ID_PREFIX = {
+    KIND_USER: "u_",
+    KIND_GROUP: "gc_",
+    KIND_DIRECT: "dc_",
+    KIND_MESSAGE: "msg_",
+}
+
+
+def new_id(kind):
+    """Mint a fresh prefixed primary key for the given entity kind.
+
+    ``kind`` MUST be one of the ``KIND_*`` module constants. Unknown
+    kinds raise — silently falling back to a bare uuid would defeat
+    the whole point of the scheme (we want misuse to be loud).
+    """
+    try:
+        prefix = _ID_PREFIX[kind]
+    except KeyError as e:
+        raise ValueError(
+            f"unknown id kind {kind!r}; expected one of {sorted(_ID_PREFIX)}"
+        ) from e
+    return prefix + uuid.uuid4().hex
+
+
+def assert_kind(value, kind):
+    """Cheap runtime guard: raise unless ``value`` carries the expected
+    prefix for ``kind``. Sprinkled at the most error-prone write joints
+    (``save_message``, ``add_group_member``, etc.) so a mis-routed id
+    blows up at insertion time instead of corrupting the chat graph
+    silently. Keep these calls surgical — they're a typo catcher, not a
+    full validator."""
+    prefix = _ID_PREFIX.get(kind)
+    if prefix is None:
+        raise ValueError(f"unknown id kind {kind!r}")
+    if not isinstance(value, str) or not value.startswith(prefix):
+        raise ValueError(
+            f"expected {kind} id (prefix {prefix!r}), got {value!r}"
+        )
 
 
 # ── User operations ──
 
 def create_user(username, password_hash, display_name, role="user", avatar=""):
-    uid = new_id()
+    uid = new_id(KIND_USER)
     with get_db_ctx() as db:
         db.execute(
             "INSERT INTO users (id, username, password_hash, display_name, avatar, role, is_agent, created_at) "
@@ -243,7 +309,7 @@ def create_user(username, password_hash, display_name, role="user", avatar=""):
 
 
 def create_agent(username, display_name, token, avatar="", description=""):
-    uid = new_id()
+    uid = new_id(KIND_USER)
     with get_db_ctx() as db:
         db.execute(
             "INSERT INTO users (id, username, password_hash, display_name, avatar, description, role, is_agent, agent_token, created_at) "
@@ -451,7 +517,8 @@ def update_user(user_id, **kwargs):
 # ── Group operations ──
 
 def create_group(name, created_by, avatar="", description=""):
-    gid = new_id()
+    assert_kind(created_by, KIND_USER)
+    gid = new_id(KIND_GROUP)
     ts = now()
     with get_db_ctx() as db:
         db.execute(
@@ -474,6 +541,8 @@ def get_group(group_id):
 
 
 def add_group_member(group_id, user_id):
+    assert_kind(group_id, KIND_GROUP)
+    assert_kind(user_id, KIND_USER)
     with get_db_ctx() as db:
         db.execute(
             "INSERT OR IGNORE INTO group_members (group_id, user_id, joined_at) VALUES (?, ?, ?)",
@@ -588,6 +657,8 @@ def delete_direct_chat(chat_id, user_id):
 
 
 def get_or_create_direct_chat(user1_id, user2_id):
+    assert_kind(user1_id, KIND_USER)
+    assert_kind(user2_id, KIND_USER)
     a, b = sorted([user1_id, user2_id])
     db = get_db()
     row = db.execute(
@@ -596,7 +667,7 @@ def get_or_create_direct_chat(user1_id, user2_id):
     db.close()
     if row:
         return dict(row)
-    cid = new_id()
+    cid = new_id(KIND_DIRECT)
     with get_db_ctx() as db:
         db.execute(
             "INSERT OR IGNORE INTO direct_chats (id, user1_id, user2_id, created_at) VALUES (?, ?, ?, ?)",
@@ -671,7 +742,9 @@ def get_presence_snapshot(user_ids):
 
 def save_message(chat_type, chat_id, sender_id, content="", content_type="text",
                  file_url="", file_name="", mentions="[]"):
-    mid = new_id()
+    assert_kind(sender_id, KIND_USER)
+    assert_kind(chat_id, KIND_GROUP if chat_type == "group" else KIND_DIRECT)
+    mid = new_id(KIND_MESSAGE)
     ts = now()
     with get_db_ctx() as db:
         db.execute(

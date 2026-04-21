@@ -113,11 +113,17 @@ def channel(monkeypatch):
 
 
 def _inbound(**overrides):
-    """Build a minimal ``new_message`` payload matching the IM server protocol."""
+    """Build a minimal ``new_message`` payload matching the IM server protocol.
+
+    ``chat_id`` defaults to a ``dc_…`` shape because the real IM server
+    hands us prefixed ids natively (Stripe-style) — keeping the fixture
+    realistic means a future regression that strips the prefix server-
+    side will surface here, not in production.
+    """
     msg = {
         "id": "m1",
         "chat_type": "direct",
-        "chat_id": "chat-x",
+        "chat_id": "dc_chat-x",
         "sender_id": "user-a",
         "sender_name": "Alice",
         "content": "hello",
@@ -144,25 +150,23 @@ class TestInboundFiltering:
         envelope = channel.bus.publish_inbound.await_args.args[0]
         assert envelope.channel == "agentclub"
         assert envelope.sender_id == "user-a"
-        # Direct chats get a ``pr_`` prefix so the LLM sees an opaque
-        # identifier in Runtime-Context (not a ``key:value`` it might
-        # rewrite). ``send()`` strips the prefix before hitting the wire.
-        assert envelope.chat_id == "pr_chat-x"
+        # Direct chats carry a ``dc_`` prefix end-to-end — server in,
+        # bus out, server back in on reply. The channel just forwards.
+        assert envelope.chat_id == "dc_chat-x"
 
     @pytest.mark.asyncio
-    async def test_group_inbound_uses_gr_prefix(self, channel):
-        """Regression: a bare UUID chat_id left the LLM with no way to
-        distinguish group from direct, and a ``group:`` prefix was
-        actively rewritten to a bare UUID by the model when it saw
-        ``<at user_id="...">`` and tried to "clean up" structured ids.
-        ``gr_<id>`` looks like an opaque identifier so the model leaves
-        it alone — matching Feishu's ``oc_``/``ou_`` convention."""
+    async def test_group_inbound_uses_gc_prefix(self, channel):
+        """Group chat_ids ride through with their ``gc_`` prefix intact
+        so the LLM sees an opaque-looking identifier in Runtime-Context
+        — never a bare UUID it might confuse with a user_id, never a
+        ``group:`` shape it might "clean up" before calling the
+        ``message`` tool. Same convention as Feishu's ``oc_``/``ou_``."""
         channel._list_group_members = AsyncMock(return_value=[])
         await channel._process_inbound(
-            _inbound(chat_type="group", chat_id="grp-42", mentions=["all"])
+            _inbound(chat_type="group", chat_id="gc_grp-42", mentions=["all"])
         )
         envelope = channel.bus.publish_inbound.await_args.args[0]
-        assert envelope.chat_id == "gr_grp-42"
+        assert envelope.chat_id == "gc_grp-42"
 
     @pytest.mark.asyncio
     async def test_direct_messages_bypass_require_mention(self, channel):
@@ -277,7 +281,7 @@ class TestInboundFiltering:
     async def test_group_requires_mention_by_default(self, channel):
         """In groups, messages without @agent and without @all are dropped."""
         await channel._process_inbound(
-            _inbound(chat_type="group", chat_id="grp-1", mentions=[])
+            _inbound(chat_type="group", chat_id="gc_grp-1", mentions=[])
         )
         channel.bus.publish_inbound.assert_not_awaited()
         channel._sio.emit.assert_awaited_with("mark_read", {"message_ids": ["m1"]})
@@ -286,7 +290,7 @@ class TestInboundFiltering:
     async def test_group_mention_of_bot_passes(self, channel):
         channel._list_group_members = AsyncMock(return_value=[])
         await channel._process_inbound(
-            _inbound(chat_type="group", chat_id="grp-1", mentions=["agent-self"])
+            _inbound(chat_type="group", chat_id="gc_grp-1", mentions=["agent-self"])
         )
         channel.bus.publish_inbound.assert_awaited_once()
 
@@ -294,7 +298,7 @@ class TestInboundFiltering:
     async def test_group_mention_all_passes(self, channel):
         channel._list_group_members = AsyncMock(return_value=[])
         await channel._process_inbound(
-            _inbound(chat_type="group", chat_id="grp-1", mentions=["all"])
+            _inbound(chat_type="group", chat_id="gc_grp-1", mentions=["all"])
         )
         channel.bus.publish_inbound.assert_awaited_once()
 
@@ -303,7 +307,7 @@ class TestInboundFiltering:
         channel.config.require_mention = False
         channel._list_group_members = AsyncMock(return_value=[])
         await channel._process_inbound(
-            _inbound(chat_type="group", chat_id="grp-1", mentions=[])
+            _inbound(chat_type="group", chat_id="gc_grp-1", mentions=[])
         )
         channel.bus.publish_inbound.assert_awaited_once()
 
@@ -354,7 +358,7 @@ class TestRosterHintInjection:
             ]
         )
         await channel._process_inbound(
-            _inbound(chat_type="group", chat_id="grp-1", content="hi team")
+            _inbound(chat_type="group", chat_id="gc_grp-1", content="hi team")
         )
         envelope = channel.bus.publish_inbound.await_args.args[0]
         assert "hi team" in envelope.content
@@ -389,57 +393,57 @@ class TestOutbound:
             channel="agentclub",
             chat_id="ignored",
             content="hello back",
-            metadata={"chat_type": "group", "chat_id": "grp-7"},
+            metadata={"chat_type": "group", "chat_id": "gc_grp-7"},
         )
         await channel.send(outbound)
         channel._sio.emit.assert_awaited_once_with(
             "send_message",
             {
                 "chat_type": "group",
-                "chat_id": "grp-7",
+                "chat_id": "gc_grp-7",
                 "content": "hello back",
                 "content_type": "text",
             },
         )
 
     @pytest.mark.asyncio
-    async def test_send_decodes_gr_prefix(self, channel):
+    async def test_send_decodes_gc_prefix(self, channel):
         """The common LLM path: MessageTool forwards ``default_chat_id``
         (already prefixed at inbound time) straight through. ``send()``
-        must strip ``gr_`` and route to the right group — including
-        when the reply carries an @-mention, the exact shape that broke
-        in production with the old ``group:`` prefix."""
+        recovers the chat_type from the ``gc_`` prefix and forwards the
+        id **unchanged** — the IM server expects the prefix back on
+        every write since the prefix migration."""
         outbound = OutboundMessage(
             channel="agentclub",
-            chat_id="gr_grp-9",
+            chat_id="gc_grp-9",
             content='<at user_id="user-b">Bob</at> hi',
         )
         await channel.send(outbound)
 
         payload = channel._sio.emit.await_args.args[1]
         assert payload["chat_type"] == "group"
-        assert payload["chat_id"] == "grp-9"
+        assert payload["chat_id"] == "gc_grp-9"
         assert payload["mentions"] == ["user-b"]
 
     @pytest.mark.asyncio
-    async def test_send_decodes_pr_prefix(self, channel):
-        """Same round-trip for direct chats: ``pr_<id>`` in, ``direct`` +
-        bare id out."""
+    async def test_send_decodes_dc_prefix(self, channel):
+        """Same round-trip for direct chats: ``dc_<id>`` in, ``direct`` +
+        same prefixed id out."""
         outbound = OutboundMessage(
-            channel="agentclub", chat_id="pr_chat-1", content="hi"
+            channel="agentclub", chat_id="dc_chat-1", content="hi"
         )
         await channel.send(outbound)
         payload = channel._sio.emit.await_args.args[1]
         assert payload["chat_type"] == "direct"
-        assert payload["chat_id"] == "chat-1"
+        assert payload["chat_id"] == "dc_chat-1"
 
     @pytest.mark.asyncio
     async def test_send_extracts_mentions_from_at_tags(self, channel):
         outbound = OutboundMessage(
             channel="agentclub",
-            chat_id="grp-1",
+            chat_id="gc_grp-1",
             content='sure <at user_id="u-1">Alice</at> and <at user_id="u-2">Bob</at>',
-            metadata={"chat_type": "group", "chat_id": "grp-1"},
+            metadata={"chat_type": "group", "chat_id": "gc_grp-1"},
         )
         await channel.send(outbound)
         payload = channel._sio.emit.await_args.args[1]
@@ -449,7 +453,7 @@ class TestOutbound:
     async def test_send_omits_mentions_field_when_no_tags(self, channel):
         outbound = OutboundMessage(
             channel="agentclub",
-            chat_id="pr_chat-1",
+            chat_id="dc_chat-1",
             content="thanks!",
         )
         await channel.send(outbound)
@@ -463,7 +467,7 @@ class TestOutbound:
             channel._sio.emit.reset_mock()
             outbound = OutboundMessage(
                 channel="agentclub",
-                chat_id="pr_chat-1",
+                chat_id="dc_chat-1",
                 content="partial",
                 metadata={flag: True},
             )
@@ -474,7 +478,7 @@ class TestOutbound:
     async def test_send_noop_when_disconnected(self, channel):
         channel._sio.connected = False
         outbound = OutboundMessage(
-            channel="agentclub", chat_id="pr_chat-1", content="hi"
+            channel="agentclub", chat_id="dc_chat-1", content="hi"
         )
         await channel.send(outbound)
         channel._sio.emit.assert_not_awaited()
@@ -497,7 +501,7 @@ class TestOutbound:
 
         outbound = OutboundMessage(
             channel="agentclub",
-            chat_id="pr_chat-1",
+            chat_id="dc_chat-1",
             content="see attached",
             media=[str(fpath)],
         )
@@ -530,7 +534,7 @@ class TestOutbound:
 
         outbound = OutboundMessage(
             channel="agentclub",
-            chat_id="pr_chat-1",
+            chat_id="dc_chat-1",
             content="",
             media=[
                 "https://cdn.example.com/cat.jpg",
@@ -566,7 +570,7 @@ class TestOutbound:
 
         outbound = OutboundMessage(
             channel="agentclub",
-            chat_id="pr_chat-1",
+            chat_id="dc_chat-1",
             content="",
             media=[str(fpath)],
         )

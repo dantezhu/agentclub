@@ -67,33 +67,28 @@ _DEDUP_CAPACITY = 1024
 _AT_TAG_RE = re.compile(r'<at user_id="([^"]+)">([^<]*)</at>')
 
 
-# Chat-id prefixes we stamp on every id before handing it to the bus,
-# then strip on the way back out to the IM server. The model sees the
-# prefixed form in Nanobot's Runtime-Context block; picking shapes
-# that look like part of the id itself (no ``:``) prevents the LLM
-# from treating them as structured "key:value" syntax and rewriting
-# the id into a bare UUID before calling the ``message`` tool. This
-# is the same trick Feishu uses with ``oc_`` / ``ou_`` — except there
-# the prefix is enforced by the platform, here we add our own.
-_GROUP_PREFIX = "gr_"
-_DIRECT_PREFIX = "pr_"
-
-
-def _encode_chat_id(chat_type: str, chat_id: str) -> str:
-    """Tag ``chat_id`` with a chat-type prefix for the bus-facing form."""
-    if chat_type == "group":
-        return f"{_GROUP_PREFIX}{chat_id}"
-    if chat_type == "direct":
-        return f"{_DIRECT_PREFIX}{chat_id}"
-    return chat_id
+# Chat-id prefixes. The IM server mints chat_ids carrying ``gc_``
+# (group chat) and ``dc_`` (direct chat) prefixes natively — same
+# Stripe-style scheme the channel used to synthesize locally, now a
+# server-side invariant. The two prefixes are intentionally symmetric
+# (``[gd]c_``) so they map 1:1 onto ``chat_type ∈ {'group','direct'}``.
+# The channel just forwards them; no encode/decode layer beyond
+# extracting ``chat_type`` from the prefix on outbound.
+_GROUP_PREFIX = "gc_"
+_DIRECT_PREFIX = "dc_"
 
 
 def _decode_chat_id(encoded: str) -> tuple[str, str] | None:
-    """Recover ``(chat_type, chat_id)`` from a prefixed id, or ``None``."""
+    """Recover ``(chat_type, chat_id)`` from a prefixed id, or ``None``.
+
+    The id is returned **with its prefix intact** — the IM server
+    expects ``gc_…`` / ``dc_…`` on every write, so we forward whatever
+    the agent echoed back.
+    """
     if encoded.startswith(_GROUP_PREFIX):
-        return "group", encoded[len(_GROUP_PREFIX):]
+        return "group", encoded
     if encoded.startswith(_DIRECT_PREFIX):
-        return "direct", encoded[len(_DIRECT_PREFIX):]
+        return "direct", encoded
     return None
 
 
@@ -535,20 +530,15 @@ class AgentClubChannel(BaseChannel):
             # socket reconnects mid-run.
             await self._ack(message_id)
 
-            # Stamp a chat-type prefix onto the bus-facing chat_id.
-            # MessageTool inherits this as its ``default_chat_id``, and
-            # it's what the LLM sees echoed back in Nanobot's Runtime-
-            # Context block — so ``send()`` can recover the chat_type
-            # from the id alone, statelessly, even if the LLM echoes it
-            # verbatim in a tool call. Using ``gr_`` / ``pr_`` (not
-            # ``group:`` / ``direct:``) keeps the form looking like an
-            # opaque identifier instead of a ``key:value`` structure
-            # the model might "clean up" before calling the tool.
-            encoded_chat_id = _encode_chat_id(chat_type, chat_id)
-
+            # The IM server already hands us a prefixed chat_id
+            # (``gc_…`` / ``dc_…``); MessageTool inherits it as its
+            # ``default_chat_id`` and the LLM sees it echoed in
+            # Nanobot's Runtime-Context block. ``send()`` recovers the
+            # chat_type from that prefix alone, statelessly, so the
+            # bus-facing form is just the server form, untouched.
             await self._handle_message(
                 sender_id=sender_id,
-                chat_id=encoded_chat_id,
+                chat_id=chat_id,
                 content=prompt,
                 media=media_paths,
                 metadata={
@@ -679,16 +669,19 @@ class AgentClubChannel(BaseChannel):
            constructing the outbound, so this path rarely hits in the
            normal LLM flow; still useful for channel-native helpers
            or hand-written call sites.
-        2. ``gr_<id>`` / ``pr_<id>`` prefix on the chat_id itself. This
-           is the stateless happy path: ``_process_inbound`` stamps
-           every bus-facing chat_id with a prefix, so whenever the
-           LLM echoes that id back via ``MessageTool`` we can recover
-           the type from the id alone — no cache, no state, no worry
-           about the agent replying to a chat it hasn't seen via
-           inbound in this process's lifetime.
-        3. Bare id — last-resort default, treated as a direct chat.
-           We hit this only if something upstream constructed an
-           OutboundMessage by hand without metadata or a prefix.
+        2. ``gc_<id>`` / ``dc_<id>`` prefix on the chat_id itself. This
+           is the stateless happy path: the IM server hands us
+           prefixed ids on inbound, the LLM echoes them back via
+           ``MessageTool``, and we recover the type from the prefix
+           alone — no cache, no state, no worry about the agent
+           replying to a chat it hasn't seen via inbound in this
+           process's lifetime.
+
+        A bare (un-prefixed) chat_id with no metadata is treated as
+        malformed: we return empty strings so ``send`` drops the
+        message with a warning, instead of silently mis-routing it
+        as a direct chat (the IM server would reject it anyway via
+        its own ``assert_kind`` guard).
         """
         if meta.get("chat_type") and meta.get("chat_id"):
             return str(meta["chat_type"]), str(meta["chat_id"])
@@ -698,7 +691,12 @@ class AgentClubChannel(BaseChannel):
         if decoded is not None:
             return decoded
 
-        return "direct", raw
+        logger.warning(
+            "[agentclub] outbound chat_id {!r} lacks gc_/dc_ prefix and no "
+            "chat_type metadata; dropping",
+            raw,
+        )
+        return "", ""
 
     async def _emit_send_message(self, payload: dict[str, Any]) -> None:
         if self._sio is None or not self._sio.connected:

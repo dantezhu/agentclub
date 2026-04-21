@@ -16,7 +16,6 @@ from click.testing import CliRunner
 
 from agentclub.cli import main
 from agentclub.cli.onboard import onboard
-from agentclub.cli.admin import admin_group
 from agentclub.cli.agent import agent_group
 from agentclub.cli.config_cmd import config_group
 
@@ -107,72 +106,13 @@ class TestOnboard:
         assert not verify_password("first1234", row[0])
 
 
-# ── Admin ──
-
-class TestAdmin:
-    def test_create_admin(self, runner, data_dir):
-        _onboard(runner, data_dir)
-        res = runner.invoke(admin_group, [
-            "create", "alice",
-            "--data-dir", str(data_dir),
-            "--password", "alicepass",
-        ])
-        assert res.exit_code == 0, res.output
-        conn = sqlite3.connect(data_dir / "agentclub.db")
-        row = conn.execute(
-            "SELECT role FROM users WHERE username = 'alice'"
-        ).fetchone()
-        conn.close()
-        assert row == ("admin",)
-
-    def test_create_admin_rejects_duplicate(self, runner, data_dir):
-        _onboard(runner, data_dir)
-        # `admin` was already created by onboard.
-        res = runner.invoke(admin_group, [
-            "create", "admin",
-            "--data-dir", str(data_dir),
-            "--password", "x",
-        ])
-        assert res.exit_code != 0
-        assert "already exists" in res.output
-
-    def test_passwd_changes_password(self, runner, data_dir):
-        _onboard(runner, data_dir, admin_password="orig1234")
-        res = runner.invoke(admin_group, [
-            "passwd", "admin",
-            "--data-dir", str(data_dir),
-            "--password", "new5678",
-        ])
-        assert res.exit_code == 0, res.output
-
-        from agentclub.auth import verify_password
-        conn = sqlite3.connect(data_dir / "agentclub.db")
-        row = conn.execute(
-            "SELECT password_hash FROM users WHERE username = 'admin'"
-        ).fetchone()
-        conn.close()
-        assert verify_password("new5678", row[0])
-        assert not verify_password("orig1234", row[0])
-
-    def test_passwd_rejects_non_admin(self, runner, data_dir):
-        _onboard(runner, data_dir)
-        # Insert a plain user directly.
-        conn = sqlite3.connect(data_dir / "agentclub.db")
-        conn.execute(
-            "INSERT INTO users (id, username, password_hash, display_name, "
-            "role, is_agent, created_at) VALUES ('u1', 'bob', 'x', 'Bob', "
-            "'user', 0, 1)"
-        )
-        conn.commit()
-        conn.close()
-
-        res = runner.invoke(admin_group, [
-            "passwd", "bob",
-            "--data-dir", str(data_dir),
-            "--password", "y",
-        ])
-        assert res.exit_code != 0
-        assert "not an admin" in res.output
+# Admin-specific CLI tests used to live here under ``TestAdmin``;
+# they were removed when ``cli/admin.py`` was folded into the unified
+# ``cli/user.py`` (admin is just ``role=admin`` on a regular user
+# account, so create/edit/delete share the same surface). Coverage for
+# those operations now lives implicitly in ``test_app.py`` (role
+# semantics) and would belong in a future ``TestUser`` class here if
+# the CLI surface needs end-to-end pinning again.
 
 
 # ── Agent ──
