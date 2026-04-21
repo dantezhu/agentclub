@@ -3,13 +3,17 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // socket.io-client is a heavyweight import that `AgentClubClient` pulls
 // in transitively — stubbing it keeps the test hermetic (no DNS lookups
 // or native module loading at import time).
-vi.mock("socket.io-client", () => ({
-  io: vi.fn(() => ({
+const { ioMock } = vi.hoisted(() => ({
+  ioMock: vi.fn(() => ({
     on: vi.fn(),
     emit: vi.fn(),
     disconnect: vi.fn(),
     connected: false,
   })),
+}));
+
+vi.mock("socket.io-client", () => ({
+  io: ioMock,
 }));
 
 import { AgentClubClient } from "../src/client.js";
@@ -19,6 +23,7 @@ vi.stubGlobal("fetch", fetchMock);
 
 beforeEach(() => {
   fetchMock.mockReset();
+  ioMock.mockClear();
 });
 
 function makeClient() {
@@ -29,6 +34,40 @@ function makeClient() {
     logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
   });
 }
+
+describe("AgentClubClient.connect", () => {
+  it("enables infinite socket.io reconnect with a 30s cap", async () => {
+    const client = makeClient();
+    const connectPromise = client.connect();
+
+    expect(ioMock).toHaveBeenCalledWith(
+      "http://localhost:5555",
+      expect.objectContaining({
+        auth: { agent_token: "tok-123" },
+        transports: ["websocket", "polling"],
+        reconnection: true,
+        reconnectionDelay: 1000,
+        reconnectionDelayMax: 30000,
+        reconnectionAttempts: Infinity,
+      }),
+    );
+
+    const socket = ioMock.mock.results[0]?.value;
+    const authOkHandler = socket.on.mock.calls.find(
+      ([event]: [string, unknown]) => event === "auth_ok",
+    )?.[1] as ((payload: unknown) => void) | undefined;
+    authOkHandler?.({
+      user_id: "agent-1",
+      display_name: "Bot",
+      heartbeat_interval: 30,
+    });
+
+    await expect(connectPromise).resolves.toMatchObject({
+      user_id: "agent-1",
+      display_name: "Bot",
+    });
+  });
+});
 
 describe("AgentClubClient.listChats", () => {
   it("returns the server payload on a 200 response and forwards the bearer token", async () => {

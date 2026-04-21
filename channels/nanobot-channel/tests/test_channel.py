@@ -857,3 +857,50 @@ class TestRetryLifecycle:
         finally:
             await ch.stop()
             await asyncio.wait_for(task, timeout=1)
+
+    @pytest.mark.asyncio
+    async def test_start_configures_socketio_for_infinite_post_connect_retries(
+        self, monkeypatch
+    ):
+        cfg = AgentClubConfig(
+            enabled=True,
+            server_url="http://localhost:5555",
+            agent_token="tok",
+            allow_from=["*"],
+            allow_from_kind=["*"],
+        )
+        ch = AgentClubChannel(cfg, MagicMock())
+
+        client_kwargs = []
+        connected = asyncio.Event()
+
+        async def on_success(_sio):
+            connected.set()
+
+        def fake_async_client(*args, **kwargs):
+            client_kwargs.append(kwargs)
+            return _FakeSio(["ok"], on_success=on_success)
+
+        monkeypatch.setattr(
+            "nanobot_channel_agentclub.channel.aiohttp.ClientSession",
+            _FakeClientSession,
+        )
+        monkeypatch.setattr(
+            "nanobot_channel_agentclub.channel.socketio.AsyncClient",
+            fake_async_client,
+        )
+
+        task = asyncio.create_task(ch.start())
+        try:
+            await asyncio.wait_for(connected.wait(), timeout=1)
+            assert client_kwargs == [
+                {
+                    "reconnection": True,
+                    "reconnection_attempts": 0,
+                    "reconnection_delay": 1,
+                    "reconnection_delay_max": 30,
+                }
+            ]
+        finally:
+            await ch.stop()
+            await asyncio.wait_for(task, timeout=1)
