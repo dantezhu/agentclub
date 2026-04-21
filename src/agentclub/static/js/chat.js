@@ -996,9 +996,9 @@ function invalidateMentionMembers() {
  * Inspect the caret position and, if it sits in an unfinished `@query`
  * token, show the picker filtered by `query`. Otherwise hide it.
  *
- * The `@` qualifies as a trigger only when preceded by whitespace or
- * start-of-line so that mid-word `@` (emails, handles pasted as plain
- * text) doesn't erroneously open the picker.
+ * Any trailing `@query` fragment qualifies — we intentionally do not
+ * require preceding whitespace, matching Feishu-like behaviour where the
+ * picker can be opened from anywhere in the current text node.
  */
 async function maybeShowMentionPicker(input) {
     if (!currentChat || currentChat.type !== 'group') {
@@ -1022,15 +1022,16 @@ async function maybeShowMentionPicker(input) {
     }
     const offset = range.startOffset;
     const before = node.nodeValue.slice(0, offset);
-    // Match `@query` where `@` is at start-of-text or preceded by whitespace,
-    // and `query` contains no whitespace. Query may be empty (just typed `@`).
-    const m = before.match(/(^|\s)@([^\s@]*)$/);
+    // Match the last unfinished `@query` fragment immediately before the
+    // caret. Query may be empty (user just typed `@`), but cannot contain
+    // whitespace or another `@`.
+    const m = before.match(/@([^\s@]*)$/);
     if (!m) {
         hideMentionPicker();
         return;
     }
 
-    const query = m[2];
+    const query = m[1];
     // Index of the `@` character in the text node.
     const atOffset = offset - query.length - 1;
     const atRange = document.createRange();
