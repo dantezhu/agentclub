@@ -15,6 +15,8 @@ const CHANNEL_ID = "agentclub";
 // `config.py` MAX_CONTENT_LENGTH). `saveMediaBuffer` defaults to 5MB which
 // would truncate large attachments; we raise it to the IM server's own cap.
 const ATTACHMENT_MAX_BYTES = 50 * 1024 * 1024;
+const INITIAL_RETRY_DELAY_MS = 1000;
+const MAX_RETRY_DELAY_MS = 30000;
 
 /**
  * Wire format for @mentions, mirrored from the feishu channel:
@@ -192,6 +194,29 @@ function extractMediaErrorCode(err: unknown): string | undefined {
   return typeof code === "string" ? code : undefined;
 }
 
+export function getRetryDelayMs(attempt: number): number {
+  if (attempt <= 1) return INITIAL_RETRY_DELAY_MS;
+  return Math.min(MAX_RETRY_DELAY_MS, INITIAL_RETRY_DELAY_MS * 2 ** (attempt - 1));
+}
+
+async function waitForRetryOrAbort(
+  delayMs: number,
+  abortSignal: AbortSignal,
+): Promise<boolean> {
+  if (abortSignal.aborted) return true;
+  return new Promise<boolean>((resolve) => {
+    const timer = setTimeout(() => {
+      abortSignal.removeEventListener("abort", onAbort);
+      resolve(false);
+    }, delayMs);
+    const onAbort = () => {
+      clearTimeout(timer);
+      resolve(true);
+    };
+    abortSignal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 /**
  * Long-running Socket.IO listener for the Agent Club IM server.
  *
@@ -203,6 +228,25 @@ export async function startAgentClubMonitor(ctx: MonitorContext): Promise<void> 
   const { account, cfg, abortSignal, log } = ctx;
 
   if (abortSignal.aborted) return;
+
+  let attempt = 0;
+  while (!abortSignal.aborted) {
+    try {
+      await runMonitorSession(ctx);
+      return;
+    } catch (err) {
+      attempt += 1;
+      const delayMs = getRetryDelayMs(attempt);
+      log.warn(
+        `Agent Club connect failed (attempt ${attempt}); retrying in ${Math.round(delayMs / 1000)}s: ${formatLogArg(err)}`,
+      );
+      if (await waitForRetryOrAbort(delayMs, abortSignal)) return;
+    }
+  }
+}
+
+async function runMonitorSession(ctx: MonitorContext): Promise<void> {
+  const { account, cfg, abortSignal, log } = ctx;
 
   let gateway: ((msg: NewMessagePayload) => void) | null = null;
   const pendingMessages: NewMessagePayload[] = [];
@@ -227,41 +271,47 @@ export async function startAgentClubMonitor(ctx: MonitorContext): Promise<void> 
     },
   });
 
-  const authResult = await client.connect();
-  setActiveClient(client);
+  try {
+    const authResult = await client.connect();
+    setActiveClient(client);
 
-  log.info(
-    `Connected as ${authResult.display_name} (${authResult.user_id})`,
-  );
+    log.info(
+      `Connected as ${authResult.display_name} (${authResult.user_id})`,
+    );
 
-  gateway = createInboundGateway({
-    agentUserId: authResult.user_id,
-    account,
-    onInbound: (msg) => processInbound(msg, client, cfg, log, account),
-    onAck: (id) => client.markRead(id),
-    logger: {
-      info: (...args: unknown[]) => log.info(joinArgs(args)),
-      warn: (...args: unknown[]) => log.warn(joinArgs(args)),
-    },
-  });
+    gateway = createInboundGateway({
+      agentUserId: authResult.user_id,
+      account,
+      onInbound: (msg) => processInbound(msg, client, cfg, log, account),
+      onAck: (id) => client.markRead(id),
+      logger: {
+        info: (...args: unknown[]) => log.info(joinArgs(args)),
+        warn: (...args: unknown[]) => log.warn(joinArgs(args)),
+      },
+    });
 
-  for (const msg of pendingMessages) gateway(msg);
-  pendingMessages.length = 0;
+    for (const msg of pendingMessages) gateway(msg);
+    pendingMessages.length = 0;
 
-  return new Promise<void>((resolve) => {
-    const cleanup = () => {
-      client.disconnect();
-      setActiveClient(null);
-      log.info("Monitor stopped");
-      resolve();
-    };
+    await new Promise<void>((resolve) => {
+      const cleanup = () => {
+        client.disconnect();
+        setActiveClient(null);
+        log.info("Monitor stopped");
+        resolve();
+      };
 
-    if (abortSignal.aborted) {
-      cleanup();
-      return;
-    }
-    abortSignal.addEventListener("abort", cleanup, { once: true });
-  });
+      if (abortSignal.aborted) {
+        cleanup();
+        return;
+      }
+      abortSignal.addEventListener("abort", cleanup, { once: true });
+    });
+  } catch (err) {
+    client.disconnect();
+    setActiveClient(null);
+    throw err;
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -56,38 +56,81 @@ vi.mock("openclaw/plugin-sdk/agent-media-payload", () => ({
 }));
 
 // Mock socket.io-client
-const _handlers: Record<string, Function[]> = {};
-const mockSocket = {
-  on: vi.fn((event: string, handler: Function) => {
-    _handlers[event] = _handlers[event] || [];
-    _handlers[event].push(handler);
-  }),
-  once: vi.fn((event: string, handler: Function) => {
-    _handlers[event] = _handlers[event] || [];
-    _handlers[event].push(handler);
-  }),
-  emit: vi.fn(),
-  disconnect: vi.fn(),
-  connected: true,
+type MockSocket = {
+  _handlers: Record<string, Function[]>;
+  on: ReturnType<typeof vi.fn>;
+  once: ReturnType<typeof vi.fn>;
+  emit: ReturnType<typeof vi.fn>;
+  disconnect: ReturnType<typeof vi.fn>;
+  connected: boolean;
 };
 
-function triggerSocketEvent(event: string, ...args: unknown[]) {
-  for (const h of _handlers[event] ?? []) h(...args);
+const createdSockets: MockSocket[] = [];
+
+function makeMockSocket(): MockSocket {
+  const handlers: Record<string, Function[]> = {};
+  return {
+    _handlers: handlers,
+    on: vi.fn((event: string, handler: Function) => {
+      handlers[event] = handlers[event] || [];
+      handlers[event].push(handler);
+    }),
+    once: vi.fn((event: string, handler: Function) => {
+      handlers[event] = handlers[event] || [];
+      handlers[event].push(handler);
+    }),
+    emit: vi.fn(),
+    disconnect: vi.fn(function (this: MockSocket) {
+      this.connected = false;
+    }),
+    connected: true,
+  };
 }
 
-function resetSocketHandlers() {
-  for (const key of Object.keys(_handlers)) delete _handlers[key];
-  mockSocket.on.mockClear();
-  mockSocket.once.mockClear();
-  mockSocket.emit.mockClear();
-  mockSocket.disconnect.mockClear();
+function latestSocket(): MockSocket {
+  const socket = createdSockets[createdSockets.length - 1];
+  if (!socket) throw new Error("No socket has been created");
+  return socket;
+}
+
+function triggerSocketEvent(
+  event: string,
+  ...args: unknown[]
+): void;
+function triggerSocketEvent(
+  socket: MockSocket,
+  event: string,
+  ...args: unknown[]
+): void;
+function triggerSocketEvent(
+  socketOrEvent: MockSocket | string,
+  eventOrArg?: unknown,
+  ...rest: unknown[]
+): void {
+  const socket =
+    typeof socketOrEvent === "string" ? latestSocket() : socketOrEvent;
+  const event =
+    typeof socketOrEvent === "string"
+      ? socketOrEvent
+      : (eventOrArg as string);
+  const args =
+    typeof socketOrEvent === "string" ? [eventOrArg, ...rest] : rest;
+  for (const h of socket._handlers[event] ?? []) h(...args);
+}
+
+function resetSocketMocks() {
+  createdSockets.length = 0;
 }
 
 vi.mock("socket.io-client", () => ({
-  io: vi.fn(() => mockSocket),
+  io: vi.fn(() => {
+    const socket = makeMockSocket();
+    createdSockets.push(socket);
+    return socket;
+  }),
 }));
 
-import { startAgentClubMonitor } from "../src/monitor.js";
+import { getRetryDelayMs, startAgentClubMonitor } from "../src/monitor.js";
 import { setRuntime } from "../src/runtime.js";
 import type { ResolvedAccount } from "../src/types.js";
 
@@ -227,7 +270,7 @@ function lastFinalizeCtx(runtime: ReturnType<typeof makeRuntime>): any {
 }
 
 function lastSendMessage(): any {
-  const calls = mockSocket.emit.mock.calls.filter(
+  const calls = latestSocket().emit.mock.calls.filter(
     (c: unknown[]) => c[0] === "send_message",
   );
   return calls.length ? calls[calls.length - 1][1] : null;
@@ -238,7 +281,7 @@ describe("startAgentClubMonitor", () => {
 
   beforeEach(() => {
     abortController = new AbortController();
-    resetSocketHandlers();
+    resetSocketMocks();
   });
 
   afterEach(() => {
@@ -264,7 +307,61 @@ describe("startAgentClubMonitor", () => {
 
     abortController.abort();
     await monitorPromise;
-    expect(mockSocket.disconnect).toHaveBeenCalled();
+    expect(latestSocket().disconnect).toHaveBeenCalled();
+  });
+
+  it("retries startup failures until a later attempt connects", async () => {
+    vi.useFakeTimers();
+    try {
+      const runtime = makeRuntime();
+      const log = makeLogger();
+
+      setRuntime(runtime as any);
+      const monitorPromise = startAgentClubMonitor({
+        account: makeAccount(),
+        cfg: {} as any,
+        abortSignal: abortController.signal,
+        log,
+      });
+
+      const firstSocket = latestSocket();
+      triggerSocketEvent(firstSocket, "connect_error", new Error("ECONNREFUSED"));
+      await Promise.resolve();
+
+      expect(createdSockets).toHaveLength(1);
+
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(createdSockets).toHaveLength(2);
+
+      const secondSocket = latestSocket();
+      triggerSocketEvent(secondSocket, "auth_ok", AUTH_OK);
+      await Promise.resolve();
+
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.stringContaining("retrying in 1s"),
+      );
+      expect(log.info).toHaveBeenCalledWith(
+        expect.stringContaining("TestBot (agent-1)"),
+      );
+
+      abortController.abort();
+      await monitorPromise;
+      expect(secondSocket.disconnect).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("caps retry delay at 30 seconds", () => {
+    expect([1, 2, 3, 4, 5, 6, 7].map(getRetryDelayMs)).toEqual([
+      1000,
+      2000,
+      4000,
+      8000,
+      16000,
+      30000,
+      30000,
+    ]);
   });
 
   it("dispatches inbound messages through channel.reply and relays agent reply", async () => {
@@ -315,7 +412,7 @@ describe("startAgentClubMonitor", () => {
     );
 
     // Agent's reply made it back into the IM via send_message.
-    expect(mockSocket.emit).toHaveBeenCalledWith(
+    expect(latestSocket().emit).toHaveBeenCalledWith(
       "send_message",
       expect.objectContaining({
         chat_type: "direct",
@@ -377,7 +474,7 @@ describe("startAgentClubMonitor", () => {
     triggerSocketEvent("new_message", makeInboundMsg());
     await new Promise((r) => setTimeout(r, 150));
 
-    const sendCalls = mockSocket.emit.mock.calls.filter(
+    const sendCalls = latestSocket().emit.mock.calls.filter(
       (c: unknown[]) => c[0] === "send_message",
     );
     expect(sendCalls).toHaveLength(0);
@@ -414,7 +511,7 @@ describe("startAgentClubMonitor", () => {
     await new Promise((r) => setTimeout(r, 150));
 
     // Nothing was sent — text bubble skipped AND media upload skipped.
-    const sendCalls = mockSocket.emit.mock.calls.filter(
+    const sendCalls = latestSocket().emit.mock.calls.filter(
       (c: unknown[]) => c[0] === "send_message",
     );
     expect(sendCalls).toHaveLength(0);
@@ -445,7 +542,7 @@ describe("startAgentClubMonitor", () => {
 
     expect(log.error).toHaveBeenCalled();
 
-    const sendCalls = mockSocket.emit.mock.calls.filter(
+    const sendCalls = latestSocket().emit.mock.calls.filter(
       (c: unknown[]) => c[0] === "send_message",
     );
     expect(sendCalls).toHaveLength(0);
@@ -680,7 +777,7 @@ describe("startAgentClubMonitor", () => {
       "main",
     );
 
-    const sendCalls = mockSocket.emit.mock.calls.filter(
+    const sendCalls = latestSocket().emit.mock.calls.filter(
       (c: unknown[]) => c[0] === "send_message",
     );
     // One text bubble + two media bubbles.
@@ -753,7 +850,7 @@ describe("startAgentClubMonitor", () => {
     triggerSocketEvent("new_message", makeInboundMsg());
     await new Promise((r) => setTimeout(r, 150));
 
-    const sendCalls = mockSocket.emit.mock.calls.filter(
+    const sendCalls = latestSocket().emit.mock.calls.filter(
       (c: unknown[]) => c[0] === "send_message",
     );
     // Text + one successful media (the bad one was dropped).

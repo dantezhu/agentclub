@@ -8,6 +8,7 @@ ACK semantics, @mention wiring — can be asserted deterministically.
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -21,6 +22,7 @@ from nanobot_channel_agentclub.channel import (
     _build_roster_hint,
     _extract_mention_user_ids,
     _has_mention_tag,
+    _retry_delay_seconds,
 )
 
 
@@ -730,3 +732,128 @@ class TestConfig:
         ch = AgentClubChannel(cfg, bus)
         assert ch._server_url == "http://env-host:5555"
         assert ch._agent_token == "env-tok"
+
+
+class _FakeClientSession:
+    def __init__(self, *args, **kwargs):
+        self.headers = kwargs.get("headers", {})
+        self.closed = False
+
+    async def close(self):
+        self.closed = True
+
+
+class _FakeSio:
+    def __init__(self, outcomes, on_success=None):
+        self._outcomes = outcomes
+        self._on_success = on_success
+        self.connected = False
+        self._event_handlers = {}
+        self._named_handlers = {}
+
+    def event(self, fn):
+        self._event_handlers[fn.__name__] = fn
+        return fn
+
+    def on(self, name):
+        def decorator(fn):
+            self._named_handlers[name] = fn
+            return fn
+
+        return decorator
+
+    async def connect(self, *args, **kwargs):
+        outcome = self._outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        self.connected = True
+        if self._on_success is not None:
+            await self._on_success(self)
+
+    async def disconnect(self):
+        self.connected = False
+
+    async def emit(self, *args, **kwargs):
+        return None
+
+
+class TestRetryLifecycle:
+    def test_retry_delay_caps_at_30_seconds(self):
+        assert [_retry_delay_seconds(i) for i in range(1, 8)] == [
+            1.0,
+            2.0,
+            4.0,
+            8.0,
+            16.0,
+            30.0,
+            30.0,
+        ]
+
+    @pytest.mark.asyncio
+    async def test_wait_for_retry_returns_true_when_stop_requested(self):
+        ch = AgentClubChannel(
+            AgentClubConfig(server_url="http://localhost:5555", agent_token="tok"),
+            MagicMock(),
+        )
+        ch._stop_event = asyncio.Event()
+
+        async def trigger_stop():
+            await asyncio.sleep(0.01)
+            ch._stop_event.set()
+
+        stopper = asyncio.create_task(trigger_stop())
+        try:
+            assert await ch._wait_for_retry(30) is True
+        finally:
+            await stopper
+
+    @pytest.mark.asyncio
+    async def test_start_retries_after_initial_connect_failure_and_recovers(
+        self, monkeypatch
+    ):
+        cfg = AgentClubConfig(
+            enabled=True,
+            server_url="http://localhost:5555",
+            agent_token="tok",
+            allow_from=["*"],
+            allow_from_kind=["*"],
+        )
+        bus = MagicMock()
+        ch = AgentClubChannel(cfg, bus)
+
+        retry_delays = []
+        connected = asyncio.Event()
+        sio_instances = []
+        outcomes = [RuntimeError("server down"), "ok"]
+
+        async def on_success(_sio):
+            connected.set()
+
+        def fake_async_client(*args, **kwargs):
+            sio = _FakeSio(outcomes, on_success=on_success)
+            sio_instances.append(sio)
+            return sio
+
+        async def fake_wait_for_retry(delay):
+            retry_delays.append(delay)
+            return False
+
+        monkeypatch.setattr(
+            "nanobot_channel_agentclub.channel.aiohttp.ClientSession",
+            _FakeClientSession,
+        )
+        monkeypatch.setattr(
+            "nanobot_channel_agentclub.channel.socketio.AsyncClient",
+            fake_async_client,
+        )
+        monkeypatch.setattr(ch, "_wait_for_retry", fake_wait_for_retry)
+
+        task = asyncio.create_task(ch.start())
+        try:
+            await asyncio.wait_for(connected.wait(), timeout=1)
+            assert retry_delays == [1.0]
+            assert len(sio_instances) == 2
+            assert ch.is_running is True
+        finally:
+            await ch.stop()
+            await asyncio.wait_for(task, timeout=1)

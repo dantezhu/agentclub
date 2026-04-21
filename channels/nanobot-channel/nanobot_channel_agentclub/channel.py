@@ -76,6 +76,8 @@ _AT_TAG_RE = re.compile(r'<at user_id="([^"]+)">([^<]*)</at>')
 # extracting ``chat_type`` from the prefix on outbound.
 _GROUP_PREFIX = "gc_"
 _DIRECT_PREFIX = "dc_"
+_INITIAL_RETRY_DELAY = 1.0
+_MAX_RETRY_DELAY = 30.0
 
 
 def _decode_chat_id(encoded: str) -> tuple[str, str] | None:
@@ -105,6 +107,16 @@ def _extract_mention_user_ids(text: str) -> list[str]:
         seen.add(uid)
         out.append(uid)
     return out
+
+
+def _retry_delay_seconds(attempt: int) -> float:
+    """Exponential backoff capped at 30 seconds.
+
+    ``attempt`` is 1-based: 1 → 1s, 2 → 2s, 3 → 4s, ... then clamp.
+    """
+    if attempt <= 1:
+        return _INITIAL_RETRY_DELAY
+    return min(_MAX_RETRY_DELAY, _INITIAL_RETRY_DELAY * (2 ** (attempt - 1)))
 
 
 def _has_mention_tag(text: str) -> bool:
@@ -260,37 +272,49 @@ class AgentClubChannel(BaseChannel):
             logger.error("[agentclub] agent_token is not configured")
             return
 
+        self._running = True
         self._tmp_dir = tempfile.mkdtemp(prefix="agentclub_")
         self._stop_event = asyncio.Event()
         self._http = aiohttp.ClientSession(
             headers={"Authorization": f"Bearer {self._agent_token}"}
         )
-
-        self._sio = socketio.AsyncClient(
-            reconnection=True,
-            reconnection_attempts=0,  # infinite
-            reconnection_delay=1,
-            reconnection_delay_max=30,
-        )
-        self._register_sio_handlers(self._sio)
-
-        logger.info("[agentclub] connecting to {}", self._server_url)
         try:
-            await self._sio.connect(
-                self._server_url,
-                auth={"agent_token": self._agent_token},
-                transports=["websocket", "polling"],
-            )
-        except Exception as exc:
-            logger.error("[agentclub] connect failed: {}", exc)
-            await self._cleanup()
-            return
+            attempt = 0
+            while self._running:
+                self._sio = socketio.AsyncClient(
+                    reconnection=True,
+                    reconnection_attempts=0,  # infinite after first connect
+                    reconnection_delay=1,
+                    reconnection_delay_max=30,
+                )
+                self._register_sio_handlers(self._sio)
 
-        self._running = True
-        self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
-        logger.info("[agentclub] started")
-        try:
-            await self._stop_event.wait()
+                logger.info("[agentclub] connecting to {}", self._server_url)
+                try:
+                    await self._sio.connect(
+                        self._server_url,
+                        auth={"agent_token": self._agent_token},
+                        transports=["websocket", "polling"],
+                    )
+                except Exception as exc:
+                    attempt += 1
+                    delay = _retry_delay_seconds(attempt)
+                    logger.warning(
+                        "[agentclub] connect failed (attempt {}): {} ; retrying in {}s",
+                        attempt,
+                        exc,
+                        delay,
+                    )
+                    await self._reset_socket()
+                    if await self._wait_for_retry(delay):
+                        break
+                    continue
+
+                attempt = 0
+                self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+                logger.info("[agentclub] started")
+                await self._stop_event.wait()
+                break
         finally:
             await self._cleanup()
 
@@ -333,13 +357,9 @@ class AgentClubChannel(BaseChannel):
             except (asyncio.CancelledError, Exception):
                 pass
             self._heartbeat_task = None
-        if self._sio is not None:
-            try:
-                if self._sio.connected:
-                    await self._sio.disconnect()
-            except Exception as exc:
-                logger.warning("[agentclub] disconnect error: {}", exc)
-            self._sio = None
+        await self._reset_socket()
+        self._agent_user_id = None
+        self._display_name = None
         if self._http is not None:
             try:
                 await self._http.close()
@@ -358,6 +378,32 @@ class AgentClubChannel(BaseChannel):
                 pass
         self._tmp_dir = None
         logger.info("[agentclub] stopped")
+
+    async def _reset_socket(self) -> None:
+        """Disconnect and drop the current Socket.IO client if present."""
+        if self._sio is None:
+            return
+        try:
+            if self._sio.connected:
+                await self._sio.disconnect()
+        except Exception as exc:
+            logger.warning("[agentclub] disconnect error: {}", exc)
+        finally:
+            self._sio = None
+
+    async def _wait_for_retry(self, delay: float) -> bool:
+        """Sleep until the next retry or exit early when stop() fires.
+
+        Returns ``True`` when stop was requested during the wait.
+        """
+        if self._stop_event is None:
+            await asyncio.sleep(delay)
+            return False
+        try:
+            await asyncio.wait_for(self._stop_event.wait(), timeout=delay)
+            return True
+        except asyncio.TimeoutError:
+            return False
 
     # ----------------------------------------------------------------
     # Socket.IO event wiring
