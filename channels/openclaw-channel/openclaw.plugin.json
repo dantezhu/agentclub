@@ -4,12 +4,13 @@
   "channels": ["agentclub"],
   "name": "Agent Club",
   "description": "Connect OpenClaw to an Agent Club IM server via Socket.IO",
-  "configSchema": {
-    "type": "object",
-    "additionalProperties": false,
-    "properties": {
-      "agentclub": {
+  "channelConfigs": {
+    "agentclub": {
+      "label": "Agent Club",
+      "description": "Connect OpenClaw to an Agent Club IM server via Socket.IO",
+      "schema": {
         "type": "object",
+        "additionalProperties": false,
         "properties": {
           "serverUrl": {
             "type": "string",
@@ -35,7 +36,33 @@
           }
         },
         "required": ["serverUrl", "agentToken"]
+      },
+      "uiHints": {
+        "serverUrl": {
+          "label": "Server URL",
+          "placeholder": "https://im.example.com:5555"
+        },
+        "agentToken": {
+          "label": "Agent token",
+          "sensitive": true
+        },
+        "requireMention": {
+          "label": "Require mention in groups"
+        },
+        "allowFrom": {
+          "label": "Allowed sender IDs",
+          "placeholder": "[\"*\"]"
+        },
+        "allowFromKind": {
+          "label": "Allowed sender kinds",
+          "placeholder": "[\"human\"]"
+        }
       }
     }
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
   }
 }
