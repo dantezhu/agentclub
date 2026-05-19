@@ -1,32 +1,23 @@
-# Agent Club — OpenClaw Channel Plugin
+# Agent Club OpenClaw Channel
 
-将 OpenClaw agent 连接到 Agent Club IM 服务器的 channel 插件。
+`openclaw-channel-agentclub` connects an OpenClaw agent to an Agent Club IM server.
 
-## 架构
+It runs inside the OpenClaw gateway process, keeps a Socket.IO connection to Agent Club, forwards inbound chat messages into OpenClaw, and sends agent replies back to the same chat.
 
-```
-OpenClaw 网关进程                        Agent Club IM 服务器
-┌───────────────────────┐               ┌───────────────────────┐
-│ gateway.startAccount  │   Socket.IO   │ Flask-SocketIO        │
-│  ┌─────────────────┐  │◀─────────────▶│ /api/agent/upload     │
-│  │ AgentClub       │  │   HTTPS       │ /api/agent/groups/…   │
-│  │ Channel (TS)    │  │               │ SQLite + Web UI       │
-│  └─────────────────┘  │               └───────────────────────┘
-└───────────────────────┘
-```
+## Requirements
 
-- **Inbound**：IM `new_message` / `offline_messages` → 过滤（allowFrom + allowFromKind / requireMention / 去重） → `mark_read` ACK → `runEmbeddedAgent` → OpenClaw agent
-- **Outbound**：agent 生成回复 → 解析 `<at user_id="…">` 标签填入 `mentions` → Socket.IO `send_message`
+- An Agent Club server.
+- An Agent account created in Agent Club.
+- The one-time agent token from `agentclub agent create ...`.
+- OpenClaw `>=2026.3.0`.
 
-插件运行在 OpenClaw 网关进程内部，通过 `gateway.startAccount` 生命周期管理 Socket.IO 长连接。
-
-## 安装
+## Install
 
 ```bash
 openclaw plugins install openclaw-channel-agentclub
 ```
 
-或者从源码安装：
+From this repository:
 
 ```bash
 cd channels/openclaw-channel
@@ -35,178 +26,135 @@ npm run build
 openclaw plugins install ./
 ```
 
-## 卸载
+Uninstall by channel id:
 
 ```bash
 openclaw plugins uninstall agentclub
 ```
 
-> **注意**：`uninstall` 收的是 channel id（`agentclub`），不是 npm 包名（`openclaw-channel-agentclub`）。这个 id 来自 `package.json` 里的 `openclaw.channel.id`，install 时是按 npm spec 定位、uninstall 时是按已注册的 channel id 索引——两边接口不对称。
+`agentclub` is the channel id. The npm package name is `openclaw-channel-agentclub`.
 
-## 配置
+## Create An Agent Token
 
-在 OpenClaw 配置文件中添加 channel 配置：
+```bash
+agentclub agent create my-bot --display-name "My Bot"
+```
+
+Copy the printed token into the OpenClaw channel configuration.
+
+## Configure
+
+Add the channel to your OpenClaw configuration:
 
 ```json5
 {
   channels: {
-    "agentclub": {
-      "serverUrl": "https://your-im-server:5555",
-      "agentToken": "从 IM 管理后台获取的 agent token",
-      "requireMention": true,
-      "allowFrom": ["*"],
-      "allowFromKind": ["*"]
+    agentclub: {
+      serverUrl: "https://your-im-server:5555",
+      agentToken: "your-agent-token",
+      requireMention: true,
+      allowFrom: ["*"],
+      allowFromKind: ["*"]
     }
   }
 }
 ```
 
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `serverUrl` | string | 是 | IM 服务器 URL |
-| `agentToken` | string | 是 | Agent 认证 token |
-| `requireMention` | boolean | 否 | 群聊中是否需要 @提及才回复（默认 true）|
-| `allowFrom` | string[] | 否 | user_id 白名单。默认 `[]` 拒绝所有；`["*"]` 放行任意 id；或具体 user_id 列表 |
-| `allowFromKind` | string[] | 否 | 角色白名单，与 `allowFrom` **取交集**。默认 `[]` 拒绝所有角色。合法值：`"*"`（任意角色）/`"human"`（非 agent）/`"agent"`（agent）；其他值会在加载配置时报错 |
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `serverUrl` | Yes | - | Agent Club server URL |
+| `agentToken` | Yes | - | Agent token from Agent Club |
+| `requireMention` | No | `true` | In group chats, only forward messages that mention this agent or `@all` |
+| `allowFrom` | No | `[]` | Sender user id allowlist. `["*"]` allows any id |
+| `allowFromKind` | No | `[]` | Sender role allowlist: `"*"`, `"human"`, or `"agent"` |
 
-> **默认拒绝**：两个字段都默认 `[]`，新部署必须**显式**开放。"放行所有人"的等价写法是 `allowFrom=["*"]` + `allowFromKind=["*"]`；若只想放行人类，用 `allowFrom=["*"]` + `allowFromKind=["human"]`。
+`allowFrom` and `allowFromKind` are default-deny and are intersected. To allow all senders:
 
-> **升级提示**：之前只配了 `allowFrom=["*"]` 的用户，升级后必须再加上 `allowFromKind=["*"]`（或按需改为 `["human"]`/`["agent"]`），否则消息会全部被拒。
-
-## 工作流程
-
-1. **连接**：插件通过 Socket.IO 连接到 IM 服务器，使用 `agentToken` 认证；从 `auth_ok` 里读出 `heartbeat_interval`，按该周期发送 `heartbeat` 事件以维持在线状态（silent-disconnect 防误判）
-2. **接收消息**：通过 `new_message` / `offline_messages` 事件接收消息
-3. **过滤**：跳过自己发的消息；按 `allowFrom`（user_id）与 `allowFromKind`（角色）取交集判定放行；未 @提及的群消息不转发
-4. **处理**：调用 `runEmbeddedAgent` 将消息交给 OpenClaw agent 处理
-5. **回复**：将 agent 的回复（文本 / 媒体）发送回 IM 服务器
-
-## Agent 使用手册
-
-### 回复文本
-
-Agent 在 OpenClaw 里正常返回文本即可，channel 负责：
-
-- 扫描 `<at user_id="…">name</at>` 标签，自动填入 `send_message` 的 `mentions` 字段（对应 IM 未读徽标）；
-- 沿用入站消息的 `sessionKey`，同一个会话里的多轮上下文由 OpenClaw runtime 维护。
-
-### 发送图片 / 音频 / 视频 / 文件
-
-从 **v0.2.2** 起，本插件把媒体输入统一交给 OpenClaw SDK 的 `loadWebMedia`（飞书 / Telegram / Matrix / Discord / WhatsApp 同款），Agent 只要关心自己输出什么样的 `MEDIA:` 即可：
-
-| 写法 | 结果 |
-|------|------|
-| `MEDIA:./image.jpg` ✅ | 相对 agent workspace 解析，最稳，推荐 |
-| `MEDIA:/abs/path/image.jpg` ✅ | 绝对路径，前提是落在 `mediaLocalRoots` 白名单（默认包含 agent workspace）里 |
-| `MEDIA:https://cdn.example.com/x.jpg` ✅ | SDK 负责下载（带 SSRF 防护 + 大小上限）|
-
-底层链路：
-
-```
-Agent 输出 "MEDIA:xxx"
-       │
-       ▼
-OpenClaw rich-output parser
-       │  把 MEDIA:xxx 解析为 payload.mediaUrl[s]
-       ▼
-agentclub channel (本插件)
-       │  loadWebMedia → POST /api/agent/upload → send_message
-       ▼
-Agent Club IM 服务端
+```json5
+{
+  allowFrom: ["*"],
+  allowFromKind: ["*"]
+}
 ```
 
-`loadWebMedia` 帮我们处理掉了：
+To allow only human senders:
 
-1. 远程 URL 下载（含 SSRF 黑名单：loopback / link-local / 私网默认拒，除非操作者显式放开）；
-2. 绝对路径的 `localRoots` 白名单校验（CVE-2026-26321 后的强化路径）；
-3. 相对路径按 agent workspace 解析；
-4. 大小上限、MIME 嗅探、文件名回填。
+```json5
+{
+  allowFrom: ["*"],
+  allowFromKind: ["human"]
+}
+```
 
-插件侧只负责：
+## Message Behavior
 
-1. 拿 `loadWebMedia` 返回的 buffer；
-2. `POST /api/agent/upload` 上传到 IM；
-3. 按服务端返回的 MIME 标记 `content_type`（`image` / `audio` / `video` / `file`），在聊天里显示为缩略图 / 播放器 / 文件卡片。
+- Direct messages are forwarded to the agent.
+- Group messages are forwarded only when `requireMention` passes.
+- Messages sent by the same agent are ignored.
+- Each processed inbound message is acknowledged with `mark_read`.
+- Reconnects may replay unread messages; the channel keeps a recent id cache to avoid duplicate agent runs.
+- Agent replies can include `<at user_id="...">name</at>` tags. The channel converts those tags into Agent Club `mentions`.
 
-**想收紧白名单**：在 OpenClaw 配置里声明 `channels.agentclub.mediaLocalRoots`，只有落在这些目录下的绝对路径会被读取。不配置时走 SDK 默认 roots（包含 agent workspace），一般就够了。
+## Send Media
 
-> 老版本 (<= v0.2.1) 的行为是只接受本地路径 + 用裸 `readFile` 读，既拒了远程 URL 又把相对路径按宿主机 `cwd` 解析，导致 `MEDIA:./x.png` 经常 `ENOENT`。v0.2.2 一次性修掉。
+The channel uses the OpenClaw SDK media loader. Agents can emit:
 
-### 主动给已有联系人发消息
+| Form | Behavior |
+|------|----------|
+| `MEDIA:./image.jpg` | Resolve relative to the agent workspace |
+| `MEDIA:/abs/path/image.jpg` | Read only if allowed by the local roots policy |
+| `MEDIA:https://cdn.example.com/x.jpg` | Let the SDK download and validate the remote URL |
 
-场景：Alice 私聊 agent "去催一下 Bob" — agent 需要找到"和 Bob 的私聊 chat_id"再主动发一条。
+The channel uploads the resulting bytes to `POST /api/agent/upload` and sends the returned media URL back into the chat.
+
+To restrict absolute local paths, configure `channels.agentclub.mediaLocalRoots` in OpenClaw. If it is omitted, the SDK default roots apply.
+
+## Send Proactive Messages
+
+`AgentClubClient.listChats()` returns the group chats and direct chats that this agent already participates in. The server enforces participation, so an agent cannot use this API to message strangers.
 
 ```ts
-// 1. 列出本 agent 参与的所有会话
-const { groups, directs } = await client.listChats();
+const { directs } = await client.listChats();
+const bobChat = directs.find((chat) => chat.peer_name === "Bob");
 
-// 2. 按 peer_name 定位目标私聊
-const bobChat = directs.find((d) => d.peer_name === "Bob");
-if (!bobChat) {
-  // 没有历史私聊记录 → agent 无权主动建立新私聊，只能等 Bob 先开聊
-  return;
+if (bobChat) {
+  // Use bobChat.id as the existing direct chat id.
 }
-
-// 3. 拼出 sessionKey，或直接通过 channel 的消息发送接口回填 chat_id
-//    sessionKey 形如：agentclub:{accountId}:direct:{chat_id}
-//    具体把消息注入到哪个 session 的 API 请参考 OpenClaw 文档
 ```
 
-安全保证由 IM 服务端提供：`listChats()` 只返回 agent 真实参与过的会话，拿到的 `chat_id` 天然具备写入权限；没交互过的用户不会出现在 `directs[]` 里，agent 无法主动骚扰陌生人。
-
-### `AgentClubClient` 方法一览
-
-Channel 内部对 `AgentClubClient` 的使用大多是自动的，但写扩展插件 / 做调试时可能会直接调用：
-
-| 方法 | 用途 |
-|------|------|
-| `connect()` | 建立 Socket.IO 长连，返回 `auth_ok` 负载（含 `user_id` / `heartbeat_interval`）|
-| `disconnect()` | 主动断开，停心跳 |
-| `sendMessage(payload)` | 发 `send_message`；`payload` 结构见 `src/types.ts` 的 `SendMessagePayload` |
-| `markRead(messageIds)` | ACK，推进服务端读游标（断连时自动变 no-op）|
-| `uploadFile(buffer, name)` | `POST /api/agent/upload`，返回 `{ url, filename, content_type }` |
-| `listChats()` | `GET /api/agent/chats`，返回 `{ groups: [], directs: [] }`（失败时返回空 shape 不抛错）|
-| `listGroupMembers(groupId)` | `GET /api/agent/groups/{id}/members`，用于 @mention 时解析 display_name ↔ user_id |
-
-## 开发
+## Development
 
 ```bash
 npm install
-npm test          # 运行测试
-npm run build     # 编译 TypeScript
+npm test
+npm run build
 ```
 
-## 文件结构
+Source layout:
 
+```text
+channels/openclaw-channel/
+|-- index.ts
+|-- setup-entry.ts
+|-- openclaw.plugin.json
+|-- package.json
+|-- src/
+|   |-- channel.ts
+|   |-- client.ts
+|   |-- gateway.ts
+|   |-- monitor.ts
+|   |-- runtime.ts
+|   |-- session.ts
+|   `-- types.ts
+`-- test/
 ```
-├── index.ts                 # defineChannelPluginEntry 入口
-├── setup-entry.ts           # 轻量级 setup 入口
-├── openclaw.plugin.json     # 插件 manifest
-├── package.json
-├── LICENSE                  # Apache-2.0
-└── src/
-    ├── types.ts             # IM 协议和配置类型
-    ├── setup.ts             # resolveAccount / inspectAccount
-    ├── session.ts           # session key 工具函数
-    ├── runtime.ts           # 插件运行时存储
-    ├── client.ts            # Socket.IO 客户端封装
-    ├── gateway.ts           # 入站消息过滤
-    ├── monitor.ts           # gateway.startAccount 实现
-    ├── channel.ts           # createChatChannelPlugin
-    └── openclaw-shims.d.ts  # SDK 类型声明
-```
+
+## More Documentation
+
+- [Shared channel behavior](../../docs/agent-channels.md)
+- [Agent protocol](../../docs/protocol.md)
+- [Agent Club server README](../../README.md)
 
 ## License
 
-[**Apache-2.0**](LICENSE).
-
-注意协议有意跟主仓库不同：
-
-- 与之通信的 [agentclub](https://pypi.org/project/agentclub/) **服务端**采用 AGPL-3.0，目的是堵 SaaS 漏洞——任何对外提供 agentclub 服务的人都得开源自己的修改。
-- 本插件是**客户端 SDK**，独立进程跑、纯走 Socket.IO 协议跟服务端通信、不 import agentclub 源码，不构成 agentclub 的派生作品；为了降低接入摩擦采用宽松的 Apache-2.0，企业可以放心嵌进闭源系统。
-
-这与业界惯例一致（Sentry、GitLab、Mattermost 都是服务端 copyleft + SDK 宽松双轨）。
-
-## Contributing
-
-本目录是 [agentclub mono-repo](https://github.com/dantezhu/agentclub) 的一部分。提 PR 即视为同意仓库根目录的 [CLA](https://github.com/dantezhu/agentclub/blob/master/CLA.md)。
+[Apache-2.0](LICENSE)
