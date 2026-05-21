@@ -135,11 +135,7 @@ def adapter(monkeypatch):
     for name in (
         "AGENTCLUB_SERVER_URL",
         "AGENTCLUB_AGENT_TOKEN",
-        "AGENTCLUB_ALLOWED_USERS",
         "AGENTCLUB_ALLOW_FROM",
-        "AGENTCLUB_ALLOW_FROM_KIND",
-        "AGENTCLUB_ALLOW_ALL_USERS",
-        "AGENTCLUB_REQUIRE_MENTION",
     ):
         monkeypatch.delenv(name, raising=False)
     ad = AgentClubAdapter(_config())
@@ -313,9 +309,7 @@ class TestConfigBridge:
         for name in (
             "AGENTCLUB_SERVER_URL",
             "AGENTCLUB_AGENT_TOKEN",
-            "AGENTCLUB_ALLOWED_USERS",
-            "AGENTCLUB_ALLOW_FROM_KIND",
-            "AGENTCLUB_REQUIRE_MENTION",
+            "AGENTCLUB_ALLOW_FROM",
         ):
             monkeypatch.delenv(name, raising=False)
 
@@ -323,22 +317,20 @@ class TestConfigBridge:
             {},
             {
                 "enabled": True,
-                "extra": {
-                    "server_url": "http://server",
-                    "agent_token": "tok",
-                    "allow_from": ["*"],
-                    "allow_from_kind": ["human"],
-                    "require_mention": False,
-                },
+                "server_url": "http://server",
+                "agent_token": "tok",
+                "allow_from": ["*"],
+                "allow_from_kind": ["human"],
+                "require_mention": False,
             },
         )
 
         assert extra["server_url"] == "http://server"
         assert os.environ["AGENTCLUB_SERVER_URL"] == "http://server"
         assert os.environ["AGENTCLUB_AGENT_TOKEN"] == "tok"
-        assert os.environ["AGENTCLUB_ALLOWED_USERS"] == "*"
-        assert os.environ["AGENTCLUB_ALLOW_FROM_KIND"] == "human"
-        assert os.environ["AGENTCLUB_REQUIRE_MENTION"] == "false"
+        assert os.environ["AGENTCLUB_ALLOW_FROM"] == "*"
+        assert "AGENTCLUB_ALLOW_FROM_KIND" not in os.environ
+        assert "AGENTCLUB_REQUIRE_MENTION" not in os.environ
 
     def test_register_uses_platform_auth_env(self):
         class Ctx:
@@ -352,5 +344,5 @@ class TestConfigBridge:
         register(ctx)
 
         assert ctx.kwargs["name"] == "agentclub"
-        assert ctx.kwargs["allowed_users_env"] == "AGENTCLUB_ALLOWED_USERS"
-        assert ctx.kwargs["allow_all_env"] == "AGENTCLUB_ALLOW_ALL_USERS"
+        assert ctx.kwargs["allowed_users_env"] == "AGENTCLUB_ALLOW_FROM"
+        assert "allow_all_env" not in ctx.kwargs

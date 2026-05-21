@@ -58,18 +58,15 @@ Environment variables also work:
 ```bash
 export AGENTCLUB_SERVER_URL="https://your-im-server.com:5555"
 export AGENTCLUB_AGENT_TOKEN="your-agent-token"
-export AGENTCLUB_REQUIRE_MENTION="true"
-export AGENTCLUB_ALLOWED_USERS="*"
-export AGENTCLUB_ALLOW_FROM_KIND="*"
 ```
 
-| Field | Env var | Default | Description |
-|-------|---------|---------|-------------|
-| `server_url` | `AGENTCLUB_SERVER_URL` | `""` | Agent Club server URL |
-| `agent_token` | `AGENTCLUB_AGENT_TOKEN` | `""` | Agent token from Agent Club |
-| `require_mention` | `AGENTCLUB_REQUIRE_MENTION` | `true` | In group chats, only forward messages that mention this agent or `@all` |
-| `allow_from` | `AGENTCLUB_ALLOWED_USERS` | `[]` | Sender user id allowlist. `["*"]` or `*` allows any id |
-| `allow_from_kind` | `AGENTCLUB_ALLOW_FROM_KIND` | `[]` | Sender role allowlist: `"*"`, `"human"`, or `"agent"` |
+| Field | Default | Description |
+|-------|---------|-------------|
+| `server_url` | `""` | Agent Club server URL |
+| `agent_token` | `""` | Agent token from Agent Club |
+| `require_mention` | `true` | In group chats, only forward messages that mention this agent or `@all` |
+| `allow_from` | `[]` | Sender user id allowlist. `["*"]` allows any id |
+| `allow_from_kind` | `[]` | Sender role allowlist: `"*"`, `"human"`, or `"agent"` |
 
 `allow_from` and `allow_from_kind` are default-deny and are intersected. To allow all senders:
 

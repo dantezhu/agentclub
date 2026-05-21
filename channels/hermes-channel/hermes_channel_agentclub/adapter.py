@@ -78,26 +78,6 @@ def _coerce_string_list(value: Any) -> list[str]:
     return [str(value).strip()] if str(value).strip() else []
 
 
-def _env_first(*names: str) -> str:
-    for name in names:
-        value = os.getenv(name)
-        if value is not None and value.strip():
-            return value.strip()
-    return ""
-
-
-def _env_bool(name: str) -> bool | None:
-    value = os.getenv(name)
-    if value is None:
-        return None
-    normalized = value.strip().lower()
-    if normalized in _TRUE_VALUES:
-        return True
-    if normalized in _FALSE_VALUES:
-        return False
-    return None
-
-
 def _coerce_bool(value: Any, default: bool) -> bool:
     if value is None:
         return default
@@ -126,61 +106,25 @@ def _get_extra(config: Any) -> dict[str, Any]:
     return extra if isinstance(extra, dict) else {}
 
 
-def _get_any(data: dict[str, Any], *keys: str, default: Any = None) -> Any:
-    for key in keys:
-        if key in data:
-            return data[key]
-    return default
-
-
-def _flatten_platform_config(platform_cfg: Any) -> dict[str, Any]:
+def _extract_platform_config(platform_cfg: Any) -> dict[str, Any]:
     if not isinstance(platform_cfg, dict):
         return {}
-    out: dict[str, Any] = {}
-    extra = platform_cfg.get("extra")
-    if isinstance(extra, dict):
-        out.update(extra)
-    for key in (
+    keys = (
         "server_url",
-        "serverUrl",
         "agent_token",
-        "agentToken",
-        "allow_from",
-        "allowFrom",
-        "allowed_users",
-        "allowedUsers",
-        "allow_from_kind",
-        "allowFromKind",
         "require_mention",
-        "requireMention",
-        "home_channel",
-        "homeChannel",
-        "group_sessions_per_user",
-        "groupSessionsPerUser",
-    ):
-        if key in platform_cfg:
-            out[key] = platform_cfg[key]
-    return out
+        "allow_from",
+        "allow_from_kind",
+    )
+    return {key: platform_cfg[key] for key in keys if key in platform_cfg}
 
 
 def _resolve_allow_from(extra: dict[str, Any]) -> list[str]:
-    if _env_bool("AGENTCLUB_ALLOW_ALL_USERS") is True:
-        return ["*"]
-    raw_env = _env_first("AGENTCLUB_ALLOWED_USERS", "AGENTCLUB_ALLOW_FROM")
-    if raw_env:
-        return _coerce_string_list(raw_env)
-    return _coerce_string_list(
-        _get_any(extra, "allow_from", "allowFrom", "allowed_users", "allowedUsers")
-    )
+    return _coerce_string_list(extra.get("allow_from"))
 
 
 def _resolve_allow_from_kind(extra: dict[str, Any]) -> list[str]:
-    raw_env = _env_first("AGENTCLUB_ALLOW_FROM_KIND", "AGENTCLUB_ALLOWED_USER_KINDS")
-    values = (
-        _coerce_string_list(raw_env)
-        if raw_env
-        else _coerce_string_list(_get_any(extra, "allow_from_kind", "allowFromKind"))
-    )
+    values = _coerce_string_list(extra.get("allow_from_kind"))
     return _validate_allow_from_kind(values)
 
 
@@ -274,29 +218,24 @@ class AgentClubAdapter(BasePlatformAdapter):
 
         self.server_url = (
             os.getenv("AGENTCLUB_SERVER_URL")
-            or _get_any(extra, "server_url", "serverUrl", default="")
+            or extra.get("server_url")
             or ""
         ).rstrip("/")
         self.agent_token = (
             os.getenv("AGENTCLUB_AGENT_TOKEN")
-            or _get_any(extra, "agent_token", "agentToken", default="")
+            or extra.get("agent_token")
             or ""
         )
-        env_require = _env_bool("AGENTCLUB_REQUIRE_MENTION")
-        self.require_mention = (
-            env_require
-            if env_require is not None
-            else _coerce_bool(
-                _get_any(extra, "require_mention", "requireMention"),
-                True,
-            )
+        self.require_mention = _coerce_bool(
+            extra.get("require_mention"),
+            True,
         )
         self.allow_from = _resolve_allow_from(extra)
         self.allow_from_kind = _resolve_allow_from_kind(extra)
 
         # Keep Hermes' gateway authorization in sync with our own id allowlist.
-        if self.allow_from and not os.getenv("AGENTCLUB_ALLOWED_USERS"):
-            os.environ["AGENTCLUB_ALLOWED_USERS"] = ",".join(self.allow_from)
+        if self.allow_from and not os.getenv("AGENTCLUB_ALLOW_FROM"):
+            os.environ["AGENTCLUB_ALLOW_FROM"] = ",".join(self.allow_from)
 
         self._sio: Any = None
         self._http: Any = None
@@ -318,14 +257,14 @@ class AgentClubAdapter(BasePlatformAdapter):
         if not self.server_url:
             self._set_fatal_error(
                 "config_missing",
-                "AGENTCLUB_SERVER_URL or extra.server_url is required",
+                "AGENTCLUB_SERVER_URL or agentclub.server_url is required",
                 retryable=False,
             )
             return False
         if not self.agent_token:
             self._set_fatal_error(
                 "config_missing",
-                "AGENTCLUB_AGENT_TOKEN or extra.agent_token is required",
+                "AGENTCLUB_AGENT_TOKEN or agentclub.agent_token is required",
                 retryable=False,
             )
             return False
@@ -828,12 +767,8 @@ def validate_config(config: Any) -> bool:
         _resolve_allow_from_kind(extra)
     except ValueError:
         return False
-    server_url = os.getenv("AGENTCLUB_SERVER_URL") or _get_any(
-        extra, "server_url", "serverUrl", default=""
-    )
-    agent_token = os.getenv("AGENTCLUB_AGENT_TOKEN") or _get_any(
-        extra, "agent_token", "agentToken", default=""
-    )
+    server_url = os.getenv("AGENTCLUB_SERVER_URL") or extra.get("server_url", "")
+    agent_token = os.getenv("AGENTCLUB_AGENT_TOKEN") or extra.get("agent_token", "")
     return bool(str(server_url or "").strip() and str(agent_token or "").strip())
 
 
@@ -847,55 +782,25 @@ def _env_enablement() -> dict[str, Any] | None:
     if not (server_url and agent_token):
         return None
 
-    seed: dict[str, Any] = {"server_url": server_url, "agent_token": agent_token}
-    require_mention = _env_bool("AGENTCLUB_REQUIRE_MENTION")
-    if require_mention is not None:
-        seed["require_mention"] = require_mention
-
-    allowed = _env_first("AGENTCLUB_ALLOWED_USERS", "AGENTCLUB_ALLOW_FROM")
-    if _env_bool("AGENTCLUB_ALLOW_ALL_USERS") is True:
-        allowed = "*"
-    if allowed:
-        if not os.getenv("AGENTCLUB_ALLOWED_USERS"):
-            os.environ["AGENTCLUB_ALLOWED_USERS"] = allowed
-        seed["allow_from"] = _coerce_string_list(allowed)
-
-    kinds = _env_first("AGENTCLUB_ALLOW_FROM_KIND", "AGENTCLUB_ALLOWED_USER_KINDS")
-    if kinds:
-        seed["allow_from_kind"] = _coerce_string_list(kinds)
-
-    home = os.getenv("AGENTCLUB_HOME_CHANNEL", "").strip()
-    if home:
-        seed["home_channel"] = {"chat_id": home, "name": home}
-    return seed
+    return {"server_url": server_url, "agent_token": agent_token}
 
 
 def _apply_yaml_config(yaml_cfg: dict[str, Any], platform_cfg: dict[str, Any]) -> dict[str, Any] | None:
     del yaml_cfg
-    extra = _flatten_platform_config(platform_cfg)
+    extra = _extract_platform_config(platform_cfg)
     if not extra:
         return None
 
-    server_url = _get_any(extra, "server_url", "serverUrl")
+    server_url = extra.get("server_url")
     if server_url and not os.getenv("AGENTCLUB_SERVER_URL"):
         os.environ["AGENTCLUB_SERVER_URL"] = str(server_url)
-    agent_token = _get_any(extra, "agent_token", "agentToken")
+    agent_token = extra.get("agent_token")
     if agent_token and not os.getenv("AGENTCLUB_AGENT_TOKEN"):
         os.environ["AGENTCLUB_AGENT_TOKEN"] = str(agent_token)
 
-    allow_from = _coerce_string_list(
-        _get_any(extra, "allow_from", "allowFrom", "allowed_users", "allowedUsers")
-    )
-    if allow_from and not os.getenv("AGENTCLUB_ALLOWED_USERS"):
-        os.environ["AGENTCLUB_ALLOWED_USERS"] = ",".join(allow_from)
-    allow_kind = _coerce_string_list(_get_any(extra, "allow_from_kind", "allowFromKind"))
-    if allow_kind and not os.getenv("AGENTCLUB_ALLOW_FROM_KIND"):
-        os.environ["AGENTCLUB_ALLOW_FROM_KIND"] = ",".join(allow_kind)
-    require_mention = _get_any(extra, "require_mention", "requireMention")
-    if require_mention is not None and not os.getenv("AGENTCLUB_REQUIRE_MENTION"):
-        os.environ["AGENTCLUB_REQUIRE_MENTION"] = (
-            "true" if _coerce_bool(require_mention, True) else "false"
-        )
+    allow_from = _coerce_string_list(extra.get("allow_from"))
+    if allow_from and not os.getenv("AGENTCLUB_ALLOW_FROM"):
+        os.environ["AGENTCLUB_ALLOW_FROM"] = ",".join(allow_from)
     return extra
 
 
@@ -910,14 +815,11 @@ def register(ctx: Any) -> None:
         required_env=[
             "AGENTCLUB_SERVER_URL",
             "AGENTCLUB_AGENT_TOKEN",
-            "AGENTCLUB_ALLOWED_USERS",
-            "AGENTCLUB_ALLOW_FROM_KIND",
         ],
         install_hint="pip install hermes-channel-agentclub",
         env_enablement_fn=_env_enablement,
         apply_yaml_config_fn=_apply_yaml_config,
-        allowed_users_env="AGENTCLUB_ALLOWED_USERS",
-        allow_all_env="AGENTCLUB_ALLOW_ALL_USERS",
+        allowed_users_env="AGENTCLUB_ALLOW_FROM",
         platform_hint=(
             "You are chatting via Agent Club. Agent Club supports Markdown, "
             "code blocks, media attachments, and mention tags like "

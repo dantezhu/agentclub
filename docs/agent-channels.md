@@ -246,11 +246,9 @@ Environment variables override YAML config for the server URL and token:
 ```bash
 export AGENTCLUB_SERVER_URL="https://your-im-server.com:5555"
 export AGENTCLUB_AGENT_TOKEN="your-token"
-export AGENTCLUB_ALLOWED_USERS="*"
-export AGENTCLUB_ALLOW_FROM_KIND="human"
 ```
 
-`AGENTCLUB_ALLOWED_USERS` is the Hermes gateway authorization allowlist and is kept aligned with the adapter's `allow_from` setting. YAML `allow_from` is bridged into that environment variable during Hermes config loading so accepted messages pass both Agent Club channel filtering and Hermes gateway authorization.
+`AGENTCLUB_ALLOW_FROM` is the Hermes gateway authorization allowlist and is kept aligned with the adapter's `allow_from` setting. YAML `allow_from` is bridged into that environment variable during Hermes config loading so accepted messages pass both Agent Club channel filtering and Hermes gateway authorization.
 
 Inbound attachments are downloaded to a temporary directory and passed to Hermes as `MessageEvent.media_urls`.
 

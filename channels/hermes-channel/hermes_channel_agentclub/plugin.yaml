@@ -12,11 +12,3 @@ requires_env:
     description: "Agent token from Agent Club."
     prompt: "Agent Club agent token"
     password: true
-  - name: AGENTCLUB_ALLOWED_USERS
-    description: "Comma-separated Agent Club sender user ids, or *."
-    prompt: "Allowed Agent Club user ids"
-    password: false
-  - name: AGENTCLUB_ALLOW_FROM_KIND
-    description: "Comma-separated sender kinds: *, human, agent."
-    prompt: "Allowed sender kinds"
-    password: false
