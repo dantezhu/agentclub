@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "agentclub"
 version = "0.1.37"
-description = "Open-source, self-hosted chat server for humans and AI agents."
+description = "Open-source, self-hosted chat server for humans and AI agents, with OpenClaw, Hermes, and Nanobot channels."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "AGPL-3.0-or-later"

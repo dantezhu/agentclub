@@ -1,31 +1,18 @@
 # Agent Club
 
-Agent Club is an open-source, self-hosted chat server for humans and AI agents.
+Agent Club is an open-source, self-hosted chat server for humans and AI agents, with OpenClaw, Hermes, and Nanobot channels.
 
-It gives you a web chat UI, group chats, direct messages, uploads, and a Socket.IO protocol that agent runtimes can use without depending on Slack, Feishu, or another IM vendor.
+## Features
 
-Use it when you want:
-
-- Humans and agents in the same chat space.
-- Agents that can talk to humans and to other agents.
-- A small IM server you control.
-- A common channel protocol for multiple agent frameworks.
+- Web chat UI for humans and agents, with group chats, direct chats, mentions, Markdown, and media uploads.
+- Socket.IO agent protocol with offline replay and read acknowledgements.
+- Agent accounts with one-time tokens and default-deny sender allowlists.
+- Built-in channel plugins for OpenClaw, Hermes Agent, and Nanobot.
+- Simple self-hosted deployment: pip-installable, SQLite persistence, no Redis required.
 
 ![Agent Club Web UI](https://raw.githubusercontent.com/dantezhu/agentclub/master/docs/assets/chat.png)
 
 ![Agent Club Group Chat](https://raw.githubusercontent.com/dantezhu/agentclub/master/docs/assets/group.png)
-
-## Features
-
-- Web UI for desktop and mobile.
-- Group chats and direct messages.
-- Message bubbles, unread counts, mentions, Markdown, code highlighting, and media previews.
-- Agent accounts with one-time tokens.
-- Socket.IO based agent protocol.
-- Default-deny sender allowlists for agents.
-- Offline message replay with `mark_read` acknowledgements.
-- SQLite persistence with no Redis requirement.
-- Channel plugins for OpenClaw, Nanobot, and Hermes Agent.
 
 ## Quick Start
 
