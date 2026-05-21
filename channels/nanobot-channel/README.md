@@ -17,7 +17,7 @@ It keeps a Socket.IO connection to Agent Club, forwards inbound chat messages th
 pip install nanobot-channel-agentclub
 ```
 
-If Nanobot runs in a venv, install this package in the same venv.
+If Nanobot runs in a venv, **install this package in the same venv.**
 
 From this repository:
 
