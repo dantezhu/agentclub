@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
@@ -32,14 +32,14 @@
                     <span class="brand-mark" aria-hidden="true">{% if site_logo %}<img src="{{ site_logo }}" alt="">{% else %}{{ site_logo_text }}{% endif %}</span>
                     {{ site_name }}
                 </h2>
-                <button class="icon-btn" id="menuBtn" title="菜单" data-icon="plus"></button>
+                <button class="icon-btn" id="menuBtn" title="Menu" data-icon="plus"></button>
             </div>
             <div class="sidebar-menu hidden" id="sidebarMenu">
-                <button onclick="showNewChatModal()">发起私聊</button>
-                <button onclick="showCreateGroupModal()">创建群组</button>
-                <button onclick="window.location.href='/admin'" id="adminLink">管理后台</button>
-                <button onclick="showProfileModal()">个人设置</button>
-                <button onclick="handleLogout()">退出登录</button>
+                <button onclick="showNewChatModal()">Start direct chat</button>
+                <button onclick="showCreateGroupModal()">Create group</button>
+                <button onclick="window.location.href='/admin'" id="adminLink">Admin console</button>
+                <button onclick="showProfileModal()">Profile settings</button>
+                <button onclick="handleLogout()">Log out</button>
             </div>
             <div class="chat-list" id="chatList"></div>
         </aside>
@@ -50,14 +50,14 @@
         <!-- Main chat area -->
         <main id="mainArea">
             <div class="empty-state" id="emptyState">
-                <button class="icon-btn mobile-only empty-menu-btn" onclick="toggleSidebar()" title="打开菜单" data-icon="menu"></button>
+                <button class="icon-btn mobile-only empty-menu-btn" onclick="toggleSidebar()" title="Open menu" data-icon="menu"></button>
                 <div class="empty-icon" data-icon="message-square"></div>
-                <p>选择一个对话开始聊天</p>
+                <p>Choose a conversation to start chatting</p>
             </div>
 
             <div class="chat-container hidden" id="chatContainer">
                 <div class="chat-header" id="chatHeader">
-                    <button class="icon-btn mobile-only" onclick="toggleSidebar()" title="菜单" data-icon="menu"></button>
+                    <button class="icon-btn mobile-only" onclick="toggleSidebar()" title="Menu" data-icon="menu"></button>
                     <div class="chat-header-avatar hidden" id="chatHeaderAvatar"></div>
                     <div class="chat-header-info">
                         <h3 id="chatTitle"></h3>
@@ -69,25 +69,25 @@
                          This is the single entry point for destructive chat
                          actions across all devices — we intentionally don't
                          bind right-click / long-press menus on sidebar rows.
-                         Items are decided at click time: direct=删除会话;
-                         group member=退出群组; group creator=群组设置 +
-                         解散群组. -->
-                    <button class="icon-btn hidden" id="chatActionsBtn" onclick="showChatActionsMenu(event)" title="更多" aria-label="更多操作" data-icon="more-horizontal"></button>
-                    <button class="icon-btn" id="chatMembersBtn" onclick="toggleMembers()" title="成员" data-icon="users"></button>
+                         Items are decided at click time: direct=delete
+                         conversation; group member=leave group; group
+                         creator=group settings + dissolve group. -->
+                    <button class="icon-btn hidden" id="chatActionsBtn" onclick="showChatActionsMenu(event)" title="More" aria-label="More actions" data-icon="more-horizontal"></button>
+                    <button class="icon-btn" id="chatMembersBtn" onclick="toggleMembers()" title="Members" data-icon="users"></button>
                 </div>
 
                 <div class="messages-area" id="messagesArea">
-                    <button class="load-more hidden" id="loadMoreBtn" onclick="loadMoreMessages()">加载更多消息</button>
+                    <button class="load-more hidden" id="loadMoreBtn" onclick="loadMoreMessages()">Load older messages</button>
                     <div id="messageList"></div>
                     <div class="typing-indicator hidden" id="typingIndicator"></div>
                 </div>
 
                 <div class="input-area" id="inputArea">
                     <div class="input-toolbar">
-                        <label class="icon-btn" title="发送图片" data-icon="image">
+                        <label class="icon-btn" title="Send images" data-icon="image">
                             <input type="file" id="imageInput" accept="image/*" multiple style="display:none" onchange="handleImageSelect(event)">
                         </label>
-                        <label class="icon-btn" title="发送文件" data-icon="paperclip">
+                        <label class="icon-btn" title="Send files" data-icon="paperclip">
                             <input type="file" id="fileInput" style="display:none" onchange="handleFileSelect(event)">
                         </label>
                     </div>
@@ -97,8 +97,8 @@
                              role="textbox"
                              aria-multiline="true"
                              enterkeyhint="send"
-                             data-placeholder="输入消息... (Enter 发送, Shift+Enter 换行)"></div>
-                        <button class="send-btn" onclick="sendMessage()">发送</button>
+                             data-placeholder="Type a message... (Enter to send, Shift+Enter for newline)"></div>
+                        <button class="send-btn" onclick="sendMessage()">Send</button>
                     </div>
                     <div class="mention-picker hidden" id="mentionPicker"></div>
                 </div>
@@ -107,15 +107,15 @@
             <!-- Members panel -->
             <div class="members-panel hidden" id="membersPanel">
                 <div class="members-header">
-                    <h3>成员</h3>
+                    <h3>Members</h3>
                     <div class="members-header-actions">
-                        <!-- Manage actions (添加成员 / 群组设置) injected here
+                        <!-- Manage actions (add members / group settings) injected here
                              by renderMembersPanel() when the viewer can
                              manage the group; sitting next to the close X
                              keeps the row compact and avoids stealing space
                              from the member list below. -->
                         <span id="membersHeaderActions"></span>
-                        <button class="icon-btn" onclick="toggleMembers()" data-icon="x" title="关闭"></button>
+                        <button class="icon-btn" onclick="toggleMembers()" data-icon="x" title="Close"></button>
                     </div>
                 </div>
                 <div id="membersList"></div>
@@ -127,21 +127,21 @@
     <div class="modal hidden" id="profileModal">
         <div class="modal-content modal-sm">
             <div class="modal-header">
-                <h3>个人设置</h3>
-                <button class="icon-btn" onclick="closeModal('profileModal')" data-icon="x" title="关闭"></button>
+                <h3>Profile settings</h3>
+                <button class="icon-btn" onclick="closeModal('profileModal')" data-icon="x" title="Close"></button>
             </div>
             <div class="modal-body">
                 <div style="text-align:center;margin-bottom:20px">
                     <div class="profile-avatar" id="profileAvatar"></div>
                     <label class="btn-sm ghost" style="display:inline-block;margin-top:10px;cursor:pointer">
-                        更换头像 <input type="file" accept="image/*" style="display:none" onchange="uploadAvatar(event)">
+                        Change avatar <input type="file" accept="image/*" style="display:none" onchange="uploadAvatar(event)">
                     </label>
                 </div>
                 <div class="form-group" style="margin-bottom:16px">
-                    <label style="display:block;font-size:13px;color:#555;margin-bottom:6px">显示名称</label>
+                    <label style="display:block;font-size:13px;color:#555;margin-bottom:6px">Display name</label>
                     <input type="text" id="profileDisplayName" style="width:100%;padding:10px 12px;border:1.5px solid #ddd;border-radius:8px;font-size:16px;outline:none">
                 </div>
-                <button class="btn-sm" style="width:100%;padding:10px" onclick="saveProfile()">保存</button>
+                <button class="btn-sm" style="width:100%;padding:10px" onclick="saveProfile()">Save</button>
             </div>
         </div>
     </div>
@@ -155,25 +155,25 @@
     <div class="modal hidden" id="groupSettingsModal">
         <div class="modal-content modal-sm">
             <div class="modal-header">
-                <h3 id="groupSettingsTitle">群组设置</h3>
-                <button class="icon-btn" onclick="closeModal('groupSettingsModal')" data-icon="x" title="关闭"></button>
+                <h3 id="groupSettingsTitle">Group settings</h3>
+                <button class="icon-btn" onclick="closeModal('groupSettingsModal')" data-icon="x" title="Close"></button>
             </div>
             <div class="modal-body">
                 <div style="text-align:center;margin-bottom:20px">
                     <div class="profile-avatar" id="groupSettingsAvatar"></div>
                     <label class="btn-sm ghost" style="display:inline-block;margin-top:10px;cursor:pointer">
-                        更换头像 <input type="file" accept="image/*" style="display:none" onchange="uploadGroupSettingsAvatar(event)">
+                        Change avatar <input type="file" accept="image/*" style="display:none" onchange="uploadGroupSettingsAvatar(event)">
                     </label>
                 </div>
                 <div class="form-group" style="margin-bottom:16px">
-                    <label style="display:block;font-size:13px;color:#555;margin-bottom:6px">群组名称</label>
-                    <input type="text" id="groupSettingsName" placeholder="例如：产品讨论组" style="width:100%;padding:10px 12px;border:1.5px solid #ddd;border-radius:8px;font-size:16px;outline:none">
+                    <label style="display:block;font-size:13px;color:#555;margin-bottom:6px">Group name</label>
+                    <input type="text" id="groupSettingsName" placeholder="Example: Product discussion" style="width:100%;padding:10px 12px;border:1.5px solid #ddd;border-radius:8px;font-size:16px;outline:none">
                 </div>
                 <div class="form-group" style="margin-bottom:16px">
-                    <label style="display:block;font-size:13px;color:#555;margin-bottom:6px">群组描述（选填）</label>
-                    <input type="text" id="groupSettingsDescription" maxlength="200" placeholder="一句话介绍这个群" style="width:100%;padding:10px 12px;border:1.5px solid #ddd;border-radius:8px;font-size:16px;outline:none">
+                    <label style="display:block;font-size:13px;color:#555;margin-bottom:6px">Group description (optional)</label>
+                    <input type="text" id="groupSettingsDescription" maxlength="200" placeholder="Describe this group in one sentence" style="width:100%;padding:10px 12px;border:1.5px solid #ddd;border-radius:8px;font-size:16px;outline:none">
                 </div>
-                <button class="btn-sm" id="groupSettingsSaveBtn" style="width:100%;padding:10px" onclick="saveGroupSettings()">保存</button>
+                <button class="btn-sm" id="groupSettingsSaveBtn" style="width:100%;padding:10px" onclick="saveGroupSettings()">Save</button>
             </div>
         </div>
     </div>
@@ -182,8 +182,8 @@
     <div class="modal hidden" id="newChatModal">
         <div class="modal-content modal-sm">
             <div class="modal-header">
-                <h3>发起私聊</h3>
-                <button class="icon-btn" onclick="closeModal('newChatModal')" data-icon="x" title="关闭"></button>
+                <h3>Start direct chat</h3>
+                <button class="icon-btn" onclick="closeModal('newChatModal')" data-icon="x" title="Close"></button>
             </div>
             <div class="modal-body" id="newChatUserList"></div>
         </div>
@@ -191,14 +191,14 @@
 
     <!-- Profile view modal — read-only "who is this person" card.
          Opened from: chat-header avatar in direct chats, message author
-         avatars (skipped for self), group members kebab "查看信息" item.
+         avatars (skipped for self), group members kebab "View info" item.
          Bottom action lets the viewer jump straight into a 1:1 chat
          with the displayed user. -->
     <div class="modal hidden" id="profileViewModal">
         <div class="modal-content modal-sm">
             <div class="modal-header">
-                <h3>个人信息</h3>
-                <button class="icon-btn" onclick="closeModal('profileViewModal')" data-icon="x" title="关闭"></button>
+                <h3>Profile information</h3>
+                <button class="icon-btn" onclick="closeModal('profileViewModal')" data-icon="x" title="Close"></button>
             </div>
             <div class="modal-body">
                 <div class="profile-view">
@@ -210,7 +210,7 @@
                 </div>
                 <div class="profile-view-actions">
                     <button class="btn-sm" id="profileViewChatBtn"
-                            onclick="startChatFromProfile()">发起私聊</button>
+                            onclick="startChatFromProfile()">Start direct chat</button>
                 </div>
             </div>
         </div>
@@ -219,14 +219,14 @@
     <!-- Group info modal — read-only "what is this group" card. Opened
          by clicking the group chat-header avatar. Reuses the same
          .profile-view styles as the user profile modal so the two
-         info cards (人/群) feel like siblings. No bottom CTA — group
-         management still lives in the members panel ("群组设置" / 添加
-         成员), this is purely informational. -->
+         info cards (person/group) feel like siblings. No bottom CTA —
+         group management still lives in the members panel ("Group
+         settings" / add members), this is purely informational. -->
     <div class="modal hidden" id="groupInfoModal">
         <div class="modal-content modal-sm">
             <div class="modal-header">
-                <h3>群组信息</h3>
-                <button class="icon-btn" onclick="closeModal('groupInfoModal')" data-icon="x" title="关闭"></button>
+                <h3>Group information</h3>
+                <button class="icon-btn" onclick="closeModal('groupInfoModal')" data-icon="x" title="Close"></button>
             </div>
             <div class="modal-body">
                 <div class="profile-view">
@@ -244,8 +244,8 @@
     <div class="modal hidden" id="addMemberModal">
         <div class="modal-content modal-sm">
             <div class="modal-header">
-                <h3>添加成员</h3>
-                <button class="icon-btn" onclick="closeModal('addMemberModal')" data-icon="x" title="关闭"></button>
+                <h3>Add members</h3>
+                <button class="icon-btn" onclick="closeModal('addMemberModal')" data-icon="x" title="Close"></button>
             </div>
             <div class="modal-body">
                 <div id="addMemberUserList"></div>
@@ -258,7 +258,7 @@
 
     <!-- Image lightbox -->
     <div class="lightbox hidden" id="lightbox" onclick="closeLightbox(event)">
-        <button class="lightbox-close" onclick="closeLightbox()" data-icon="x" title="关闭"></button>
+        <button class="lightbox-close" onclick="closeLightbox()" data-icon="x" title="Close"></button>
         <img id="lightboxImg" src="" alt="">
     </div>
 
@@ -268,10 +268,11 @@
     <div class="drop-overlay hidden" id="dropOverlay">
         <div class="drop-hint">
             <div class="drop-icon" data-icon="paperclip"></div>
-            <div>松开鼠标上传文件</div>
+            <div>Drop to upload files</div>
         </div>
     </div>
 
+    <script src="/static/js/i18n.js"></script>
     <script src="/static/js/chat.js"></script>
 </body>
 </html>

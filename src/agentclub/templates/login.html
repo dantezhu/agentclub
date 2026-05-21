@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>{{ site_name }} - 登录</title>
+    <title>{{ site_name }} - Sign in</title>
     {% if site_logo %}
     <link rel="icon" href="{{ site_logo }}">
     <link rel="apple-touch-icon" href="{{ site_logo }}">
@@ -148,45 +148,48 @@
             {% if site_logo %}<img src="{{ site_logo }}" alt="">{% else %}{{ site_logo_text }}{% endif %}
         </div>
         <h1>{{ site_name }}</h1>
-        <p class="subtitle">与 AI Agent 实时聊天</p>
+        <p class="subtitle">Chat with AI agents in real time</p>
         <div class="tabs">
-            <button class="active" onclick="switchTab('login')">登录</button>
-            {% if allow_registration %}<button onclick="switchTab('register')">注册</button>{% endif %}
+            <button class="active" onclick="switchTab('login')">Sign in</button>
+            {% if allow_registration %}<button onclick="switchTab('register')">Sign up</button>{% endif %}
         </div>
         <div class="error" id="error"></div>
 
         <form id="loginForm" onsubmit="return handleLogin(event)">
             <div class="form-group">
-                <label>用户名</label>
+                <label>Username</label>
                 <input type="text" id="loginUsername" autocomplete="username" required>
             </div>
             <div class="form-group">
-                <label>密码</label>
+                <label>Password</label>
                 <input type="password" id="loginPassword" autocomplete="current-password" required>
             </div>
-            <button type="submit" class="btn">登录</button>
+            <button type="submit" class="btn">Sign in</button>
         </form>
 
         {% if allow_registration %}
         <form id="registerForm" class="hidden" onsubmit="return handleRegister(event)">
             <div class="form-group">
-                <label>用户名</label>
+                <label>Username</label>
                 <input type="text" id="regUsername" autocomplete="username" required minlength="2" maxlength="32">
             </div>
             <div class="form-group">
-                <label>显示名称</label>
-                <input type="text" id="regDisplayName" placeholder="选填，默认使用用户名">
+                <label>Display name</label>
+                <input type="text" id="regDisplayName" placeholder="Optional; defaults to username">
             </div>
             <div class="form-group">
-                <label>密码</label>
+                <label>Password</label>
                 <input type="password" id="regPassword" autocomplete="new-password" required minlength="6">
             </div>
-            <button type="submit" class="btn">注册</button>
+            <button type="submit" class="btn">Sign up</button>
         </form>
         {% endif %}
     </div>
 
+    <script src="/static/js/i18n.js"></script>
     <script>
+    const t = window.AgentClubI18n.t;
+
     function switchTab(tab) {
         document.getElementById('error').style.display = 'none';
         document.querySelectorAll('.tabs button').forEach((b, i) => {
@@ -216,7 +219,7 @@
             const data = await res.json();
             if (!res.ok) { showError(data.error); return false; }
             window.location.href = '/chat';
-        } catch (err) { showError('网络错误'); }
+        } catch (err) { showError(t('common.networkError')); }
         return false;
     }
 
@@ -235,14 +238,14 @@
             const data = await res.json();
             if (!res.ok) { showError(data.error); return false; }
             window.location.href = '/chat';
-        } catch (err) { showError('网络错误'); }
+        } catch (err) { showError(t('common.networkError')); }
         return false;
     }
 
     // Auto-redirect if already logged in
     fetch('/api/me').then(r => { if (r.ok) window.location.href = '/chat'; });
 
-    // Note: whether the "注册" tab and form exist at all is decided
+    // Note: whether the sign-up tab and form exist at all is decided
     // server-side in the index route via the ``allow_registration``
     // template flag — no client-side hide step needed.
     </script>

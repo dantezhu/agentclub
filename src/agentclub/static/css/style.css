@@ -566,7 +566,7 @@ button, .icon-btn, .chat-item, .member-item {
     color: #aaa;
     pointer-events: none;
     /* Force the placeholder onto a single line so a long hint like
-       "(Enter 发送, Shift+Enter 换行, @ 提到成员)" doesn't wrap and
+       "(Enter to send, Shift+Enter for newline, @ mention members)" doesn't wrap and
        inflate the input box to two lines before the user starts typing
        (the input snaps back to one line the moment the pseudo-element
        disappears, which looks jittery). Any overflow gets ellipsis'd. */
@@ -620,7 +620,7 @@ button, .icon-btn, .chat-item, .member-item {
 }
 .members-header h3 { font-size: 15px; }
 /* Right-side cluster in the members panel header. Holds the manage
-   actions (添加成员 / 群组设置) and the close X on a single row so the
+   actions (add members / group settings) and the close X on a single row so the
    list area below stays uncluttered. */
 .members-header-actions {
     display: inline-flex;
@@ -891,7 +891,7 @@ button, .icon-btn, .chat-item, .member-item {
 /* ── Profile view modal ──
  * Read-only card showing a peer's display name + tag(s) + description.
  * Centered column layout with a single CTA at the bottom — different
- * from the editable "个人设置" modal (which has form fields stacked
+ * from the editable "Profile settings" modal (which has form fields stacked
  * left-aligned). The avatar reuses .profile-avatar; everything else
  * lives under .profile-view to avoid CSS naming clashes. */
 .profile-view {
@@ -935,7 +935,7 @@ button, .icon-btn, .chat-item, .member-item {
 .profile-view-tags .member-tag { font-size: 11px; padding: 2px 8px; }
 /* Online pill — reused in three places: the profile-modal tags row, the
  * chat header's subtitle (for direct chats), and anywhere we need a
- * "green dot + 在线" label. Keep it a top-level class so every caller
+ * "green dot + Online" label. Keep it a top-level class so every caller
  * gets the same visuals; size/shape adjustments per surface go in
  * scoped rules below. */
 .online-pill {
@@ -954,7 +954,7 @@ button, .icon-btn, .chat-item, .member-item {
     background: #2ed573;
 }
 /* Chat header subtitle uses the pill inline with offline text like
- * "3 分钟前在线"; nudge the baseline so the pill sits flush with the
+ * "Last online 3 minutes ago"; nudge the baseline so the pill sits flush with the
  * 12px subtitle copy rather than poking above the cap-height line. */
 .chat-header-info .subtitle .online-pill { vertical-align: -1px; }
 /* Offline counterpart of .online-pill, used only in the profile modal

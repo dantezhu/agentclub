@@ -38,11 +38,11 @@ def login_required(f):
     def decorated(*args, **kwargs):
         user_id = session.get("user_id")
         if not user_id:
-            return jsonify({"error": "未登录"}), 401
+            return jsonify({"error": "Not signed in"}), 401
         user = models.get_user_by_id(user_id)
         if not user:
             session.clear()
-            return jsonify({"error": "用户不存在"}), 401
+            return jsonify({"error": "User not found"}), 401
         request.current_user = user
         return f(*args, **kwargs)
     return decorated
@@ -53,10 +53,10 @@ def admin_required(f):
     def decorated(*args, **kwargs):
         user_id = session.get("user_id")
         if not user_id:
-            return jsonify({"error": "未登录"}), 401
+            return jsonify({"error": "Not signed in"}), 401
         user = models.get_user_by_id(user_id)
         if not user or user["role"] != "admin":
-            return jsonify({"error": "需要管理员权限"}), 403
+            return jsonify({"error": "Admin access required"}), 403
         request.current_user = user
         return f(*args, **kwargs)
     return decorated

@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>{{ site_name }} - 管理后台</title>
+    <title>{{ site_name }} - Admin Console</title>
     {% if site_logo %}
     <link rel="icon" href="{{ site_logo }}">
     <link rel="apple-touch-icon" href="{{ site_logo }}">
@@ -85,7 +85,7 @@
             margin-bottom: 20px;
         }
         /* The Agent-management card header is a flex row: title on the
-           left, "+ 创建 Agent" call-to-action on the right. The bottom
+           left, "+ Create Agent" call-to-action on the right. The bottom
            border that used to live on the h2 moved up here so it still
            spans the full card width. */
         .card-header {
@@ -117,7 +117,7 @@
         .btn:hover { opacity: 0.9; }
         .btn.danger { background: #ff4757; }
         .btn.sm { padding: 6px 14px; font-size: 13px; }
-        /* Ghost variant — secondary actions (e.g. 更换头像 in the agent
+        /* Ghost variant — secondary actions (e.g. Change avatar in the agent
          * edit modal) so the form's primary CTA (.modal-save) keeps its
          * solid blue without competing for the eye. Mirrors .btn-sm.ghost
          * in style.css; the admin page just doesn't share that file. */
@@ -217,7 +217,7 @@
         }
         .empty { color: #999; font-size: 13px; padding: 8px 0; }
 
-        /* Edit-agent modal: same shape as the chat-side "个人设置" modal so
+        /* Edit-agent modal: same shape as the chat-side "Profile settings" modal so
            admins get a familiar pattern (centered overlay, large round
            avatar with an upload button under it, single name input,
            full-width save button). Hidden by default; .visible swaps it on. */
@@ -303,7 +303,7 @@
         .modal-save:disabled { opacity: 0.5; cursor: not-allowed; }
 
         /* ── Top-right user menu ──
-         * Replaces the old "返回聊天" link. The trigger is a circular
+         * Replaces the old "Back to chat" link. The trigger is a circular
          * avatar (initial or uploaded image); clicking opens a small
          * dropdown with: chat shortcut, profile (TODO), and logout.
          * Same shape used by GitHub/Vercel/Linear so the affordance is
@@ -405,12 +405,13 @@
         }
     </style>
     <script src="/static/js/ui-kit.js"></script>
+    <script src="/static/js/i18n.js"></script>
 </head>
 <body>
     <div class="topbar">
         <h1>
             <span class="brand-mark" aria-hidden="true">{% if site_logo %}<img src="{{ site_logo }}" alt="">{% else %}{{ site_logo_text }}{% endif %}</span>
-            管理后台
+            Admin Console
         </h1>
         <div class="user-menu" id="userMenu">
             <button class="user-menu-trigger" id="userMenuTrigger"
@@ -435,10 +436,10 @@
                      (specificity beat .user-menu-item:hover). -->
                 <button class="user-menu-item" type="button" role="menuitem"
                         onclick="window.location.href='/chat'"
-                        data-icon="message-square">聊天</button>
+                        data-icon="message-square">Chat</button>
                 <button class="user-menu-item danger" type="button"
                         role="menuitem" onclick="handleLogout()"
-                        data-icon="log-out">退出登录</button>
+                        data-icon="log-out">Log out</button>
             </div>
         </div>
     </div>
@@ -447,9 +448,9 @@
         <!-- Agent Management -->
         <div class="card">
             <div class="card-header">
-                <h2>Agent 管理</h2>
+                <h2>Agent Management</h2>
                 <button class="btn" onclick="openCreateAgent()">
-                    <span data-icon="plus"></span>创建 Agent
+                    <span data-icon="plus"></span>Create Agent
                 </button>
             </div>
             <div id="agentList"></div>
@@ -459,46 +460,48 @@
     <!-- Agent modal: a single overlay reused for both create and edit.
          The two flows differ only in the title, the save button label,
          and whether the username field is editable. Same shape as
-         chat.html's "个人设置" so admins get a familiar pattern. -->
+         chat.html's "Profile settings" so admins get a familiar pattern. -->
     <div class="modal-overlay" id="editAgentModal">
         <div class="modal-box">
             <div class="modal-head">
-                <h3 id="editAgentTitle">编辑 Agent</h3>
-                <button class="modal-close" onclick="closeEditAgent()" data-icon="x" title="关闭"></button>
+                <h3 id="editAgentTitle">Edit Agent</h3>
+                <button class="modal-close" onclick="closeEditAgent()" data-icon="x" title="Close"></button>
             </div>
             <div class="modal-body">
                 <div class="modal-avatar-row">
                     <div class="modal-avatar" id="editAgentAvatar"></div>
                     <div>
                         <label class="btn sm ghost" style="cursor:pointer">
-                            更换头像
+                            Change avatar
                             <input type="file" accept="image/*" style="display:none"
                                    onchange="uploadEditAgentAvatar(event)">
                         </label>
                     </div>
                 </div>
                 <div class="modal-field">
-                    <label>用户名</label>
+                    <label>Username</label>
                     <input type="text" id="editAgentUsername"
-                           placeholder="例如：translator-bot">
+                           placeholder="Example: translator-bot">
                 </div>
                 <div class="modal-field">
-                    <label>显示名称</label>
+                    <label>Display name</label>
                     <input type="text" id="editAgentDisplayName"
-                           placeholder="留空则使用用户名">
+                           placeholder="Defaults to username if empty">
                 </div>
                 <div class="modal-field">
-                    <label>描述（选填）</label>
+                    <label>Description (optional)</label>
                     <input type="text" id="editAgentDescription"
-                           placeholder="一句话介绍这个 Agent 是干嘛的">
+                           placeholder="Describe what this agent does">
                 </div>
                 <button class="modal-save" id="editAgentSaveBtn"
-                        onclick="saveEditAgent()">保存</button>
+                        onclick="saveEditAgent()">Save</button>
             </div>
         </div>
     </div>
 
     <script>
+    const t = window.AgentClubI18n.t;
+
     let currentUser = null;
     // Cache of the most recent /api/agents response. Indexed lookups
     // (editAgent etc.) read from here instead of round-tripping through
@@ -516,7 +519,7 @@
         currentUser = await res.json();
         renderUserMenu();
         if (currentUser.role !== 'admin') {
-            document.querySelector('.container').innerHTML = '<div class="card"><p style="text-align:center;padding:40px;color:#999">需要管理员权限</p></div>';
+            document.querySelector('.container').innerHTML = `<div class="card"><p style="text-align:center;padding:40px;color:#999">${t('admin.accessRequired')}</p></div>`;
             return;
         }
         await loadAgents();
@@ -579,7 +582,7 @@
         agentsById = {};
         for (const a of agents) agentsById[a.id] = a;
         if (!agents.length) {
-            document.getElementById('agentList').innerHTML = '<div class="empty">暂无 Agent</div>';
+            document.getElementById('agentList').innerHTML = `<div class="empty">${t('admin.emptyAgents')}</div>`;
             return;
         }
         let html = '';
@@ -602,8 +605,8 @@
                     <div class="token">Token: ${esc(a.agent_token)}</div>
                 </div>
                 <div class="agent-actions">
-                    <button class="icon-action" onclick="editAgent('${a.id}')" title="编辑" aria-label="编辑">${AgentClubUI.iconHTML('pencil')}</button>
-                    <button class="icon-action danger" onclick="deleteAgent('${a.id}','${esc(a.display_name)}')" title="删除" aria-label="删除">${AgentClubUI.iconHTML('trash-2')}</button>
+                    <button class="icon-action" onclick="editAgent('${a.id}')" title="${t('common.edit')}" aria-label="${t('common.edit')}">${AgentClubUI.iconHTML('pencil')}</button>
+                    <button class="icon-action danger" onclick="deleteAgent('${a.id}','${esc(a.display_name)}')" title="${t('common.delete')}" aria-label="${t('common.delete')}">${AgentClubUI.iconHTML('trash-2')}</button>
                 </div>
             </div>`;
         }
@@ -657,8 +660,8 @@
     function openCreateAgent() {
         editingAgent = null;
         editingAvatar = '';
-        document.getElementById('editAgentTitle').textContent = '创建 Agent';
-        document.getElementById('editAgentSaveBtn').textContent = '创建';
+        document.getElementById('editAgentTitle').textContent = t('admin.createAgent');
+        document.getElementById('editAgentSaveBtn').textContent = t('common.create');
         document.getElementById('editAgentUsername').value = '';
         document.getElementById('editAgentDisplayName').value = '';
         document.getElementById('editAgentDescription').value = '';
@@ -675,8 +678,8 @@
         if (!a) return;
         editingAgent = a;
         editingAvatar = a.avatar || '';
-        document.getElementById('editAgentTitle').textContent = '编辑 Agent';
-        document.getElementById('editAgentSaveBtn').textContent = '保存';
+        document.getElementById('editAgentTitle').textContent = t('admin.editAgent');
+        document.getElementById('editAgentSaveBtn').textContent = t('common.save');
         document.getElementById('editAgentUsername').value = a.username;
         document.getElementById('editAgentDisplayName').value = a.display_name || '';
         document.getElementById('editAgentDescription').value = a.description || '';
@@ -704,7 +707,7 @@
         const res = await fetch('/api/upload', { method: 'POST', body: formData });
         if (!res.ok) {
             const err = await res.json().catch(() => ({}));
-            alert(err.error || '上传失败');
+            alert(err.error || t('common.uploadFailed'));
             return;
         }
         const data = await res.json();
@@ -718,16 +721,16 @@
         const displayName = document.getElementById('editAgentDisplayName').value.trim();
         const description = document.getElementById('editAgentDescription').value.trim();
         if (isCreate) {
-            if (!username) { alert('请输入用户名'); return; }
+            if (!username) { alert(t('admin.enterUsername')); return; }
         } else {
             // For edit, display name must remain non-empty (matches the
             // CLI's `agent edit --display-name` validation).
-            if (!displayName) { alert('显示名称不能为空'); return; }
+            if (!displayName) { alert(t('admin.displayNameRequired')); return; }
         }
         const btn = document.getElementById('editAgentSaveBtn');
         btn.disabled = true;
         const original = btn.textContent;
-        btn.textContent = isCreate ? '创建中…' : '保存中…';
+        btn.textContent = isCreate ? t('common.creating') : t('common.saving');
         try {
             const url = isCreate
                 ? '/api/agents'
@@ -752,7 +755,7 @@
             });
             if (!res.ok) {
                 const err = await res.json().catch(() => ({}));
-                alert(err.error || (isCreate ? '创建失败' : '保存失败'));
+                alert(err.error || (isCreate ? t('admin.createFailed') : t('common.saveFailed')));
                 return;
             }
             const data = await res.json();
@@ -770,10 +773,10 @@
     }
 
     async function deleteAgent(agentId, name) {
-        if (!confirm(`确定要删除 Agent "${name}" 吗？`)) return;
+        if (!confirm(t('admin.deleteAgentConfirm', { name }))) return;
         const res = await fetch(`/api/agents/${agentId}`, { method: 'DELETE' });
         if (res.ok) loadAgents();
-        else alert('删除失败');
+        else alert(t('common.deleteFailed'));
     }
 
     function showTokenDialog(token) {
@@ -781,11 +784,11 @@
         overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:999';
         overlay.innerHTML = `<div style="background:#fff;border-radius:12px;padding:24px;max-width:480px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,0.2);position:relative">
             <button onclick="this.closest('div[style]').parentElement.remove()" style="position:absolute;top:12px;right:12px;background:none;border:none;cursor:pointer;color:#999;display:inline-flex;padding:4px">${AgentClubUI.iconHTML('x')}</button>
-            <h3 style="margin-bottom:6px;font-size:16px">Agent 创建成功</h3>
-            <p style="font-size:13px;color:#999;margin-bottom:16px">以下是该 Agent 的连接 Token，请妥善保存。</p>
+            <h3 style="margin-bottom:6px;font-size:16px">${t('admin.agentCreated')}</h3>
+            <p style="font-size:13px;color:#999;margin-bottom:16px">${t('admin.agentTokenHelp')}</p>
             <div style="display:flex;gap:8px">
                 <input readonly value="${esc(token)}" style="flex:1;padding:10px 12px;border:1.5px solid #ddd;border-radius:8px;font-family:monospace;font-size:13px;outline:none;background:#f8f9fa" onclick="this.select()">
-                <button class="btn" onclick="navigator.clipboard.writeText('${esc(token)}');this.textContent='已复制';setTimeout(()=>this.textContent='复制',1500)">复制</button>
+                <button class="btn" onclick="navigator.clipboard.writeText('${esc(token)}');this.textContent='${t('common.copied')}';setTimeout(()=>this.textContent='${t('common.copy')}',1500)">${t('common.copy')}</button>
             </div>
         </div>`;
         document.body.appendChild(overlay);

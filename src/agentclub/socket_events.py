@@ -108,9 +108,9 @@ def register_events(socketio):
             emit(
                 "error",
                 {
-                    "message": "你不在这个群组中"
+                    "message": "You are not in this group"
                     if chat_type == "group"
-                    else "你不在这个对话中",
+                    else "You are not in this conversation",
                 },
             )
             return

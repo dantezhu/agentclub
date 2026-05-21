@@ -472,7 +472,8 @@ async function processInbound(
   //    direct, which collapsed every conversation with the same peer
   //    into one OpenClaw session; after the server started enforcing
   //    per-chat participation on `send_message`, replies were rejected
-  //    as "你不在这个对话中" once the original chat had been deleted.
+  //    as "You are not in this conversation" once the original chat had
+  //    been deleted.
   const peerKind: "direct" | "group" = msg.chatType === "group" ? "group" : "direct";
   const peerId = msg.chatId;
   const accountId = account.accountId || "default";

@@ -647,7 +647,7 @@ describe("startAgentClubMonitor", () => {
   it("extracts mentions from agent reply into outbound send payload", async () => {
     const runtime = makeRuntime({
       replyPayload: {
-        text: 'Sure <at user_id="user-1">Alice</at>, here you go! <at user_id="all">所有人</at>',
+        text: 'Sure <at user_id="user-1">Alice</at>, here you go! <at user_id="all">Everyone</at>',
       },
     });
     const log = makeLogger();

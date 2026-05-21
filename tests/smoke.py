@@ -30,42 +30,42 @@ def main():
             print(f"  ❌ {name}")
             failed += 1
 
-    print("\n=== 1. 管理员登录 ===")
+    print("\n=== 1. Admin login ===")
     r = s.post(f"{BASE}/api/login", json={"username": "smoke_admin", "password": "test1234"})
-    check("登录管理员账号", r.status_code == 200 and r.json()["role"] == "admin")
+    check("Admin account login", r.status_code == 200 and r.json()["role"] == "admin")
 
-    print("\n=== 2. 获取当前用户 ===")
+    print("\n=== 2. Get current user ===")
     r = s.get(f"{BASE}/api/me")
-    check("获取当前用户信息", r.status_code == 200 and r.json()["username"] == "smoke_admin")
+    check("Current user info", r.status_code == 200 and r.json()["username"] == "smoke_admin")
     admin_id = r.json()["id"]
 
-    print("\n=== 3. 创建 Agent ===")
-    r = s.post(f"{BASE}/api/agents", json={"username": "smoke_bot", "display_name": "测试机器人"})
-    check("创建 Agent", r.status_code == 201)
+    print("\n=== 3. Create agent ===")
+    r = s.post(f"{BASE}/api/agents", json={"username": "smoke_bot", "display_name": "Test Bot"})
+    check("Create agent", r.status_code == 201)
     agent_token = r.json()["agent_token"]
     agent_id = r.json()["id"]
     print(f"       Agent Token: {agent_token[:16]}...")
 
-    print("\n=== 4. 创建群组 ===")
-    r = s.post(f"{BASE}/api/groups", json={"name": "测试群"})
-    check("创建群组", r.status_code == 201)
+    print("\n=== 4. Create group ===")
+    r = s.post(f"{BASE}/api/groups", json={"name": "Smoke Test Group"})
+    check("Create group", r.status_code == 201)
     group_id = r.json()["id"]
 
-    print("\n=== 5. 添加 Agent 到群组 ===")
+    print("\n=== 5. Add agent to group ===")
     r = s.post(f"{BASE}/api/groups/{group_id}/members", json={"user_id": agent_id})
-    check("添加 Agent 到群组", r.status_code == 200)
+    check("Add agent to group", r.status_code == 200)
 
     r = s.get(f"{BASE}/api/groups/{group_id}/members")
-    check("群组成员数量正确", len(r.json()) == 2)
+    check("Group member count", len(r.json()) == 2)
 
-    print("\n=== 6. Agent 文件上传 ===")
+    print("\n=== 6. Agent file upload ===")
     r = requests.post(f"{BASE}/api/agent/upload",
                        files={"file": ("test.mp3", b"fake audio", "audio/mpeg")},
                        headers={"Authorization": f"Bearer {agent_token}"})
-    check("Agent 上传音频文件", r.status_code == 200 and r.json()["content_type"] == "audio")
+    check("Agent audio file upload", r.status_code == 200 and r.json()["content_type"] == "audio")
     audio_url = r.json()["url"]
 
-    print("\n=== 7. Socket.IO - 管理员连接 ===")
+    print("\n=== 7. Socket.IO - admin connection ===")
     admin_sio = socketio.Client()
     admin_messages = []
     admin_connected = [False]
@@ -83,12 +83,12 @@ def main():
     headers = {"Cookie": "; ".join(f"{k}={v}" for k, v in cookies.items())}
     admin_sio.connect(BASE, headers=headers, transports=["websocket"])
     time.sleep(0.5)
-    check("管理员 Socket.IO 连接", admin_connected[0])
+    check("Admin Socket.IO connection", admin_connected[0])
 
     admin_sio.emit("join_chat", {"chat_type": "group", "chat_id": group_id})
     time.sleep(0.2)
 
-    print("\n=== 8. Socket.IO - Agent 连接 ===")
+    print("\n=== 8. Socket.IO - agent connection ===")
     agent_sio = socketio.Client()
     agent_connected = [False]
     agent_messages = []
@@ -103,33 +103,33 @@ def main():
 
     agent_sio.connect(BASE, auth={"agent_token": agent_token}, transports=["websocket"])
     time.sleep(0.5)
-    check("Agent Socket.IO 连接", agent_connected[0])
+    check("Agent Socket.IO connection", agent_connected[0])
 
     agent_sio.emit("join_chat", {"chat_type": "group", "chat_id": group_id})
     time.sleep(0.2)
 
-    print("\n=== 9. 管理员发送消息 ===")
+    print("\n=== 9. Admin sends a message ===")
     admin_sio.emit("send_message", {
         "chat_type": "group",
         "chat_id": group_id,
-        "content": "你好，机器人！@smoke_bot",
+        "content": "Hello, bot! @smoke_bot",
         "content_type": "text",
         "mentions": ["smoke_bot"],
     })
     time.sleep(0.5)
-    check("Agent 收到管理员消息", len(agent_messages) > 0 and "你好" in agent_messages[-1].get("content", ""))
+    check("Agent receives admin message", len(agent_messages) > 0 and "Hello" in agent_messages[-1].get("content", ""))
 
-    print("\n=== 10. Agent 发送消息 ===")
+    print("\n=== 10. Agent sends a message ===")
     agent_sio.emit("send_message", {
         "chat_type": "group",
         "chat_id": group_id,
-        "content": "你好！我是测试机器人。",
+        "content": "Hello! I am the test bot.",
         "content_type": "text",
     })
     time.sleep(0.5)
-    check("管理员收到 Agent 消息", any("测试机器人" in m.get("content", "") for m in admin_messages))
+    check("Admin receives agent message", any("test bot" in m.get("content", "") for m in admin_messages))
 
-    print("\n=== 11. Agent 发送语音消息 ===")
+    print("\n=== 11. Agent sends an audio message ===")
     agent_sio.emit("send_message", {
         "chat_type": "group",
         "chat_id": group_id,
@@ -140,24 +140,24 @@ def main():
     })
     time.sleep(0.5)
     audio_msgs = [m for m in admin_messages if m.get("content_type") == "audio"]
-    check("管理员收到语音消息", len(audio_msgs) > 0)
+    check("Admin receives audio message", len(audio_msgs) > 0)
 
-    print("\n=== 12. 历史消息查询 ===")
+    print("\n=== 12. Message history query ===")
     r = s.get(f"{BASE}/api/messages/group/{group_id}")
-    check("查询历史消息", r.status_code == 200 and len(r.json()) >= 3)
+    check("Query message history", r.status_code == 200 and len(r.json()) >= 3)
 
-    print("\n=== 13. 页面可访问 ===")
+    print("\n=== 13. Pages are accessible ===")
     r = requests.get(f"{BASE}/")
-    check("登录页可访问", r.status_code == 200 and "Agent Club" in r.text)
+    check("Login page is accessible", r.status_code == 200 and "Agent Club" in r.text)
     r = requests.get(f"{BASE}/chat")
-    check("聊天页可访问", r.status_code == 200 and "chat.js" in r.text)
+    check("Chat page is accessible", r.status_code == 200 and "chat.js" in r.text)
 
     # Cleanup
     admin_sio.disconnect()
     agent_sio.disconnect()
 
     print(f"\n{'='*40}")
-    print(f"结果: {passed} 通过, {failed} 失败")
+    print(f"Result: {passed} passed, {failed} failed")
     print(f"{'='*40}\n")
 
     sys.exit(1 if failed else 0)
