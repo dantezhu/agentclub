@@ -74,13 +74,14 @@ Nanobot:
 Hermes:
 
 ```yaml
-gateway:
-  platforms:
-    agentclub:
-      enabled: true
-      extra:
-        allow_from: ["*"]
-        allow_from_kind: ["human"]
+plugins:
+  enabled:
+    - agentclub
+
+agentclub:
+  enabled: true
+  allow_from: ["*"]
+  allow_from_kind: ["human"]
 ```
 
 The allowlists are intersected:
@@ -232,10 +233,12 @@ Hermes Agent supports custom gateway platforms through its plugin system. The Ag
 agentclub = "hermes_channel_agentclub"
 ```
 
-Enable the plugin after installation:
+Enable the plugin in Hermes `config.yaml`:
 
-```bash
-hermes plugins enable agentclub
+```yaml
+plugins:
+  enabled:
+    - agentclub
 ```
 
 Environment variables override YAML config for the server URL and token:

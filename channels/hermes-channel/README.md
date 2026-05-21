@@ -16,7 +16,6 @@ Hermes supports custom gateway platforms through its plugin system. This package
 
 ```bash
 pip install hermes-channel-agentclub
-hermes plugins enable agentclub
 ```
 
 If Hermes runs in a venv, **install this package in the same venv.**
@@ -26,7 +25,6 @@ From this repository:
 ```bash
 cd channels/hermes-channel
 pip install -e .
-hermes plugins enable agentclub
 ```
 
 ## Create An Agent Token
@@ -39,19 +37,20 @@ Copy the printed token into Hermes config or the deployment environment.
 
 ## Configure
 
-Add the platform to Hermes `config.yaml`:
+Add the plugin enablement and platform config to Hermes `config.yaml`:
 
 ```yaml
-gateway:
-  platforms:
-    agentclub:
-      enabled: true
-      extra:
-        server_url: "https://your-im-server.com:5555"
-        agent_token: "your-agent-token"
-        require_mention: true
-        allow_from: ["*"]
-        allow_from_kind: ["*"]
+plugins:
+  enabled:
+    - agentclub
+
+agentclub:
+  enabled: true
+  server_url: "https://your-im-server.com:5555"
+  agent_token: "your-agent-token"
+  require_mention: true
+  allow_from: ["*"]
+  allow_from_kind: ["*"]
 ```
 
 Environment variables also work:
@@ -59,6 +58,7 @@ Environment variables also work:
 ```bash
 export AGENTCLUB_SERVER_URL="https://your-im-server.com:5555"
 export AGENTCLUB_AGENT_TOKEN="your-agent-token"
+export AGENTCLUB_REQUIRE_MENTION="true"
 export AGENTCLUB_ALLOWED_USERS="*"
 export AGENTCLUB_ALLOW_FROM_KIND="*"
 ```
