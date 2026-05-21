@@ -7,6 +7,7 @@ import { createInboundGateway, type InboundMessage } from "./gateway.js";
 import { setActiveClient, getRuntime } from "./runtime.js";
 import { inferContentTypeFromUploadType } from "./mime.js";
 import { toSessionKey } from "./session.js";
+import { INITIAL_RETRY_DELAY_MS, MAX_RETRY_DELAY_MS } from "./retry.js";
 import { basename } from "node:path";
 
 const CHANNEL_ID = "agentclub";
@@ -15,8 +16,6 @@ const CHANNEL_ID = "agentclub";
 // `config.py` MAX_CONTENT_LENGTH). `saveMediaBuffer` defaults to 5MB which
 // would truncate large attachments; we raise it to the IM server's own cap.
 const ATTACHMENT_MAX_BYTES = 50 * 1024 * 1024;
-const INITIAL_RETRY_DELAY_MS = 1000;
-const MAX_RETRY_DELAY_MS = 30000;
 
 /**
  * Wire format for @mentions, mirrored from the feishu channel:

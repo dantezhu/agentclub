@@ -6,6 +6,7 @@ import type {
   SendMessagePayload,
   UploadResponse,
 } from "./types.js";
+import { INITIAL_RETRY_DELAY_MS, MAX_RETRY_DELAY_MS } from "./retry.js";
 
 export interface AgentClubClientOptions {
   serverUrl: string;
@@ -72,8 +73,8 @@ export class AgentClubClient {
         auth: { agent_token: this.agentToken },
         transports: ["websocket", "polling"],
         reconnection: true,
-        reconnectionDelay: 1000,
-        reconnectionDelayMax: 30000,
+        reconnectionDelay: INITIAL_RETRY_DELAY_MS,
+        reconnectionDelayMax: MAX_RETRY_DELAY_MS,
         reconnectionAttempts: Infinity,
       });
 

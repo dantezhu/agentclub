@@ -17,6 +17,7 @@ vi.mock("socket.io-client", () => ({
 }));
 
 import { AgentClubClient } from "../src/client.js";
+import { INITIAL_RETRY_DELAY_MS, MAX_RETRY_DELAY_MS } from "../src/retry.js";
 
 const fetchMock = vi.fn();
 vi.stubGlobal("fetch", fetchMock);
@@ -46,8 +47,8 @@ describe("AgentClubClient.connect", () => {
         auth: { agent_token: "tok-123" },
         transports: ["websocket", "polling"],
         reconnection: true,
-        reconnectionDelay: 1000,
-        reconnectionDelayMax: 30000,
+        reconnectionDelay: INITIAL_RETRY_DELAY_MS,
+        reconnectionDelayMax: MAX_RETRY_DELAY_MS,
         reconnectionAttempts: Infinity,
       }),
     );
