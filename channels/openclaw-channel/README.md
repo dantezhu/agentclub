@@ -23,7 +23,7 @@ From this repository:
 cd channels/openclaw-channel
 npm install
 npm run build
-openclaw plugins install ./
+openclaw plugins install .
 ```
 
 Uninstall by channel id:
