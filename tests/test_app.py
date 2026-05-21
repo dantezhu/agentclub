@@ -304,6 +304,30 @@ class TestSocketIO:
         assert auth_data["is_agent"] == 1
         sio_client.disconnect()
 
+    def test_auth_ok_precedes_offline_messages(self, admin_client):
+        gres = admin_client.post("/api/groups", json={"name": "G1"})
+        gid = gres.get_json()["id"]
+        admin = admin_client.get("/api/me").get_json()
+        ares = admin_client.post("/api/agents", json={"username": "bot1"})
+        agent = ares.get_json()
+        admin_client.post(f"/api/groups/{gid}/members", json={"user_id": agent["id"]})
+
+        with models.get_db_ctx() as db:
+            db.execute(
+                "UPDATE group_members SET joined_at = 0 WHERE group_id = ? AND user_id = ?",
+                (gid, agent["id"]),
+            )
+        models.save_message("group", gid, admin["id"], "offline hello")
+
+        sio_client = socketio.test_client(app, auth={"agent_token": agent["agent_token"]})
+        assert sio_client.is_connected()
+        received = sio_client.get_received()
+        events = [r["name"] for r in received]
+        assert events.index("auth_ok") < events.index("offline_messages")
+        offline = next(r["args"][0] for r in received if r["name"] == "offline_messages")
+        assert [msg["content"] for msg in offline] == ["offline hello"]
+        sio_client.disconnect()
+
     def test_agent_connect_bad_token(self):
         sio_client = socketio.test_client(app, auth={"agent_token": "invalid"})
         assert not sio_client.is_connected()

@@ -307,18 +307,6 @@ def _register_connection(user, sid):
     for dc in dchats:
         join_room(f"direct_{dc['id']}")
 
-    # Send any still-unread messages so the recipient can catch up. We do NOT
-    # auto-clear here; the recipient must ACK explicitly (humans ACK by opening
-    # a chat via `join_chat`/`mark_read`, agents ACK per-message via
-    # `ack_message`). This prevents both (a) lost badges on page refresh and
-    # (b) reply storms when an agent's socket reconnects and would otherwise
-    # re-process already-handled messages.
-    unread = models.get_unread_messages(user_id)
-    if unread:
-        for msg in unread:
-            msg["mentions"] = json.loads(msg.get("mentions", "[]"))
-        emit("offline_messages", unread)
-
     emit("auth_ok", {
         "user_id": user_id,
         "display_name": user["display_name"],
@@ -330,6 +318,19 @@ def _register_connection(user, sid):
         "heartbeat_interval": Config.HEARTBEAT_INTERVAL,
         "presence_poll_interval": Config.PRESENCE_POLL_INTERVAL,
     })
+
+    # Send any still-unread messages so the recipient can catch up. We do NOT
+    # auto-clear here; the recipient must ACK explicitly (humans ACK by opening
+    # a chat via `join_chat`/`mark_read`, agents ACK per-message via
+    # `ack_message`). This prevents both (a) lost badges on page refresh and
+    # (b) reply storms when an agent's socket reconnects and would otherwise
+    # re-process already-handled messages. `auth_ok` intentionally comes first
+    # so clients can initialize their identity before replay handling runs.
+    unread = models.get_unread_messages(user_id)
+    if unread:
+        for msg in unread:
+            msg["mentions"] = json.loads(msg.get("mentions", "[]"))
+        emit("offline_messages", unread)
 
 
 def _notify_unread(socketio, target_user_id):
