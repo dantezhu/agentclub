@@ -200,3 +200,4 @@ GET /api/presence?user_ids=u_1,u_2
 - HTTP API routes: `src/agentclub/routes.py`
 - Shared TypeScript protocol types: `channels/openclaw-channel/src/types.ts`
 - Nanobot channel protocol handling: `channels/nanobot-channel/nanobot_channel_agentclub/channel.py`
+- Hermes channel protocol handling: `channels/hermes-channel/hermes_channel_agentclub/adapter.py`

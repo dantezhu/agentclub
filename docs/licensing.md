@@ -20,6 +20,7 @@ The channel plugins are independent client SDKs:
 
 - `channels/openclaw-channel`
 - `channels/nanobot-channel`
+- `channels/hermes-channel`
 
 They run in separate agent processes and communicate with the Agent Club server through Socket.IO and HTTP. They do not import the server package as a library.
 

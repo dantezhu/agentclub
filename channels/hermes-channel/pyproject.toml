@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hermes-channel-agentclub"
+version = "0.1.0"
+description = "Hermes Agent platform adapter that connects Hermes agents to an Agent Club IM server."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Dante Zhu" }]
+keywords = ["hermes-agent", "agent", "chat", "channel", "agentclub", "socketio"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Communications :: Chat",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Framework :: AsyncIO",
+]
+dependencies = [
+    "python-socketio[asyncio_client]>=5.10",
+    "aiohttp>=3.9",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+]
+
+[project.entry-points."hermes_agent.plugins"]
+agentclub = "hermes_channel_agentclub"
+
+[project.urls]
+Homepage = "https://github.com/dantezhu/agentclub"
+Repository = "https://github.com/dantezhu/agentclub"
+Issues = "https://github.com/dantezhu/agentclub/issues"
+"Agent Club Server" = "https://pypi.org/project/agentclub/"
+
+[tool.setuptools.packages.find]
+include = ["hermes_channel_agentclub*"]
+exclude = ["tests*"]
+
+[tool.setuptools.package-data]
+hermes_channel_agentclub = ["plugin.yaml"]
