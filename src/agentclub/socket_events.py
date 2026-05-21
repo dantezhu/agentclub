@@ -67,7 +67,7 @@ def register_events(socketio):
     def on_send_message(data):
         user_id = connected_users.get(request.sid)
         if not user_id:
-            return
+            return {"ok": False, "error": "Not authenticated"}
         models.touch_active(user_id)
 
         chat_type = data.get("chat_type", "group")
@@ -98,7 +98,7 @@ def register_events(socketio):
         mentions = json.dumps(mentions_list)
 
         if not chat_id:
-            return
+            return {"ok": False, "error": "chat_id is required"}
 
         # Permission check — prevent IDOR: anyone with a leaked/guessed
         # chat_id could otherwise write into a conversation they're not
@@ -113,7 +113,12 @@ def register_events(socketio):
                     else "You are not in this conversation",
                 },
             )
-            return
+            return {
+                "ok": False,
+                "error": "You are not in this group"
+                if chat_type == "group"
+                else "You are not in this conversation",
+            }
 
         result = models.save_message(
             chat_type, chat_id, user_id, content, content_type,
@@ -194,6 +199,12 @@ def register_events(socketio):
                 else:
                     _notify_unread(socketio, peer_id)
             socketio.emit("new_message", msg, room=f"direct_{chat_id}")
+
+        return {
+            "ok": True,
+            "message_id": result["id"],
+            "created_at": result["created_at"],
+        }
 
     @socketio.on("join_chat")
     def on_join_chat(data):

@@ -54,6 +54,7 @@ class SendResult:
     success: bool
     message_id: str | None = None
     error: str | None = None
+    raw_response: object | None = None
     retryable: bool = False
 
 
@@ -141,7 +142,17 @@ def adapter(monkeypatch):
         monkeypatch.delenv(name, raising=False)
     ad = AgentClubAdapter(_config())
     ad._agent_user_id = "agent-self"
-    ad._sio = SimpleNamespace(connected=True, emit=AsyncMock())
+    ad._sio = SimpleNamespace(
+        connected=True,
+        emit=AsyncMock(),
+        call=AsyncMock(
+            return_value={
+                "ok": True,
+                "message_id": "msg-out",
+                "created_at": 1700000001,
+            }
+        ),
+    )
     return ad
 
 
@@ -280,7 +291,8 @@ class TestOutbound:
         )
 
         assert result.success is True
-        adapter._sio.emit.assert_awaited_once_with(
+        assert result.message_id == "msg-out"
+        adapter._sio.call.assert_awaited_once_with(
             "send_message",
             {
                 "chat_type": "group",
@@ -289,6 +301,7 @@ class TestOutbound:
                 "content_type": "text",
                 "mentions": ["u1"],
             },
+            timeout=10,
         )
 
     def test_send_rejects_unprefixed_chat_id(self, adapter):
@@ -315,11 +328,30 @@ class TestOutbound:
         )
 
         assert result.success is True
-        payload = adapter._sio.emit.await_args.args[1]
+        assert result.message_id == "msg-out"
+        payload = adapter._sio.call.await_args.args[1]
         assert payload["chat_type"] == "direct"
         assert payload["content_type"] == "file"
         assert payload["file_url"] == "/media/uploads/doc.txt"
         assert payload["mentions"] == ["u1"]
+
+    def test_send_returns_server_error_ack(self, adapter):
+        adapter._sio.call = AsyncMock(return_value={"ok": False, "error": "denied"})
+
+        result = run(adapter.send("dc_chat-1", "hi"))
+
+        assert result.success is False
+        assert result.error == "denied"
+        assert result.retryable is False
+
+    def test_send_returns_invalid_ack_as_retryable(self, adapter):
+        adapter._sio.call = AsyncMock(return_value=None)
+
+        result = run(adapter.send("dc_chat-1", "hi"))
+
+        assert result.success is False
+        assert "Invalid send_message ack" in result.error
+        assert result.retryable is True
 
 
 class TestConfigBridge:

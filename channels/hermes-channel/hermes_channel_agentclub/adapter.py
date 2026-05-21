@@ -14,7 +14,6 @@ import os
 import re
 import shutil
 import tempfile
-import time
 from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
@@ -394,8 +393,7 @@ class AgentClubAdapter(BasePlatformAdapter):
         mentions = _extract_mention_user_ids(text)
         if mentions:
             payload["mentions"] = mentions
-        await self._emit_send_message(payload)
-        return SendResult(success=True, message_id=f"agentclub-{int(time.time() * 1000)}")
+        return await self._send_payload(payload)
 
     async def send_image(
         self,
@@ -661,8 +659,33 @@ class AgentClubAdapter(BasePlatformAdapter):
         except Exception as exc:
             logger.warning("[agentclub] mark_read failed for {}: {}", message_id, exc)
 
-    async def _emit_send_message(self, payload: dict[str, Any]) -> None:
-        await self._sio.emit("send_message", payload)
+    async def _send_payload(self, payload: dict[str, Any]) -> SendResult:
+        try:
+            ack = await self._emit_send_message(payload)
+        except Exception as exc:
+            return SendResult(success=False, error=str(exc), retryable=True)
+        if not isinstance(ack, dict):
+            return SendResult(
+                success=False,
+                error=f"Invalid send_message ack: {ack!r}",
+                raw_response=ack,
+                retryable=True,
+            )
+        if not ack.get("ok"):
+            return SendResult(
+                success=False,
+                error=str(ack.get("error") or "send_message failed"),
+                raw_response=ack,
+                retryable=False,
+            )
+        return SendResult(
+            success=True,
+            message_id=ack.get("message_id"),
+            raw_response=ack,
+        )
+
+    async def _emit_send_message(self, payload: dict[str, Any]) -> Any:
+        return await self._sio.call("send_message", payload, timeout=10)
 
     async def _send_file_message(
         self,
@@ -698,8 +721,7 @@ class AgentClubAdapter(BasePlatformAdapter):
         mentions = _extract_mention_user_ids(content)
         if mentions:
             payload["mentions"] = mentions
-        await self._emit_send_message(payload)
-        return SendResult(success=True, message_id=f"agentclub-{int(time.time() * 1000)}")
+        return await self._send_payload(payload)
 
     async def _upload_attachment(self, local_path: str) -> dict[str, Any] | None:
         if self._http is None:

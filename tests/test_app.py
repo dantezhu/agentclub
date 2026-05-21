@@ -341,12 +341,14 @@ class TestSocketIO:
         sio_client.get_received()  # clear initial events
 
         sio_client.emit("join_chat", {"chat_type": "group", "chat_id": gid})
-        sio_client.emit("send_message", {
+        ack = sio_client.emit("send_message", {
             "chat_type": "group",
             "chat_id": gid,
             "content": "Hello world",
             "content_type": "text",
-        })
+        }, callback=True)
+        assert ack["ok"] is True
+        assert ack["message_id"].startswith("msg_")
 
         received = sio_client.get_received()
         msg_events = [r for r in received if r["name"] == "new_message"]
