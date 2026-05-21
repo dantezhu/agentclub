@@ -51,7 +51,7 @@ def register():
     # endpoint never mints admin accounts, so a leaked/unpatched server
     # can't be turned into one by whoever hits /api/register first.
     if not Config.ALLOW_REGISTRATION:
-        return jsonify({"error": "注册功能已关闭"}), 403
+        return jsonify({"error": "Registration is disabled"}), 403
 
     data = request.get_json()
     username = data.get("username", "").strip()
@@ -59,14 +59,14 @@ def register():
     display_name = data.get("display_name", "").strip() or username
 
     if not username or not password:
-        return jsonify({"error": "用户名和密码不能为空"}), 400
+        return jsonify({"error": "Username and password are required"}), 400
     if len(username) < 2 or len(username) > 32:
-        return jsonify({"error": "用户名长度 2-32 字符"}), 400
+        return jsonify({"error": "Username must be 2-32 characters"}), 400
     if len(password) < 6:
-        return jsonify({"error": "密码至少 6 个字符"}), 400
+        return jsonify({"error": "Password must be at least 6 characters"}), 400
 
     if models.get_user_by_username(username):
-        return jsonify({"error": "用户名已存在"}), 409
+        return jsonify({"error": "Username already exists"}), 409
 
     uid = models.create_user(username, hash_password(password), display_name, role="user")
     session.permanent = True
@@ -92,7 +92,7 @@ def login():
         # username and the source IP, but never the password (don't even
         # log its length — gives attackers a sidechannel).
         log.warning("login failed: username=%r ip=%s", username, request.remote_addr)
-        return jsonify({"error": "用户名或密码错误"}), 401
+        return jsonify({"error": "Invalid username or password"}), 401
 
     session.permanent = True
     session["user_id"] = user["id"]
@@ -132,7 +132,7 @@ def update_me():
 def update_agent(agent_id):
     agent = models.get_user_by_id(agent_id)
     if not agent or not agent["is_agent"]:
-        return jsonify({"error": "Agent 不存在"}), 404
+        return jsonify({"error": "Agent not found"}), 404
     data = request.get_json()
     updates = {}
     if "display_name" in data and data["display_name"].strip():
@@ -154,7 +154,7 @@ def update_agent(agent_id):
 def delete_agent(agent_id):
     agent = models.get_user_by_id(agent_id)
     if not agent or not agent["is_agent"]:
-        return jsonify({"error": "Agent 不存在"}), 404
+        return jsonify({"error": "Agent not found"}), 404
     try:
         models.delete_user(agent_id)
     except sqlite3.IntegrityError as e:
@@ -163,7 +163,7 @@ def delete_agent(agent_id):
         # corrupt-looking rows. Either way it's a bug, not user error.
         log.exception("delete_agent failed: agent_id=%s", agent_id)
         return jsonify({
-            "error": f"删除失败：仍有关联数据未清理 ({e})"
+            "error": f"Delete failed: related data still exists ({e})"
         }), 500
     return jsonify({"ok": True})
 
@@ -173,9 +173,9 @@ def delete_agent(agent_id):
 def update_group(group_id):
     group = models.get_group(group_id)
     if not group:
-        return jsonify({"error": "群组不存在"}), 404
+        return jsonify({"error": "Group not found"}), 404
     if group["created_by"] != request.current_user["id"]:
-        return jsonify({"error": "只有创建者可以修改群组"}), 403
+        return jsonify({"error": "Only the creator can edit this group"}), 403
     data = request.get_json()
     updates = {}
     if "name" in data and data["name"].strip():
@@ -203,9 +203,9 @@ def create_agent():
     description = (data.get("description") or "").strip()
 
     if not username:
-        return jsonify({"error": "用户名不能为空"}), 400
+        return jsonify({"error": "Username is required"}), 400
     if models.get_user_by_username(username):
-        return jsonify({"error": "用户名已存在"}), 409
+        return jsonify({"error": "Username already exists"}), 409
 
     token = generate_agent_token()
     uid = models.create_agent(username, display_name, token, avatar, description)
@@ -237,7 +237,7 @@ def get_user(user_id):
     """
     user = models.get_user_by_id(user_id)
     if not user:
-        return jsonify({"error": "用户不存在"}), 404
+        return jsonify({"error": "User not found"}), 404
     return jsonify(_safe_user(user))
 
 
@@ -249,7 +249,7 @@ def create_group():
     data = request.get_json()
     name = data.get("name", "").strip()
     if not name:
-        return jsonify({"error": "群组名不能为空"}), 400
+        return jsonify({"error": "Group name is required"}), 400
 
     description = (data.get("description") or "").strip()
     gid = models.create_group(
@@ -272,7 +272,7 @@ def list_groups():
 def get_group(group_id):
     group = _group_with_meta(group_id)
     if not group:
-        return jsonify({"error": "群组不存在"}), 404
+        return jsonify({"error": "Group not found"}), 404
     return jsonify(group)
 
 
@@ -299,7 +299,7 @@ def _group_with_meta(group_id):
 @login_required
 def group_members(group_id):
     if not models.is_group_member(group_id, request.current_user["id"]):
-        return jsonify({"error": "你不在这个群组中"}), 403
+        return jsonify({"error": "You are not in this group"}), 403
     return jsonify(models.get_group_members(group_id))
 
 
@@ -308,14 +308,14 @@ def group_members(group_id):
 def add_member(group_id):
     group = models.get_group(group_id)
     if not group:
-        return jsonify({"error": "群组不存在"}), 404
+        return jsonify({"error": "Group not found"}), 404
     cur = request.current_user
     if cur["role"] != "admin" and group["created_by"] != cur["id"]:
-        return jsonify({"error": "只有管理员或群创建者可以添加成员"}), 403
+        return jsonify({"error": "Only admins or the group creator can add members"}), 403
     data = request.get_json()
     user_id = data.get("user_id")
     if not user_id or not models.get_user_by_id(user_id):
-        return jsonify({"error": "用户不存在"}), 404
+        return jsonify({"error": "User not found"}), 404
     models.add_group_member(group_id, user_id)
 
     # Push the new membership to any open tabs the user has. Two subtleties:
@@ -357,12 +357,12 @@ def _room_transition(socketio, sids, room, *, join):
 def remove_member(group_id, user_id):
     group = models.get_group(group_id)
     if not group:
-        return jsonify({"error": "群组不存在"}), 404
+        return jsonify({"error": "Group not found"}), 404
     cur = request.current_user
     if cur["role"] != "admin" and group["created_by"] != cur["id"]:
-        return jsonify({"error": "只有管理员或群创建者可以移除成员"}), 403
+        return jsonify({"error": "Only admins or the group creator can remove members"}), 403
     if user_id == group["created_by"]:
-        return jsonify({"error": "不能移除群创建者"}), 400
+        return jsonify({"error": "The group creator cannot be removed"}), 400
     models.remove_group_member(group_id, user_id)
 
     # Kick the removed user out of the Socket.IO room so they stop seeing
@@ -379,9 +379,9 @@ def remove_member(group_id, user_id):
 def delete_group(group_id):
     group = models.get_group(group_id)
     if not group:
-        return jsonify({"error": "群组不存在"}), 404
+        return jsonify({"error": "Group not found"}), 404
     if group["created_by"] != request.current_user["id"]:
-        return jsonify({"error": "只有创建者可以解散群组"}), 403
+        return jsonify({"error": "Only the creator can dissolve this group"}), 403
     # Notify all online members
     from .socket_events import user_sids
     from .app import socketio
@@ -399,9 +399,9 @@ def delete_group(group_id):
 def leave_group(group_id):
     group = models.get_group(group_id)
     if not group:
-        return jsonify({"error": "群组不存在"}), 404
+        return jsonify({"error": "Group not found"}), 404
     if group["created_by"] == request.current_user["id"]:
-        return jsonify({"error": "创建者不能退出群组，请使用解散功能"}), 400
+        return jsonify({"error": "The creator cannot leave the group; use dissolve instead"}), 400
     models.remove_group_member(group_id, request.current_user["id"])
     return jsonify({"ok": True})
 
@@ -427,7 +427,7 @@ def create_direct_chat():
     data = request.get_json()
     peer_id = data.get("user_id")
     if not peer_id or not models.get_user_by_id(peer_id):
-        return jsonify({"error": "用户不存在"}), 404
+        return jsonify({"error": "User not found"}), 404
     chat = models.get_or_create_direct_chat(request.current_user["id"], peer_id)
     return jsonify(chat)
 
@@ -483,7 +483,7 @@ def get_messages(chat_type, chat_id):
     # to this conversation. Without this gate, anyone with a leaked chat_id
     # can pull arbitrary message history.
     if not models.can_access_chat(chat_type, chat_id, request.current_user["id"]):
-        return jsonify({"error": "无权访问该会话"}), 403
+        return jsonify({"error": "You do not have access to this conversation"}), 403
     before = request.args.get("before", type=float)
     limit = min(request.args.get("limit", Config.MESSAGE_PAGE_SIZE, type=int), 100)
     messages = models.get_messages(chat_type, chat_id, before=before, limit=limit)
@@ -497,10 +497,10 @@ def get_messages(chat_type, chat_id):
 @login_required
 def upload_file():
     if "file" not in request.files:
-        return jsonify({"error": "没有文件"}), 400
+        return jsonify({"error": "No file provided"}), 400
     f = request.files["file"]
     if not f.filename or not _allowed_file(f.filename):
-        return jsonify({"error": "不支持的文件类型"}), 400
+        return jsonify({"error": "Unsupported file type"}), 400
 
     filename = _safe_filename(f.filename)
     # Filenames are not entity IDs — keep them out of the prefixed
@@ -522,16 +522,16 @@ def upload_file():
 def agent_upload_file():
     token = request.headers.get("Authorization", "").replace("Bearer ", "")
     if not token:
-        return jsonify({"error": "缺少认证"}), 401
+        return jsonify({"error": "Missing authentication"}), 401
     user = models.get_user_by_agent_token(token)
     if not user:
-        return jsonify({"error": "无效的 Token"}), 401
+        return jsonify({"error": "Invalid token"}), 401
 
     if "file" not in request.files:
-        return jsonify({"error": "没有文件"}), 400
+        return jsonify({"error": "No file provided"}), 400
     f = request.files["file"]
     if not f.filename or not _allowed_file(f.filename):
-        return jsonify({"error": "不支持的文件类型"}), 400
+        return jsonify({"error": "Unsupported file type"}), 400
 
     filename = _safe_filename(f.filename)
     # See comment in ``upload_file`` — bare uuid for filenames, not new_id.
@@ -552,15 +552,15 @@ def agent_get_messages(chat_type, chat_id):
     """Token-authenticated message history for agents."""
     token = request.headers.get("Authorization", "").replace("Bearer ", "")
     if not token:
-        return jsonify({"error": "缺少认证"}), 401
+        return jsonify({"error": "Missing authentication"}), 401
     user = models.get_user_by_agent_token(token)
     if not user:
-        return jsonify({"error": "无效的 Token"}), 401
+        return jsonify({"error": "Invalid token"}), 401
 
     # Same IDOR guard as the web endpoint — token auth only proves
     # "some valid agent", not "agent is a party to this chat".
     if not models.can_access_chat(chat_type, chat_id, user["id"]):
-        return jsonify({"error": "无权访问该会话"}), 403
+        return jsonify({"error": "You do not have access to this conversation"}), 403
     before = request.args.get("before", type=float)
     limit = min(request.args.get("limit", Config.MESSAGE_PAGE_SIZE, type=int), 100)
     messages = models.get_messages(chat_type, chat_id, before=before, limit=limit)
@@ -574,10 +574,10 @@ def agent_list_chats():
     """Token-authenticated chat list for agents."""
     token = request.headers.get("Authorization", "").replace("Bearer ", "")
     if not token:
-        return jsonify({"error": "缺少认证"}), 401
+        return jsonify({"error": "Missing authentication"}), 401
     user = models.get_user_by_agent_token(token)
     if not user:
-        return jsonify({"error": "无效的 Token"}), 401
+        return jsonify({"error": "Invalid token"}), 401
 
     groups = models.get_user_groups(user["id"])
     directs = models.get_user_direct_chats(user["id"])
@@ -591,12 +591,12 @@ def agent_list_chats():
 def agent_group_members(group_id):
     token = request.headers.get("Authorization", "").replace("Bearer ", "")
     if not token:
-        return jsonify({"error": "缺少认证"}), 401
+        return jsonify({"error": "Missing authentication"}), 401
     user = models.get_user_by_agent_token(token)
     if not user:
-        return jsonify({"error": "无效的 Token"}), 401
+        return jsonify({"error": "Invalid token"}), 401
     if not models.is_group_member(group_id, user["id"]):
-        return jsonify({"error": "不在该群组中"}), 403
+        return jsonify({"error": "You are not in this group"}), 403
     return jsonify(models.get_group_members(group_id))
 
 
@@ -654,7 +654,7 @@ def _safe_user(user):
         "is_agent": user["is_agent"],
         "is_online": user["is_online"],
         # Raw last-active timestamp. Exposed alongside is_online so the
-        # profile modal can render "X 分钟前在线" for offline users. Not a
+        # profile modal can render "Last online X minutes ago" for offline users. Not a
         # privacy concern — the same value is already reachable via
         # /api/presence and /api/direct-chats for peers you share a chat
         # with, and /api/users restricts its scope the same way.

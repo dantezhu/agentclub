@@ -63,7 +63,7 @@ def _inject_branding():
 def index():
     if "user_id" in session:
         return redirect(url_for("chat_page"))
-    # Decide registration UI on the server so the "注册" tab and the
+    # Decide registration UI on the server so the "Sign up" tab and the
     # form DOM never ship to the browser when the gate is closed —
     # eliminates the previous flash where the tab was visible until an
     # async ``/api/registration-status`` fetch hid it, and stops a
@@ -86,7 +86,7 @@ def chat_page():
 @app.route("/admin")
 def admin_page():
     # /admin checks login here but NOT role — admin.html still calls
-    # /api/me to surface a friendly "需要管理员权限" message rather than a
+    # /api/me to surface a friendly "Admin access required" message rather than a
     # raw 403, and the actual admin APIs are gated by @admin_required on
     # the server side. So this redirect just shaves the login flash for
     # the common case (admin reopens browser); non-admin users still hit
@@ -115,7 +115,7 @@ def _log_unhandled(e):
     if isinstance(e, HTTPException):
         return e
     log.exception("unhandled exception on %s %s", request.method, request.path)
-    return jsonify({"error": "服务器内部错误"}), 500
+    return jsonify({"error": "Internal server error"}), 500
 
 
 if __name__ == "__main__":

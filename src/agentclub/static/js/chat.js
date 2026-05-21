@@ -1,4 +1,5 @@
 /* ── State ── */
+const t = window.AgentClubI18n.t;
 let currentUser = null;
 let socket = null;
 let currentChat = null; // { type: 'group'|'direct', id, name }
@@ -10,6 +11,18 @@ let presencePollTimer = null;
 let presencePollIntervalMs = 30_000;
 let unreadCounts = {};
 let lastMessages = {};
+
+function memberCountLabel(count) {
+    return count === 1
+        ? t('chat.memberCountSingular')
+        : t('chat.memberCount', { count });
+}
+
+function memberCountMarkup(count) {
+    return count === 1
+        ? t('chat.memberCountSingular').replace('1', '<strong>1</strong>')
+        : t('chat.memberCount', { count: `<strong>${count}</strong>` });
+}
 
 // Original tab title (the Jinja-rendered `{{ site_name }}`). Captured
 // once at module load so `updateTabUnreadTitle` can restore it when the
@@ -182,7 +195,7 @@ async function refreshPresence() {
             const next = row ? !!row.is_online : false;
             const prev = !!d.peer_online;
             // Keep last_active_at in sync too — the chat header's
-            // offline subtitle ("X 分钟前在线") reads from it, so if we
+            // offline subtitle ("Last online X minutes ago") reads from it, so if we
             // only updated is_online the header relative-time would
             // drift until the next openChat().
             if (row) d.peer_last_active_at = row.last_active_at;
@@ -194,7 +207,7 @@ async function refreshPresence() {
         if (sidebarDirty) renderChatList();
         // Live-refresh the header subtitle when the currently open chat
         // is a direct chat — do it unconditionally (not only on change)
-        // so the relative "X 分钟前在线" text ticks forward every poll
+        // so the relative "Last online X minutes ago" text ticks forward every poll
         // cycle without waiting for a state flip.
         if (currentChat && currentChat.type === 'direct') {
             const open = chats.directs.find(c => c.id === currentChat.id);
@@ -250,7 +263,7 @@ function renderChatList() {
     const sortedDirects = sortBySectionLastMsg(chats.directs, 'direct');
 
     if (sortedGroups.length) {
-        html += '<div class="section-label">群组</div>';
+        html += `<div class="section-label">${t('chat.groups')}</div>`;
         for (const g of sortedGroups) {
             const isActive = currentChat && currentChat.type === 'group' && currentChat.id === g.id;
             const initial = g.name.charAt(0);
@@ -258,7 +271,7 @@ function renderChatList() {
             const gBadge = gUnread ? `<span class="badge">${gUnread > 99 ? '99+' : gUnread}</span>` : '';
             const gAvatarStyle = g.avatar ? '' : ` style="${AgentClubUI.avatarStyle(g.name)}"`;
             // No right-click / long-press menu on sidebar rows — destructive
-            // actions (退出群组 / 解散群组 / 群组设置) all live behind the
+            // actions (leave group / dissolve group / group settings) all live behind the
             // chat header's kebab (#chatActionsBtn, showChatActionsMenu) so
             // there is exactly one entry point that works on every device.
             html += `<div class="chat-item ${isActive ? 'active' : ''}" onclick="openChat('group','${g.id}','${escHtml(g.name)}')">
@@ -273,7 +286,7 @@ function renderChatList() {
     }
 
     if (sortedDirects.length) {
-        html += '<div class="section-label">私聊</div>';
+        html += `<div class="section-label">${t('chat.directMessages')}</div>`;
         for (const d of sortedDirects) {
             const isActive = currentChat && currentChat.type === 'direct' && currentChat.id === d.id;
             const initial = (d.peer_name || '?').charAt(0);
@@ -285,7 +298,7 @@ function renderChatList() {
             const agentTag = isAgent ? ' <span class="chat-tag agent">Agent</span>' : '';
             const dAvatarStyle = d.peer_avatar ? '' : ` style="${AgentClubUI.avatarStyle(d.peer_name || d.id)}"`;
             // See note above on groups: no right-click on sidebar rows.
-            // 删除会话 is reachable from the chat header kebab instead.
+            // Delete conversation is reachable from the chat header kebab instead.
             html += `<div class="chat-item ${isActive ? 'active' : ''}" onclick="openChat('direct','${d.id}','${escHtml(d.peer_name)}',${isAgent})">
                 <div class="${avatarClass}"${dAvatarStyle}>${d.peer_avatar ? `<img src="${escHtml(d.peer_avatar)}">` : initial}</div>
                 <div class="chat-item-info">
@@ -298,7 +311,7 @@ function renderChatList() {
     }
 
     if (!chats.groups.length && !chats.directs.length) {
-        html = '<div style="padding:20px;text-align:center;color:#999;font-size:13px;">还没有对话<br>点击右上角菜单创建</div>';
+        html = `<div style="padding:20px;text-align:center;color:#999;font-size:13px;">${t('chat.noChatsHtml')}</div>`;
     }
 
     el.innerHTML = html;
@@ -342,11 +355,11 @@ async function openChat(type, id, name, isAgent = false) {
             (await fetch(`/api/groups/${id}/members`)).json(),
             (await fetch(`/api/groups/${id}`)).json(),
         ]);
-        document.getElementById('chatSubtitle').textContent = `${members.length} 名成员`;
+        document.getElementById('chatSubtitle').textContent = memberCountLabel(members.length);
         document.getElementById('chatMembersBtn').classList.remove('hidden');
         document.getElementById('chatActionsBtn').classList.remove('hidden');
         // Stash creator so showChatActionsMenu() can decide between
-        // creator items (群组设置 + 解散群组) and member items (退出群组)
+        // creator items (group settings + dissolve group) and member items (leave group)
         // without re-fetching /api/groups on every menu open.
         currentChat.created_by = group.created_by;
 
@@ -356,11 +369,11 @@ async function openChat(type, id, name, isAgent = false) {
         avatarEl.classList.remove('hidden');
         // Header avatar opens the read-only group-info modal — symmetric
         // to clicking a peer's avatar in a direct chat. Editing still
-        // lives behind the members-panel "群组设置" button so we don't
+        // lives behind the members-panel "Group settings" button so we don't
         // overload this affordance with two different actions.
         avatarEl.classList.remove('editable');
         avatarEl.classList.add('clickable');
-        avatarEl.title = '查看群组信息';
+        avatarEl.title = t('chat.viewGroupInfo');
         avatarEl.onclick = () => openGroupInfoModal(id);
     } else {
         // Direct-chat header: surface peer avatar + presence. We read the
@@ -395,7 +408,7 @@ async function openChat(type, id, name, isAgent = false) {
         avatarEl.classList.remove('editable');
         if (peerId) {
             avatarEl.classList.add('clickable');
-            avatarEl.title = '查看个人信息';
+            avatarEl.title = t('chat.viewProfile');
             avatarEl.onclick = () => openProfileModal(peerId);
         } else {
             avatarEl.classList.remove('clickable');
@@ -500,7 +513,7 @@ function renderMessage(msg) {
         : ` style="${AgentClubUI.avatarStyle(msg.sender_name || msg.sender_id)}"`;
     const avatarOnclick = isSelf
         ? ''
-        : ` onclick="openProfileModal('${msg.sender_id}')" title="查看个人信息"`;
+        : ` onclick="openProfileModal('${msg.sender_id}')" title="${t('chat.viewProfile')}"`;
     const nameClass = isAgent ? 'msg-sender agent-name' : 'msg-sender';
     const time = formatTime(msg.created_at);
     const content = renderContent(msg);
@@ -557,8 +570,8 @@ function renderMarkdown(text) {
                 .replace(/&lt;/g, '<')
                 .replace(/&gt;/g, '>')
                 .replace(/&amp;/g, '&');
-            const labelName = (decoded && decoded.trim()) || (uid === 'all' ? '所有人' : uid);
-            const label = uid === 'all' ? '所有人' : labelName;
+            const labelName = (decoded && decoded.trim()) || (uid === 'all' ? t('chat.everyone') : uid);
+            const label = uid === 'all' ? t('chat.everyone') : labelName;
             const pill = `<span class="${cls}" data-user-id="${escHtml(uid)}">@${escHtml(label)}</span>`;
             // Use Unicode Private-Use-Area delimiters so marked's parser
             // doesn't touch them (NUL and ASCII punctuation both risk being
@@ -755,7 +768,7 @@ async function handleImageSelect(event) {
  * means drag-drop and the paperclip button share the exact same code
  * path, which is what the user actually expects.
  *
- * Errors are intentionally opaque ("上传失败") — the set of things that
+     * Errors are intentionally opaque ("Upload failed") — the set of things that
  * can fail here (too-big, wrong type, network, disk full on server)
  * isn't actionable per-file, and the toast spam we'd get from per-
  * item error messages when a multi-file drop fails is worse than the
@@ -771,7 +784,7 @@ async function uploadAndSendFile(file) {
     formData.append('file', file);
     try {
         const res = await fetch('/api/upload', { method: 'POST', body: formData });
-        if (!res.ok) { alert('上传失败'); return; }
+        if (!res.ok) { alert(t('common.uploadFailed')); return; }
         const data = await res.json();
         socket.emit('send_message', {
             chat_type: currentChat.type,
@@ -781,7 +794,7 @@ async function uploadAndSendFile(file) {
             file_url: data.url,
             file_name: data.filename,
         });
-    } catch { alert('上传失败'); }
+    } catch { alert(t('common.uploadFailed')); }
 }
 
 /* ── Lightbox ── */
@@ -1040,7 +1053,7 @@ async function maybeShowMentionPicker(input) {
 
     const members = await loadMentionMembers(currentChat.id);
     const items = [
-        { id: 'all', label: '所有人', is_agent: false, is_all: true },
+        { id: 'all', label: t('chat.everyone'), is_agent: false, is_all: true },
         ...members
             .filter((u) => u.id !== currentUser.id)
             .map((u) => ({ id: u.id, label: u.display_name, is_agent: !!u.is_agent, is_all: false })),
@@ -1235,7 +1248,7 @@ function hasDraggedFiles(e) {
 /* ── Typing indicator ── */
 function showTyping(name) {
     const el = document.getElementById('typingIndicator');
-    el.textContent = `${name} 正在输入...`;
+    el.textContent = t('chat.typing', { name });
     el.classList.remove('hidden');
     clearTimeout(typingTimeout);
     typingTimeout = setTimeout(() => el.classList.add('hidden'), 3000);
@@ -1307,7 +1320,7 @@ function handleOverlayClick() {
 /* ── Members panel ──
  * _membersById caches the latest fetched member list keyed by user id
  * so the kebab handler (showMemberMenu) can look up display_name and
- * is_agent for the 发起私聊 action without inflating the onclick
+ * is_agent for the start-direct-chat action without inflating the onclick
  * string with escape-prone fields. Refreshed on every render. */
 let _membersById = {};
 async function renderMembersPanel() {
@@ -1322,22 +1335,22 @@ async function renderMembersPanel() {
     _membersById = Object.fromEntries(members.map(m => [m.id, m]));
     const canManage = currentUser.role === 'admin' || group.created_by === currentUser.id;
 
-    // Keep the chat header's "X 名成员" in sync. The subtitle was only
+    // Keep the chat header's "X members" in sync. The subtitle was only
     // written once in selectChat(); without this line, add/remove member
     // would leave stale counts in the header until the user re-selects
     // the group.
-    document.getElementById('chatSubtitle').textContent = `${members.length} 名成员`;
+    document.getElementById('chatSubtitle').textContent = memberCountLabel(members.length);
 
-    // Members-panel header only carries "添加成员" — it's the one action
-    // that's about *the member list itself*. 群组设置 / 退出群组 / 解散
-    // 群组 are about *the chat*, so they live in the chat header's kebab
+    // Members-panel header only carries "Add member" — it's the one action
+    // that's about *the member list itself*. Group settings / leave group /
+    // dissolve group are about *the chat*, so they live in the chat header's kebab
     // (#chatActionsBtn) instead. Splitting by responsibility keeps each
     // surface uncluttered and gives every device a single tappable entry
     // point (we no longer bind context menus on sidebar rows).
     const headerActions = document.getElementById('membersHeaderActions');
     if (canManage) {
         headerActions.innerHTML = `
-            <button class="icon-action" onclick="showAddMember('${currentChat.id}')" title="添加成员" aria-label="添加成员">${AgentClubUI.iconHTML('user-plus')}</button>
+            <button class="icon-action" onclick="showAddMember('${currentChat.id}')" title="${t('chat.addMember')}" aria-label="${t('chat.addMember')}">${AgentClubUI.iconHTML('user-plus')}</button>
         `;
     } else {
         headerActions.innerHTML = '';
@@ -1354,7 +1367,7 @@ async function renderMembersPanel() {
         // need to know whether a specific peer is online right now, open
         // a direct chat with them (the sidebar does poll).
         let tag = '';
-        if (m.role === 'admin') tag = '<span class="member-tag admin">管理员</span>';
+        if (m.role === 'admin') tag = `<span class="member-tag admin">${t('common.admin')}</span>`;
         else if (m.is_agent) tag = '<span class="member-tag agent">Agent</span>';
 
         // Row actions live behind a kebab (⋯) instead of a bare X — the
@@ -1363,15 +1376,15 @@ async function renderMembersPanel() {
         // (mute, promote, …) without further visual clutter. The actual
         // dropdown is the existing #contextMenu element, populated on
         // click via showMemberMenu(). Every row gets a kebab — the
-        // menu's contents (查看信息 always; 移除成员 only when
+        // menu's contents (view info always; remove member only when
         // canManage and not the creator) are decided at click time so
         // we don't need separate code paths here.
         const canRemove = canManage && m.id !== group.created_by;
-        const actionBtn = `<button class="icon-btn member-kebab" onclick="showMemberMenu(event,'${currentChat.id}','${m.id}',${canRemove})" title="更多" aria-label="更多操作">${AgentClubUI.iconHTML('more-horizontal')}</button>`;
+        const actionBtn = `<button class="icon-btn member-kebab" onclick="showMemberMenu(event,'${currentChat.id}','${m.id}',${canRemove})" title="${t('common.moreActions')}" aria-label="${t('common.moreActions')}">${AgentClubUI.iconHTML('more-horizontal')}</button>`;
 
         const memberAvatarStyle = ` style="${AgentClubUI.avatarStyle(m.display_name || m.id)}"`;
         html += `<div class="member-item">
-            <div class="${avatarClass}"${memberAvatarStyle} onclick="openProfileModal('${m.id}')" title="查看个人信息">${initial}</div>
+            <div class="${avatarClass}"${memberAvatarStyle} onclick="openProfileModal('${m.id}')" title="${t('chat.viewProfile')}">${initial}</div>
             <span class="member-name">${escHtml(m.display_name)}</span>
             ${tag}${actionBtn}
         </div>`;
@@ -1385,11 +1398,11 @@ async function renderMembersPanel() {
  * handlers.
  *
  * Items (rendered in this order, each gated):
- *   • 查看信息  → opens the read-only profile modal (always)
- *   • 发起私聊  → 1:1 chat with this member (hidden when row is self)
- *   • 移除成员  → destructive (only when canRemove)
+ *   • View info          → opens the read-only profile modal (always)
+ *   • Start direct chat  → 1:1 chat with this member (hidden when row is self)
+ *   • Remove member      → destructive (only when canRemove)
  *
- * Display name / is_agent for 发起私聊 come from _membersById, which
+ * Display name / is_agent for Start direct chat come from _membersById, which
  * renderMembersPanel populates — avoids escaping member names through
  * the onclick string. */
 function showMemberMenu(event, groupId, userId, canRemove) {
@@ -1397,12 +1410,12 @@ function showMemberMenu(event, groupId, userId, canRemove) {
     event.stopPropagation();
     const menu = document.getElementById('contextMenu');
     const isSelf = userId === currentUser.id;
-    let html = `<button onclick="closeContextMenu();openProfileModal('${userId}')">查看信息</button>`;
+    let html = `<button onclick="closeContextMenu();openProfileModal('${userId}')">${t('chat.viewInfo')}</button>`;
     if (!isSelf) {
-        html += `<button onclick="startDirectChatFromMember('${userId}')">发起私聊</button>`;
+        html += `<button onclick="startDirectChatFromMember('${userId}')">${t('chat.startDirectChat')}</button>`;
     }
     if (canRemove) {
-        html += `<button class="danger" onclick="removeMember('${groupId}','${userId}')">移除成员</button>`;
+        html += `<button class="danger" onclick="removeMember('${groupId}','${userId}')">${t('chat.removeMember')}</button>`;
     }
     menu.innerHTML = html;
     // Position right-aligned below the kebab so the dropdown opens
@@ -1420,13 +1433,13 @@ function closeContextMenu() {
     document.getElementById('contextMenu').classList.add('hidden');
 }
 
-/* Kebab → "发起私聊" handler. Resolves display_name / is_agent from
+/* Kebab → "Start direct chat" handler. Resolves display_name / is_agent from
  * the cached members map so we can pre-populate the chat header
  * before /api/direct-chats responds; falls back to a placeholder if
  * the member somehow isn't in cache (defensive — shouldn't happen
  * because the kebab is rendered from that same list). If the user is
  * already in a 1:1 with this peer we just close the menu — clicking
- * 发起私聊 on yourself is hidden at render time. */
+ * Start direct chat on yourself is hidden at render time. */
 function startDirectChatFromMember(userId) {
     closeContextMenu();
     const m = _membersById[userId];
@@ -1450,14 +1463,14 @@ async function toggleMembers() {
 
 async function removeMember(groupId, userId) {
     document.getElementById('contextMenu').classList.add('hidden');
-    if (!confirm('确定要移除该成员吗？')) return;
+    if (!confirm(t('chat.removeMemberConfirm'))) return;
     const res = await fetch(`/api/groups/${groupId}/members/${userId}`, { method: 'DELETE' });
     if (res.ok) {
         invalidateMentionMembers();
         await renderMembersPanel();
     } else {
         const data = await res.json();
-        alert(data.error || '移除失败');
+        alert(data.error || t('chat.removeFailed'));
     }
 }
 
@@ -1473,10 +1486,10 @@ async function showAddMember(groupId) {
         const tag = u.is_agent ? ' <span class="member-tag agent">Agent</span>' : '';
         html += `<div class="add-user-item" data-user-id="${u.id}">
             <span>${escHtml(u.display_name)}${tag}</span>
-            <button class="icon-action" onclick="addMember('${groupId}','${u.id}',this)" title="添加到群组" aria-label="添加到群组">${AgentClubUI.iconHTML('user-plus')}</button>
+            <button class="icon-action" onclick="addMember('${groupId}','${u.id}',this)" title="${t('chat.addToGroup')}" aria-label="${t('chat.addToGroup')}">${AgentClubUI.iconHTML('user-plus')}</button>
         </div>`;
     }
-    document.getElementById('addMemberUserList').innerHTML = html || '<div style="color:#999;font-size:13px;padding:12px">所有用户都已在群组中</div>';
+    document.getElementById('addMemberUserList').innerHTML = html || `<div style="color:#999;font-size:13px;padding:12px">${t('chat.allUsersInGroup')}</div>`;
     document.getElementById('addMemberModal').classList.remove('hidden');
 }
 
@@ -1498,16 +1511,16 @@ async function addMember(groupId, userId, btn) {
             btn.disabled = false;
             btn.style.opacity = '';
             btn.innerHTML = originalHTML;
-            alert(data.error || '添加失败');
+            alert(data.error || t('chat.addFailed'));
             return;
         }
 
-        // Swap the button for a subtle "已添加" marker and strike the row.
+        // Swap the button for a subtle "Added" marker and strike the row.
         const row = btn.closest('.add-user-item');
         if (row) {
             row.style.opacity = '0.5';
             btn.replaceWith(Object.assign(document.createElement('span'), {
-                textContent: '已添加',
+                textContent: t('common.added'),
                 style: 'color:#52c41a;font-size:13px',
             }));
         }
@@ -1518,8 +1531,9 @@ async function addMember(groupId, userId, btn) {
         await Promise.all([renderMembersPanel(), loadChats()]);
     } catch (e) {
         btn.disabled = false;
-        btn.textContent = originalText;
-        alert('添加失败：' + e);
+        btn.style.opacity = '';
+        btn.innerHTML = originalHTML;
+        alert(t('chat.addFailed') + ': ' + e);
     }
 }
 
@@ -1543,7 +1557,7 @@ async function uploadAvatar(event) {
     const formData = new FormData();
     formData.append('file', file);
     const res = await fetch('/api/upload', { method: 'POST', body: formData });
-    if (!res.ok) { alert('上传失败'); return; }
+    if (!res.ok) { alert(t('common.uploadFailed')); return; }
     const data = await res.json();
     currentUser.avatar = data.url;
     const el = document.getElementById('profileAvatar');
@@ -1563,7 +1577,7 @@ async function saveProfile() {
         closeModal('profileModal');
         loadChats();
     } else {
-        alert('保存失败');
+        alert(t('common.saveFailed'));
     }
 }
 
@@ -1573,9 +1587,9 @@ async function saveProfile() {
  * / long-press menus on sidebar rows. Items are decided here at click
  * time based on currentChat:
  *
- *   direct                         → 删除会话
- *   group, regular member          → 退出群组
- *   group, creator (or admin)      → 群组设置 + 解散群组
+ *   direct                         → delete conversation
+ *   group, regular member          → leave group
+ *   group, creator (or admin)      → group settings + dissolve group
  *
  * Reuses the same #contextMenu element used by the member kebab
  * dropdowns, so a single document-click handler dismisses both. */
@@ -1586,17 +1600,17 @@ function showChatActionsMenu(event) {
     const menu = document.getElementById('contextMenu');
     let html = '';
     if (currentChat.type === 'direct') {
-        html = `<button class="danger" onclick="deleteDirectChat('${currentChat.id}')">删除会话</button>`;
+        html = `<button class="danger" onclick="deleteDirectChat('${currentChat.id}')">${t('chat.deleteChat')}</button>`;
     } else if (currentChat.type === 'group') {
         const isCreator = currentChat.created_by === currentUser.id;
         const canManage = isCreator || currentUser.role === 'admin';
         if (canManage) {
-            html += `<button onclick="closeContextMenu();openGroupSettings('${currentChat.id}')">群组设置</button>`;
+            html += `<button onclick="closeContextMenu();openGroupSettings('${currentChat.id}')">${t('chat.groupSettings')}</button>`;
         }
         if (isCreator) {
-            html += `<button class="danger" onclick="dissolveGroup('${currentChat.id}')">解散群组</button>`;
+            html += `<button class="danger" onclick="dissolveGroup('${currentChat.id}')">${t('chat.dissolveGroup')}</button>`;
         } else {
-            html += `<button class="danger" onclick="leaveGroup('${currentChat.id}')">退出群组</button>`;
+            html += `<button class="danger" onclick="leaveGroup('${currentChat.id}')">${t('chat.leaveGroup')}</button>`;
         }
     }
     menu.innerHTML = html;
@@ -1621,7 +1635,7 @@ document.addEventListener('click', () => {
 
 async function dissolveGroup(groupId) {
     document.getElementById('contextMenu').classList.add('hidden');
-    if (!confirm('确定要解散该群组吗？所有消息将被删除。')) return;
+    if (!confirm(t('chat.dissolveGroupConfirm'))) return;
     const res = await fetch(`/api/groups/${groupId}`, { method: 'DELETE' });
     if (res.ok) {
         if (currentChat && currentChat.type === 'group' && currentChat.id === groupId) {
@@ -1632,13 +1646,13 @@ async function dissolveGroup(groupId) {
         loadChats();
     } else {
         const data = await res.json();
-        alert(data.error || '解散失败');
+        alert(data.error || t('chat.dissolveFailed'));
     }
 }
 
 async function leaveGroup(groupId) {
     document.getElementById('contextMenu').classList.add('hidden');
-    if (!confirm('确定要退出该群组吗？')) return;
+    if (!confirm(t('chat.leaveGroupConfirm'))) return;
     const res = await fetch(`/api/groups/${groupId}/leave`, { method: 'POST' });
     if (res.ok) {
         if (currentChat && currentChat.type === 'group' && currentChat.id === groupId) {
@@ -1649,13 +1663,13 @@ async function leaveGroup(groupId) {
         loadChats();
     } else {
         const data = await res.json();
-        alert(data.error || '退出失败');
+        alert(data.error || t('chat.leaveFailed'));
     }
 }
 
 async function deleteDirectChat(chatId) {
     document.getElementById('contextMenu').classList.add('hidden');
-    if (!confirm('确定要删除该会话吗？聊天记录将被清除。')) return;
+    if (!confirm(t('chat.deleteChatConfirm'))) return;
     const res = await fetch(`/api/direct-chats/${chatId}`, { method: 'DELETE' });
     if (res.ok) {
         if (currentChat && currentChat.type === 'direct' && currentChat.id === chatId) {
@@ -1665,7 +1679,7 @@ async function deleteDirectChat(chatId) {
         }
         loadChats();
     } else {
-        alert('删除失败');
+        alert(t('common.deleteFailed'));
     }
 }
 
@@ -1695,7 +1709,7 @@ function renderGroupSettingsAvatar() {
 
 async function openGroupSettings(groupId) {
     const res = await fetch(`/api/groups/${groupId}`);
-    if (!res.ok) { alert('加载群组信息失败'); return; }
+    if (!res.ok) { alert(t('chat.loadGroupFailed')); return; }
     const group = await res.json();
     groupSettingsState = {
         groupId,
@@ -1703,8 +1717,8 @@ async function openGroupSettings(groupId) {
         avatar: group.avatar || '',
         description: group.description || '',
     };
-    document.getElementById('groupSettingsTitle').textContent = '群组设置';
-    document.getElementById('groupSettingsSaveBtn').textContent = '保存';
+    document.getElementById('groupSettingsTitle').textContent = t('chat.groupSettings');
+    document.getElementById('groupSettingsSaveBtn').textContent = t('common.save');
     document.getElementById('groupSettingsName').value = group.name || '';
     document.getElementById('groupSettingsDescription').value = group.description || '';
     renderGroupSettingsAvatar();
@@ -1725,7 +1739,7 @@ async function uploadGroupSettingsAvatar(event) {
     const res = await fetch('/api/upload', { method: 'POST', body: formData });
     if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        alert(err.error || '上传失败');
+        alert(err.error || t('common.uploadFailed'));
         return;
     }
     const data = await res.json();
@@ -1736,13 +1750,13 @@ async function uploadGroupSettingsAvatar(event) {
 async function saveGroupSettings() {
     if (!groupSettingsState) return;
     const name = document.getElementById('groupSettingsName').value.trim();
-    if (!name) { alert('群组名称不能为空'); return; }
+    if (!name) { alert(t('chat.groupNameRequired')); return; }
     const description = document.getElementById('groupSettingsDescription').value.trim();
     const isCreate = !groupSettingsState.groupId;
     const btn = document.getElementById('groupSettingsSaveBtn');
     btn.disabled = true;
     const original = btn.textContent;
-    btn.textContent = isCreate ? '创建中…' : '保存中…';
+    btn.textContent = isCreate ? t('common.creating') : t('common.saving');
     try {
         const url = isCreate
             ? '/api/groups'
@@ -1759,7 +1773,7 @@ async function saveGroupSettings() {
         });
         if (!res.ok) {
             const err = await res.json().catch(() => ({}));
-            alert(err.error || (isCreate ? '创建失败' : '保存失败'));
+            alert(err.error || (isCreate ? t('chat.createFailed') : t('common.saveFailed')));
             return;
         }
         const group = await res.json();
@@ -1806,8 +1820,8 @@ async function showCreateGroupModal() {
     // this as a POST (create) instead of PUT (edit). Same UX shape as
     // editing, just different endpoint.
     groupSettingsState = { groupId: null, name: '', avatar: '', description: '' };
-    document.getElementById('groupSettingsTitle').textContent = '创建群组';
-    document.getElementById('groupSettingsSaveBtn').textContent = '创建';
+    document.getElementById('groupSettingsTitle').textContent = t('chat.createGroup');
+    document.getElementById('groupSettingsSaveBtn').textContent = t('common.create');
     document.getElementById('groupSettingsName').value = '';
     document.getElementById('groupSettingsDescription').value = '';
     renderGroupSettingsAvatar();
@@ -1828,10 +1842,10 @@ async function showNewChatModal() {
         const tag = u.is_agent ? ' <span class="member-tag agent">Agent</span>' : '';
         html += `<div class="add-user-item">
             <span>${escHtml(u.display_name)}${tag}</span>
-            <button class="icon-action" onclick="startDirectChat('${u.id}','${escHtml(u.display_name)}',${!!u.is_agent})" title="发起私聊" aria-label="发起私聊">${AgentClubUI.iconHTML('message-square')}</button>
+            <button class="icon-action" onclick="startDirectChat('${u.id}','${escHtml(u.display_name)}',${!!u.is_agent})" title="${t('chat.startDirectChat')}" aria-label="${t('chat.startDirectChat')}">${AgentClubUI.iconHTML('message-square')}</button>
         </div>`;
     }
-    document.getElementById('newChatUserList').innerHTML = html || '<div style="color:#999;font-size:13px;padding:12px">暂无其他用户</div>';
+    document.getElementById('newChatUserList').innerHTML = html || `<div style="color:#999;font-size:13px;padding:12px">${t('chat.noOtherUsers')}</div>`;
     document.getElementById('newChatModal').classList.remove('hidden');
 }
 
@@ -1842,7 +1856,7 @@ async function startDirectChat(userId, userName, isAgent = false) {
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({user_id: userId}),
     });
-    if (!res.ok) { alert('创建对话失败'); return; }
+    if (!res.ok) { alert(t('chat.createChatFailed')); return; }
     const chat = await res.json();
     await loadChats();
     openChat('direct', chat.id, userName, isAgent);
@@ -1852,10 +1866,10 @@ async function startDirectChat(userId, userName, isAgent = false) {
  * Opened from anywhere a peer's avatar is shown:
  *   • chat-header avatar in direct chats          (bindHeaderAvatarProfile)
  *   • message author avatar in any chat           (renderMessage onclick)
- *   • group members panel kebab → 查看信息       (showMemberMenu)
- * The "发起私聊" button is hidden when the viewer is looking at their
+ *   • group members panel kebab → View info       (showMemberMenu)
+ * The "Start direct chat" button is hidden when the viewer is looking at their
  * own profile (you can't 1:1-chat yourself). For agents the button is
- * still labelled 发起私聊 — same UX as the sidebar "+" picker. */
+ * still labelled Start direct chat — same UX as the sidebar "+" picker. */
 let _profileViewState = null; // { id, display_name, is_agent }
 
 async function openProfileModal(userId) {
@@ -1863,10 +1877,10 @@ async function openProfileModal(userId) {
     let user;
     try {
         const res = await fetch(`/api/users/${userId}`);
-        if (!res.ok) { alert('加载用户信息失败'); return; }
+        if (!res.ok) { alert(t('chat.loadUserFailed')); return; }
         user = await res.json();
     } catch (e) {
-        alert('加载用户信息失败');
+        alert(t('chat.loadUserFailed'));
         return;
     }
     _profileViewState = user;
@@ -1891,13 +1905,13 @@ async function openProfileModal(userId) {
     // first, then status. Empty container hides itself via CSS.
     const tagsEl = document.getElementById('profileViewTags');
     let tagsHtml = '';
-    if (user.role === 'admin') tagsHtml += '<span class="member-tag admin">管理员</span>';
+    if (user.role === 'admin') tagsHtml += `<span class="member-tag admin">${t('common.admin')}</span>`;
     if (user.is_agent) tagsHtml += '<span class="member-tag agent">Agent</span>';
     if (user.is_online) {
-        tagsHtml += '<span class="online-pill">在线</span>';
+        tagsHtml += `<span class="online-pill">${t('chat.online')}</span>`;
     } else {
         // Offline: reuse the same cascading relative-time label used in
-        // the chat header subtitle (刚刚在线 / X分钟前在线 / 最近在线：…).
+        // the chat header subtitle (online just now / last online X minutes ago / Last online: ...).
         // Presented as a neutral "last-seen" pill so it sits naturally
         // next to the admin/agent tags.
         const lastSeen = formatLastActive(user.last_active_at);
@@ -1932,10 +1946,10 @@ async function openGroupInfoModal(groupId) {
     let group;
     try {
         const res = await fetch(`/api/groups/${groupId}`);
-        if (!res.ok) { alert('加载群组信息失败'); return; }
+        if (!res.ok) { alert(t('chat.loadGroupFailed')); return; }
         group = await res.json();
     } catch (e) {
-        alert('加载群组信息失败');
+        alert(t('chat.loadGroupFailed'));
         return;
     }
     const name = group.name || '';
@@ -1949,11 +1963,11 @@ async function openGroupInfoModal(groupId) {
     }
     document.getElementById('groupInfoName').textContent = name;
 
-    // Single "群组" tag — keeps visual parity with the profile card,
+    // Single "Group" tag — keeps visual parity with the profile card,
     // which has role/agent/online tags. We deliberately don't surface
     // member_count here; it has its own meta row below.
     document.getElementById('groupInfoTags').innerHTML =
-        '<span class="member-tag agent">群组</span>';
+        `<span class="member-tag agent">${t('chat.group')}</span>`;
 
     document.getElementById('groupInfoDesc').textContent = group.description || '';
 
@@ -1964,13 +1978,13 @@ async function openGroupInfoModal(groupId) {
     const metaEl = document.getElementById('groupInfoMeta');
     const items = [];
     if (group.created_by_name) {
-        items.push(`创建者 <strong>${escHtml(group.created_by_name)}</strong>`);
+        items.push(t('chat.createdBy', { name: escHtml(group.created_by_name) }));
     }
     if (typeof group.member_count === 'number') {
-        items.push(`<strong>${group.member_count}</strong> 名成员`);
+        items.push(memberCountMarkup(group.member_count));
     }
     if (group.created_at) {
-        items.push(`创建于 ${escHtml(formatDateTime(group.created_at))}`);
+        items.push(t('chat.createdOn', { date: escHtml(formatDateTime(group.created_at)) }));
     }
     metaEl.innerHTML = items
         .map(s => `<span>${s}</span>`)
@@ -2072,32 +2086,39 @@ function formatDateTime(ts) {
 
 /* Format a "last active" timestamp for the offline-state subtitle.
  * Rules (flat, relative up to a week then switches to an absolute
- * prefix so the reader doesn't need to do "what day is 20 天前?" math):
+ * prefix so the reader doesn't need to do "what day was 20 days ago?" math):
  *
- *   < 1 min     → "刚刚在线"
- *   1–59 min    → "X分钟前在线"
- *   1–23 h      → "X小时前在线"
- *   1–6 days    → "X天前在线"
- *   ≥ 7 days    → "最近在线：YYYY年M月D日 HH:mm"
+ *   < 1 min     → "Online just now"
+ *   1–59 min    → "Last online X minutes ago"
+ *   1–23 h      → "Last online X hours ago"
+ *   1–6 days    → "Last online X days ago"
+ *   ≥ 7 days    → "Last online: YYYY-MM-DD HH:mm"
  *
- * Returns "离线" when ts is missing/zero (agent that has never
+ * Returns "Offline" when ts is missing/zero (agent that has never
  * connected, or a user whose last_active_at was never recorded).
  *
  * Intentionally separate from formatTime() — that one is for message
  * timestamps (chronological scanning); this one is for presence (quick
  * social read of "how recently was this person around?"). */
 function formatLastActive(ts) {
-    if (!ts) return '离线';
+    if (!ts) return t('chat.offline');
     const now = Math.floor(Date.now() / 1000);
     const diffSec = Math.max(0, now - ts);
-    if (diffSec < 60) return '刚刚在线';
-    if (diffSec < 3600) return `${Math.floor(diffSec / 60)}分钟前在线`;
-    if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}小时前在线`;
-    if (diffSec < 7 * 86400) return `${Math.floor(diffSec / 86400)}天前在线`;
+    if (diffSec < 60) return t('chat.wasOnlineNow');
+    if (diffSec < 3600) {
+        const minutes = Math.floor(diffSec / 60);
+        return minutes === 1 ? t('chat.wasOnlineMinute') : t('chat.wasOnlineMinutes', { count: minutes });
+    }
+    if (diffSec < 86400) {
+        const hours = Math.floor(diffSec / 3600);
+        return hours === 1 ? t('chat.wasOnlineHour') : t('chat.wasOnlineHours', { count: hours });
+    }
+    if (diffSec < 7 * 86400) {
+        const days = Math.floor(diffSec / 86400);
+        return days === 1 ? t('chat.wasOnlineDay') : t('chat.wasOnlineDays', { count: days });
+    }
     const d = new Date(ts * 1000);
-    const pad = n => String(n).padStart(2, '0');
-    return `最近在线：${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日 `
-         + `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    return t('chat.wasOnlineDate', { date: formatDateTime(ts) });
 }
 
 /* HTML fragment for the direct-chat header subtitle. Online → green
@@ -2109,13 +2130,18 @@ function formatLastActive(ts) {
  * NOT used in the sidebar — that view keeps its compact "dot before
  * name" convention and has no room for prose. */
 function renderPresenceSubtitle(isOnline, lastActiveAt) {
-    if (isOnline) return '<span class="online-pill">在线</span>';
+    if (isOnline) return `<span class="online-pill">${t('chat.online')}</span>`;
     return escHtml(formatLastActive(lastActiveAt));
 }
 
 function previewText(msg) {
     if (!msg) return '';
-    const typeMap = { image: '[图片]', audio: '[语音]', video: '[视频]', file: '[文件]' };
+    const typeMap = {
+        image: t('chat.fileImage'),
+        audio: t('chat.fileAudio'),
+        video: t('chat.fileVideo'),
+        file: t('chat.fileFile'),
+    };
     let text = typeMap[msg.content_type];
     if (!text) {
         // Collapse `<at user_id="uid">name</at>` → `@name` for the sidebar
@@ -2127,7 +2153,7 @@ function previewText(msg) {
                     .replace(/&lt;/g, '<')
                     .replace(/&gt;/g, '>')
                     .replace(/&amp;/g, '&');
-                return `@${decoded || '所有人'}`;
+                return `@${decoded || t('chat.everyone')}`;
             },
         );
         text = raw.replace(/\n/g, ' ').slice(0, 30);
