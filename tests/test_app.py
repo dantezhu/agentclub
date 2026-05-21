@@ -123,7 +123,7 @@ class TestAuth:
         assert res.get_json() == {"allow_registration": True}
 
     def test_login_page_omits_register_when_disabled(self, client, monkeypatch):
-        # The "注册" tab button and the registerForm DOM must both be
+        # The "Sign up" tab button and the registerForm DOM must both be
         # absent server-side — guarantees no flash + no devtools-bypass
         # when ALLOW_REGISTRATION is off.
         monkeypatch.setattr(config.Config, "ALLOW_REGISTRATION", False)
