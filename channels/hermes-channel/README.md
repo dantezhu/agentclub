@@ -19,6 +19,8 @@ pip install hermes-channel-agentclub
 hermes plugins enable agentclub
 ```
 
+If Hermes runs in a venv, install and enable this plugin in the same venv.
+
 From this repository:
 
 ```bash
