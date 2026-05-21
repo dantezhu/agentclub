@@ -19,6 +19,8 @@ from nanobot.bus.events import OutboundMessage
 from nanobot_channel_agentclub.channel import (
     AgentClubChannel,
     AgentClubConfig,
+    _INITIAL_RETRY_DELAY,
+    _MAX_RETRY_DELAY,
     _build_roster_hint,
     _extract_mention_user_ids,
     _has_mention_tag,
@@ -897,8 +899,8 @@ class TestRetryLifecycle:
                 {
                     "reconnection": True,
                     "reconnection_attempts": 0,
-                    "reconnection_delay": 1,
-                    "reconnection_delay_max": 30,
+                    "reconnection_delay": _INITIAL_RETRY_DELAY,
+                    "reconnection_delay_max": _MAX_RETRY_DELAY,
                 }
             ]
         finally:

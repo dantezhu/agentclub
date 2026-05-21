@@ -284,8 +284,8 @@ class AgentClubChannel(BaseChannel):
                 self._sio = socketio.AsyncClient(
                     reconnection=True,
                     reconnection_attempts=0,  # infinite after first connect
-                    reconnection_delay=1,
-                    reconnection_delay_max=30,
+                    reconnection_delay=_INITIAL_RETRY_DELAY,
+                    reconnection_delay_max=_MAX_RETRY_DELAY,
                 )
                 self._register_sio_handlers(self._sio)
 

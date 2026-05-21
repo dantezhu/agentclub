@@ -34,6 +34,8 @@ _DEDUP_CAPACITY = 1024
 _GROUP_PREFIX = "gc_"
 _DIRECT_PREFIX = "dc_"
 _INITIAL_HEARTBEAT_SECONDS = 30.0
+_INITIAL_RETRY_DELAY = 1.0
+_MAX_RETRY_DELAY = 30.0
 _AT_TAG_RE = re.compile(r'<at user_id="([^"]+)">([^<]*)</at>')
 _ALLOW_KIND_TOKENS = {"*", "human", "agent"}
 _TRUE_VALUES = {"1", "true", "yes", "on"}
@@ -356,8 +358,8 @@ class AgentClubAdapter(BasePlatformAdapter):
         self._sio = socketio.AsyncClient(
             reconnection=True,
             reconnection_attempts=0,
-            reconnection_delay=1,
-            reconnection_delay_max=30,
+            reconnection_delay=_INITIAL_RETRY_DELAY,
+            reconnection_delay_max=_MAX_RETRY_DELAY,
         )
         self._register_sio_handlers(self._sio)
         self._auth_future = asyncio.get_running_loop().create_future()
