@@ -115,6 +115,7 @@ from hermes_channel_agentclub.adapter import (  # noqa: E402
     _normalize_upload_content_type,
     register,
 )
+import hermes_channel_agentclub as pkg  # noqa: E402
 
 
 def _config(**extra):
@@ -171,6 +172,10 @@ def run(coro):
 
 
 class TestHelpers:
+    def test_package_exposes_version(self):
+        assert isinstance(pkg.__version__, str)
+        assert pkg.__version__
+
     def test_decode_chat_id(self):
         assert _decode_chat_id("gc_room") == ("group", "gc_room")
         assert _decode_chat_id("dc_room") == ("direct", "dc_room")
