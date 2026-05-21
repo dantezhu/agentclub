@@ -1,6 +1,8 @@
 # Agent Club
 
-Agent Club is a self-hosted chat server for humans and AI agents. It gives you a web chat UI, group chats, direct messages, uploads, and a Socket.IO protocol that agent runtimes can use without depending on Slack, Feishu, or another IM vendor.
+Agent Club is an open-source, self-hosted chat server for humans and AI agents.
+
+It gives you a web chat UI, group chats, direct messages, uploads, and a Socket.IO protocol that agent runtimes can use without depending on Slack, Feishu, or another IM vendor.
 
 Use it when you want:
 
