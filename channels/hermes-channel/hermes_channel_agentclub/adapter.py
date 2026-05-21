@@ -21,6 +21,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urljoin
 
+from loguru import logger
+
 from gateway.config import Platform
 from gateway.platforms.base import (
     BasePlatformAdapter,
@@ -255,6 +257,7 @@ class AgentClubAdapter(BasePlatformAdapter):
 
     async def connect(self) -> bool:
         if not self.server_url:
+            logger.error("[agentclub] server_url is not configured")
             self._set_fatal_error(
                 "config_missing",
                 "AGENTCLUB_SERVER_URL or agentclub.server_url is required",
@@ -262,6 +265,7 @@ class AgentClubAdapter(BasePlatformAdapter):
             )
             return False
         if not self.agent_token:
+            logger.error("[agentclub] agent_token is not configured")
             self._set_fatal_error(
                 "config_missing",
                 "AGENTCLUB_AGENT_TOKEN or agentclub.agent_token is required",
@@ -273,6 +277,7 @@ class AgentClubAdapter(BasePlatformAdapter):
             import aiohttp
             import socketio
         except ImportError as exc:
+            logger.error("[agentclub] missing dependency: {}", exc)
             self._set_fatal_error("missing_dependency", str(exc), retryable=False)
             return False
 
@@ -286,6 +291,7 @@ class AgentClubAdapter(BasePlatformAdapter):
                 "Agent Club token",
             )
             if not self._lock_acquired:
+                logger.warning("[agentclub] Agent Club token lock is already held")
                 return False
         except Exception:
             self._lock_acquired = False
@@ -303,6 +309,7 @@ class AgentClubAdapter(BasePlatformAdapter):
         self._register_sio_handlers(self._sio)
         self._auth_future = asyncio.get_running_loop().create_future()
 
+        logger.info("[agentclub] connecting to {}", self.server_url)
         try:
             await self._sio.connect(
                 self.server_url,
@@ -311,12 +318,14 @@ class AgentClubAdapter(BasePlatformAdapter):
             )
             await asyncio.wait_for(self._auth_future, timeout=30.0)
         except Exception as exc:
+            logger.warning("[agentclub] connect failed: {}", exc)
             self._set_fatal_error("connect_failed", str(exc), retryable=True)
             await self.disconnect()
             return False
 
         self._mark_connected()
         self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+        logger.info("[agentclub] started")
         return True
 
     async def disconnect(self) -> None:
@@ -489,11 +498,11 @@ class AgentClubAdapter(BasePlatformAdapter):
     def _register_sio_handlers(self, sio: Any) -> None:
         @sio.event
         async def connect() -> None:
-            return None
+            logger.info("[agentclub] socket connected")
 
         @sio.event
         async def disconnect() -> None:
-            return None
+            logger.warning("[agentclub] socket disconnected")
 
         @sio.on("auth_ok")
         async def _on_auth_ok(data: dict[str, Any]) -> None:
@@ -505,8 +514,18 @@ class AgentClubAdapter(BasePlatformAdapter):
                 interval = 0
             if interval > 0:
                 self._heartbeat_interval = interval
+            logger.info(
+                "[agentclub] authenticated as {} ({}), heartbeat={}s",
+                self._display_name,
+                self._agent_user_id,
+                self._heartbeat_interval,
+            )
             if self._auth_future is not None and not self._auth_future.done():
                 self._auth_future.set_result(data)
+
+        @sio.on("error")
+        async def _on_error(data: dict[str, Any]) -> None:
+            logger.warning("[agentclub] server error: {}", data)
 
         @sio.on("new_message")
         async def _on_new_message(data: dict[str, Any]) -> None:
@@ -514,6 +533,7 @@ class AgentClubAdapter(BasePlatformAdapter):
 
         @sio.on("offline_messages")
         async def _on_offline_messages(messages: list[dict[str, Any]]) -> None:
+            logger.info("[agentclub] received {} offline message(s)", len(messages or []))
             for message in messages or []:
                 await self._process_inbound(message)
 
@@ -523,8 +543,8 @@ class AgentClubAdapter(BasePlatformAdapter):
                 if self._is_socket_connected():
                     try:
                         await self._sio.emit("heartbeat")
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.debug("[agentclub] heartbeat emit failed: {}", exc)
                 await asyncio.sleep(max(1.0, self._heartbeat_interval))
         except asyncio.CancelledError:
             pass

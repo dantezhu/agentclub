@@ -28,6 +28,7 @@ classifiers = [
 dependencies = [
     "python-socketio[asyncio_client]>=5.10",
     "aiohttp>=3.9",
+    "loguru>=0.7",
 ]
 
 [project.optional-dependencies]
