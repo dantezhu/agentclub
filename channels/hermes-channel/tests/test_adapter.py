@@ -115,6 +115,7 @@ from hermes_channel_agentclub.adapter import (  # noqa: E402
     _normalize_upload_content_type,
     register,
 )
+import hermes_channel_agentclub.adapter as adapter_mod  # noqa: E402
 import hermes_channel_agentclub as pkg  # noqa: E402
 
 
@@ -200,6 +201,23 @@ class TestInbound:
         assert event.source.chat_type == "dm"
         assert event.source.chat_id == "dc_chat-1"
         assert event.source.user_id == "user-a"
+
+    def test_ack_failure_logs_warning(self, adapter, monkeypatch):
+        warnings = []
+        adapter._sio.emit = AsyncMock(side_effect=RuntimeError("boom"))
+        monkeypatch.setattr(
+            adapter_mod.logger,
+            "warning",
+            lambda *args, **kwargs: warnings.append((args, kwargs)),
+        )
+
+        run(adapter._ack("msg-1"))
+
+        assert warnings
+        assert warnings[0][0][:2] == (
+            "[agentclub] mark_read failed for {}: {}",
+            "msg-1",
+        )
 
     def test_group_requires_mention(self, adapter):
         run(

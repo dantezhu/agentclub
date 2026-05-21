@@ -215,8 +215,8 @@ class AgentClubAdapter(BasePlatformAdapter):
         # chat sessions instead of per-sender sessions.
         try:
             self.config.extra.setdefault("group_sessions_per_user", False)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("[agentclub] could not set group session default: {}", exc)
 
         self.server_url = (
             os.getenv("AGENTCLUB_SERVER_URL")
@@ -293,7 +293,8 @@ class AgentClubAdapter(BasePlatformAdapter):
             if not self._lock_acquired:
                 logger.warning("[agentclub] Agent Club token lock is already held")
                 return False
-        except Exception:
+        except Exception as exc:
+            logger.warning("[agentclub] platform lock acquisition failed: {}", exc)
             self._lock_acquired = False
 
         self._tmp_dir = tempfile.mkdtemp(prefix="agentclub_hermes_")
@@ -334,21 +335,23 @@ class AgentClubAdapter(BasePlatformAdapter):
             self._heartbeat_task.cancel()
             try:
                 await self._heartbeat_task
-            except (asyncio.CancelledError, Exception):
+            except asyncio.CancelledError:
                 pass
+            except Exception as exc:
+                logger.debug("[agentclub] heartbeat task shutdown error: {}", exc)
             self._heartbeat_task = None
         if self._sio is not None:
             try:
                 if self._sio.connected:
                     await self._sio.disconnect()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("[agentclub] disconnect error: {}", exc)
             self._sio = None
         if self._http is not None:
             try:
                 await self._http.close()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("[agentclub] http close error: {}", exc)
             self._http = None
         if self._tmp_dir:
             shutil.rmtree(self._tmp_dir, ignore_errors=True)
@@ -356,8 +359,8 @@ class AgentClubAdapter(BasePlatformAdapter):
         if self._lock_acquired:
             try:
                 self._release_platform_lock()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("[agentclub] platform lock release failed: {}", exc)
             self._lock_acquired = False
 
     async def send(
@@ -485,9 +488,11 @@ class AgentClubAdapter(BasePlatformAdapter):
         try:
             async with self._http.get(url) as resp:
                 if resp.status != 200:
+                    logger.debug("[agentclub] listChats() HTTP {}", resp.status)
                     return empty
                 data = await resp.json()
-        except Exception:
+        except Exception as exc:
+            logger.debug("[agentclub] listChats() error: {}", exc)
             return empty
         if not isinstance(data, dict):
             return empty
@@ -653,8 +658,8 @@ class AgentClubAdapter(BasePlatformAdapter):
             return
         try:
             await self._sio.emit("mark_read", {"message_ids": [message_id]})
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("[agentclub] mark_read failed for {}: {}", message_id, exc)
 
     async def _emit_send_message(self, payload: dict[str, Any]) -> None:
         await self._sio.emit("send_message", payload)
@@ -701,10 +706,12 @@ class AgentClubAdapter(BasePlatformAdapter):
             return None
         path = Path(local_path).expanduser()
         if not path.is_file():
+            logger.warning("[agentclub] upload skipped; not a file: {}", local_path)
             return None
         try:
             import aiohttp
-        except ImportError:
+        except ImportError as exc:
+            logger.warning("[agentclub] upload skipped; missing dependency: {}", exc)
             return None
         url = urljoin(self.server_url + "/", "api/agent/upload")
         try:
@@ -718,9 +725,16 @@ class AgentClubAdapter(BasePlatformAdapter):
                 )
                 async with self._http.post(url, data=data) as resp:
                     if resp.status != 200:
+                        body = await resp.text()
+                        logger.warning(
+                            "[agentclub] upload failed HTTP {}: {}",
+                            resp.status,
+                            body[:200],
+                        )
                         return None
                     return await resp.json()
-        except Exception:
+        except Exception as exc:
+            logger.warning("[agentclub] upload error for {}: {}", local_path, exc)
             return None
 
     async def _download_attachment(self, file_url: str, file_name: str) -> str | None:
@@ -736,12 +750,18 @@ class AgentClubAdapter(BasePlatformAdapter):
         try:
             async with self._http.get(absolute_url) as resp:
                 if resp.status != 200:
+                    logger.warning(
+                        "[agentclub] download failed HTTP {}: {}",
+                        resp.status,
+                        absolute_url,
+                    )
                     return None
                 data = await resp.read()
             with open(local_path, "wb") as fh:
                 fh.write(data)
             return local_path
-        except Exception:
+        except Exception as exc:
+            logger.warning("[agentclub] download error for {}: {}", absolute_url, exc)
             return None
 
     async def _list_group_members(self, group_id: str) -> list[dict[str, Any]]:
@@ -753,9 +773,15 @@ class AgentClubAdapter(BasePlatformAdapter):
         try:
             async with self._http.get(url) as resp:
                 if resp.status != 200:
+                    logger.debug(
+                        "[agentclub] listGroupMembers({}) HTTP {}",
+                        group_id,
+                        resp.status,
+                    )
                     return []
                 data = await resp.json()
-        except Exception:
+        except Exception as exc:
+            logger.debug("[agentclub] listGroupMembers({}) error: {}", group_id, exc)
             return []
         roster = data if isinstance(data, list) else []
         self._roster_cache[group_id] = roster
