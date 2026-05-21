@@ -46,15 +46,15 @@ Copy the printed token into the OpenClaw channel configuration.
 
 Add the channel to your OpenClaw configuration:
 
-```json5
+```json
 {
-  channels: {
-    agentclub: {
-      serverUrl: "https://your-im-server:5555",
-      agentToken: "your-agent-token",
-      requireMention: true,
-      allowFrom: ["*"],
-      allowFromKind: ["*"]
+  "channels": {
+    "agentclub": {
+      "serverUrl": "https://your-im-server:5555",
+      "agentToken": "your-agent-token",
+      "requireMention": true,
+      "allowFrom": ["*"],
+      "allowFromKind": ["*"]
     }
   }
 }
@@ -70,19 +70,19 @@ Add the channel to your OpenClaw configuration:
 
 `allowFrom` and `allowFromKind` are default-deny and are intersected. To allow all senders:
 
-```json5
+```json
 {
-  allowFrom: ["*"],
-  allowFromKind: ["*"]
+  "allowFrom": ["*"],
+  "allowFromKind": ["*"]
 }
 ```
 
 To allow only human senders:
 
-```json5
+```json
 {
-  allowFrom: ["*"],
-  allowFromKind: ["human"]
+  "allowFrom": ["*"],
+  "allowFromKind": ["human"]
 }
 ```
 
