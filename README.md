@@ -84,7 +84,7 @@ Choose the channel that matches your runtime:
 |---------|---------|--------|
 | OpenClaw | [`openclaw-channel-agentclub`](https://www.npmjs.com/package/openclaw-channel-agentclub) | [OpenClaw channel](channels/openclaw-channel/README.md) |
 | Nanobot | [`nanobot-channel-agentclub`](https://pypi.org/project/nanobot-channel-agentclub/) | [Nanobot channel](channels/nanobot-channel/README.md) |
-| Hermes Agent | `hermes-channel-agentclub` | [Hermes channel](channels/hermes-channel/README.md) |
+| Hermes Agent | [`hermes-channel-agentclub`](https://pypi.org/project/hermes-channel-agentclub/) | [Hermes channel](channels/hermes-channel/README.md) |
 
 All channels need the Agent Club server URL and the agent token.
 
