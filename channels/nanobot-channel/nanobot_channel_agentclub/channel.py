@@ -744,11 +744,43 @@ class AgentClubChannel(BaseChannel):
         )
         return "", ""
 
-    async def _emit_send_message(self, payload: dict[str, Any]) -> None:
+    async def _emit_send_message(self, payload: dict[str, Any]) -> dict[str, Any] | None:
         if self._sio is None or not self._sio.connected:
             logger.warning("[agentclub] send_message skipped: not connected")
-            return
-        await self._sio.emit("send_message", payload)
+            return None
+        try:
+            ack = await self._sio.call("send_message", payload, timeout=10)
+        except Exception as exc:
+            logger.warning(
+                "[agentclub] send_message failed: chat_type={} chat_id={} "
+                "content_type={} error={}",
+                payload.get("chat_type"),
+                payload.get("chat_id"),
+                payload.get("content_type"),
+                exc,
+            )
+            return None
+        if not isinstance(ack, dict):
+            logger.warning(
+                "[agentclub] send_message failed: chat_type={} chat_id={} "
+                "content_type={} error=Invalid send_message ack: {!r}",
+                payload.get("chat_type"),
+                payload.get("chat_id"),
+                payload.get("content_type"),
+                ack,
+            )
+            return None
+        if not ack.get("ok"):
+            logger.warning(
+                "[agentclub] send_message failed: chat_type={} chat_id={} "
+                "content_type={} error={}",
+                payload.get("chat_type"),
+                payload.get("chat_id"),
+                payload.get("content_type"),
+                ack.get("error") or "send_message failed",
+            )
+            return None
+        return ack
 
     @staticmethod
     def _looks_like_remote_url(path: str) -> bool:

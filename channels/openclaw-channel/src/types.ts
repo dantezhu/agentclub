@@ -60,6 +60,14 @@ export interface SendMessagePayload {
   mentions?: string[];
 }
 
+/** Socket.IO acknowledgement returned by the server for send_message. */
+export interface SendMessageAck {
+  ok: boolean;
+  message_id?: string;
+  created_at?: number;
+  error?: string;
+}
+
 /** Server → Client: new message arrived */
 export interface NewMessagePayload {
   id: string;

@@ -32,20 +32,20 @@ export function createOutboundHandlers(client: AgentClubClient) {
       const parsed = parseSessionKey(params.to);
       if (!parsed) throw new Error(`Invalid session key: ${params.to}`);
 
-      client.sendMessage({
+      const ack = await client.sendMessage({
         chat_type: parsed.chatType,
         chat_id: parsed.chatId,
         content: params.text,
         content_type: "text",
       });
 
-      return {};
+      return { messageId: ack.message_id };
     },
 
     /**
      * Upload a file and send it as a media message.
      */
-    async sendMedia(params: SendMediaParams): Promise<void> {
+    async sendMedia(params: SendMediaParams): Promise<OutboundResult> {
       const parsed = parseSessionKey(params.to);
       if (!parsed) throw new Error(`Invalid session key: ${params.to}`);
 
@@ -56,7 +56,7 @@ export function createOutboundHandlers(client: AgentClubClient) {
 
       const contentType = inferContentType(upload.content_type);
 
-      client.sendMessage({
+      const ack = await client.sendMessage({
         chat_type: parsed.chatType,
         chat_id: parsed.chatId,
         content: params.caption || "",
@@ -64,6 +64,7 @@ export function createOutboundHandlers(client: AgentClubClient) {
         file_url: upload.url,
         file_name: upload.filename,
       });
+      return { messageId: ack.message_id };
     },
   };
 }

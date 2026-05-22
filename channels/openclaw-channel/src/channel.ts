@@ -145,14 +145,14 @@ export const agentClubPlugin = createChatChannelPlugin<ResolvedAccount>({
         const parsed = parseSessionKey(params.to);
         if (!parsed) throw new Error(`Invalid target: ${params.to}`);
 
-        getActiveClient().sendMessage({
+        const ack = await getActiveClient().sendMessage({
           chat_type: parsed.chatType,
           chat_id: parsed.chatId,
           content: params.text,
           content_type: "text",
         });
 
-        return {};
+        return { messageId: ack.message_id };
       },
 
       async sendMedia(params) {
@@ -191,7 +191,7 @@ export const agentClubPlugin = createChatChannelPlugin<ResolvedAccount>({
           new Uint8Array(loaded.buffer),
           fileName,
         );
-        client.sendMessage({
+        const ack = await client.sendMessage({
           chat_type: parsed.chatType,
           chat_id: parsed.chatId,
           content: caption,
@@ -202,7 +202,7 @@ export const agentClubPlugin = createChatChannelPlugin<ResolvedAccount>({
           file_name: upload.filename,
         });
 
-        return {};
+        return { messageId: ack.message_id };
       },
     },
   },

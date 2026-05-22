@@ -717,22 +717,66 @@ function serializeInput(root) {
     return { text: out.replace(/\n+$/, ''), mentions };
 }
 
-function sendMessage() {
+function sendSocketMessage(payload) {
+    return new Promise((resolve, reject) => {
+        if (!socket || !socket.connected) {
+            reject(new Error(t('common.networkError')));
+            return;
+        }
+
+        let settled = false;
+        const timer = setTimeout(() => {
+            if (settled) return;
+            settled = true;
+            reject(new Error(t('common.networkError')));
+        }, 10000);
+
+        try {
+            socket.emit('send_message', payload, (ack) => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timer);
+                if (!ack || ack.ok !== true) {
+                    reject(new Error((ack && ack.error) || t('chat.sendFailed')));
+                    return;
+                }
+                resolve(ack);
+            });
+        } catch (err) {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            reject(err);
+        }
+    });
+}
+
+function showSendFailed(err) {
+    const base = t('chat.sendFailed');
+    const detail = err && err.message ? String(err.message) : '';
+    alert(detail && detail !== base ? `${base}: ${detail}` : base);
+}
+
+async function sendMessage() {
     const input = document.getElementById('messageInput');
-    if (!currentChat) return;
+    const chat = currentChat;
+    if (!chat) return;
 
     const { text, mentions } = serializeInput(input);
     if (!text.trim()) return;
 
-    socket.emit('send_message', {
-        chat_type: currentChat.type,
-        chat_id: currentChat.id,
-        content: text,
-        content_type: 'text',
-        mentions,
-    });
-
     input.innerHTML = '';
+    try {
+        await sendSocketMessage({
+            chat_type: chat.type,
+            chat_id: chat.id,
+            content: text,
+            content_type: 'text',
+            mentions,
+        });
+    } catch (err) {
+        showSendFailed(err);
+    }
 }
 
 async function handleFileSelect(event) {
@@ -780,21 +824,30 @@ async function sendFiles(files) {
 }
 
 async function uploadAndSendFile(file) {
+    const chat = currentChat;
+    if (!chat) return;
+
     const formData = new FormData();
     formData.append('file', file);
+    let data;
     try {
         const res = await fetch('/api/upload', { method: 'POST', body: formData });
         if (!res.ok) { alert(t('common.uploadFailed')); return; }
-        const data = await res.json();
-        socket.emit('send_message', {
-            chat_type: currentChat.type,
-            chat_id: currentChat.id,
+        data = await res.json();
+    } catch { alert(t('common.uploadFailed')); return; }
+
+    try {
+        await sendSocketMessage({
+            chat_type: chat.type,
+            chat_id: chat.id,
             content: '',
             content_type: data.content_type,
             file_url: data.url,
             file_name: data.filename,
         });
-    } catch { alert(t('common.uploadFailed')); }
+    } catch (err) {
+        showSendFailed(err);
+    }
 }
 
 /* ── Lightbox ── */

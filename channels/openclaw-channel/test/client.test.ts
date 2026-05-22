@@ -6,7 +6,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const { ioMock } = vi.hoisted(() => ({
   ioMock: vi.fn(() => ({
     on: vi.fn(),
-    emit: vi.fn(),
+    emit: vi.fn((_event: string, _payload?: unknown, ack?: Function) => {
+      if (typeof ack === "function") ack({ ok: true, message_id: "msg-out" });
+    }),
     disconnect: vi.fn(),
     connected: false,
   })),
@@ -124,5 +126,73 @@ describe("AgentClubClient.listChats", () => {
     const result = await client.listChats();
 
     expect(result).toEqual({ groups: [], directs: [] });
+  });
+});
+
+describe("AgentClubClient.sendMessage", () => {
+  it("waits for the server acknowledgement and returns the real message id", async () => {
+    const client = makeClient();
+    const connectPromise = client.connect();
+    const socket = ioMock.mock.results[0]?.value;
+    socket.connected = true;
+    const authOkHandler = socket.on.mock.calls.find(
+      ([event]: [string, unknown]) => event === "auth_ok",
+    )?.[1] as ((payload: unknown) => void) | undefined;
+    authOkHandler?.({ user_id: "agent-1", display_name: "Bot" });
+    await connectPromise;
+
+    const ack = await client.sendMessage({
+      chat_type: "direct",
+      chat_id: "dc-1",
+      content: "hi",
+      content_type: "text",
+    });
+
+    expect(ack.message_id).toBe("msg-out");
+    expect(socket.emit).toHaveBeenCalledWith(
+      "send_message",
+      {
+        chat_type: "direct",
+        chat_id: "dc-1",
+        content: "hi",
+        content_type: "text",
+      },
+      expect.any(Function),
+    );
+  });
+
+  it("logs and rejects when the server acknowledgement is a failure", async () => {
+    const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const client = new AgentClubClient({
+      serverUrl: "http://localhost:5555",
+      agentToken: "tok-123",
+      onMessage: () => {},
+      logger,
+    });
+    const connectPromise = client.connect();
+    const socket = ioMock.mock.results[0]?.value;
+    socket.connected = true;
+    const authOkHandler = socket.on.mock.calls.find(
+      ([event]: [string, unknown]) => event === "auth_ok",
+    )?.[1] as ((payload: unknown) => void) | undefined;
+    authOkHandler?.({ user_id: "agent-1", display_name: "Bot" });
+    await connectPromise;
+    socket.emit.mockImplementationOnce(
+      (_event: string, _payload: unknown, ack?: Function) => {
+        if (typeof ack === "function") ack({ ok: false, error: "denied" });
+      },
+    );
+
+    await expect(
+      client.sendMessage({
+        chat_type: "direct",
+        chat_id: "dc-1",
+        content: "hi",
+        content_type: "text",
+      }),
+    ).rejects.toThrow("denied");
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.stringContaining("send_message failed:"),
+    );
   });
 });

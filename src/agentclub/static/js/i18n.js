@@ -76,6 +76,7 @@
             "chat.removeFailed": "Remove failed",
             "chat.removeMember": "Remove member",
             "chat.removeMemberConfirm": "Remove this member?",
+            "chat.sendFailed": "Message failed to send",
             "chat.startDirectChat": "Start direct chat",
             "chat.typing": "{name} is typing...",
             "chat.viewInfo": "View info",

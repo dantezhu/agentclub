@@ -79,7 +79,9 @@ function makeMockSocket(): MockSocket {
       handlers[event] = handlers[event] || [];
       handlers[event].push(handler);
     }),
-    emit: vi.fn(),
+    emit: vi.fn((_event: string, _payload?: unknown, ack?: Function) => {
+      if (typeof ack === "function") ack({ ok: true, message_id: "msg-out" });
+    }),
     disconnect: vi.fn(function (this: MockSocket) {
       this.connected = false;
     }),
@@ -420,6 +422,7 @@ describe("startAgentClubMonitor", () => {
         content: "Agent reply",
         content_type: "text",
       }),
+      expect.any(Function),
     );
 
     abortController.abort();

@@ -3,10 +3,13 @@ import type {
   AgentChatsResponse,
   AuthOkPayload,
   NewMessagePayload,
+  SendMessageAck,
   SendMessagePayload,
   UploadResponse,
 } from "./types.js";
 import { INITIAL_RETRY_DELAY_MS, MAX_RETRY_DELAY_MS } from "./retry.js";
+
+const SEND_MESSAGE_ACK_TIMEOUT_MS = 10000;
 
 export interface AgentClubClientOptions {
   serverUrl: string;
@@ -159,9 +162,45 @@ export class AgentClubClient {
     }
   }
 
-  sendMessage(payload: SendMessagePayload): void {
+  async sendMessage(payload: SendMessagePayload): Promise<SendMessageAck> {
     this.ensureConnected();
-    this.socket!.emit("send_message", payload);
+    const socket = this.socket!;
+    return new Promise<SendMessageAck>((resolve, reject) => {
+      let settled = false;
+      let timer: ReturnType<typeof setTimeout>;
+      const fail = (err: Error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        this.logger.error(
+          `send_message failed: chat_type=${payload.chat_type} ` +
+            `chat_id=${payload.chat_id} content_type=${payload.content_type}: ${err.message}`,
+        );
+        reject(err);
+      };
+      timer = setTimeout(() => {
+        fail(new Error("send_message acknowledgement timed out"));
+      }, SEND_MESSAGE_ACK_TIMEOUT_MS);
+
+      try {
+        socket.emit("send_message", payload, (ack: unknown) => {
+          if (settled) return;
+          if (!isSendMessageAck(ack)) {
+            fail(new Error(`Invalid send_message ack: ${formatUnknown(ack)}`));
+            return;
+          }
+          if (!ack.ok) {
+            fail(new Error(ack.error || "send_message failed"));
+            return;
+          }
+          settled = true;
+          clearTimeout(timer);
+          resolve(ack);
+        });
+      } catch (err) {
+        fail(err instanceof Error ? err : new Error(String(err)));
+      }
+    });
   }
 
   /**
@@ -270,5 +309,22 @@ export class AgentClubClient {
     if (!this.socket?.connected) {
       throw new Error("Not connected to Agent Club IM server");
     }
+  }
+}
+
+function isSendMessageAck(value: unknown): value is SendMessageAck {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as { ok?: unknown }).ok === "boolean"
+  );
+}
+
+function formatUnknown(value: unknown): string {
+  if (value instanceof Error) return value.message;
+  try {
+    return JSON.stringify(value) ?? String(value);
+  } catch {
+    return String(value);
   }
 }

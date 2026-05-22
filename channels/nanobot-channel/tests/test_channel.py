@@ -26,6 +26,7 @@ from nanobot_channel_agentclub.channel import (
     _has_mention_tag,
     _retry_delay_seconds,
 )
+import nanobot_channel_agentclub.channel as channel_mod
 
 
 # ---------------------------------------------------------------------
@@ -110,6 +111,9 @@ def channel(monkeypatch):
     sio = MagicMock()
     sio.connected = True
     sio.emit = AsyncMock()
+    sio.call = AsyncMock(
+        return_value={"ok": True, "message_id": "msg-out", "created_at": 1700000001}
+    )
     ch._sio = sio
 
     ch._http = MagicMock()
@@ -400,7 +404,7 @@ class TestOutbound:
             metadata={"chat_type": "group", "chat_id": "gc_grp-7"},
         )
         await channel.send(outbound)
-        channel._sio.emit.assert_awaited_once_with(
+        channel._sio.call.assert_awaited_once_with(
             "send_message",
             {
                 "chat_type": "group",
@@ -408,6 +412,7 @@ class TestOutbound:
                 "content": "hello back",
                 "content_type": "text",
             },
+            timeout=10,
         )
 
     @pytest.mark.asyncio
@@ -424,7 +429,7 @@ class TestOutbound:
         )
         await channel.send(outbound)
 
-        payload = channel._sio.emit.await_args.args[1]
+        payload = channel._sio.call.await_args.args[1]
         assert payload["chat_type"] == "group"
         assert payload["chat_id"] == "gc_grp-9"
         assert payload["mentions"] == ["user-b"]
@@ -437,7 +442,7 @@ class TestOutbound:
             channel="agentclub", chat_id="dc_chat-1", content="hi"
         )
         await channel.send(outbound)
-        payload = channel._sio.emit.await_args.args[1]
+        payload = channel._sio.call.await_args.args[1]
         assert payload["chat_type"] == "direct"
         assert payload["chat_id"] == "dc_chat-1"
 
@@ -450,7 +455,7 @@ class TestOutbound:
             metadata={"chat_type": "group", "chat_id": "gc_grp-1"},
         )
         await channel.send(outbound)
-        payload = channel._sio.emit.await_args.args[1]
+        payload = channel._sio.call.await_args.args[1]
         assert payload["mentions"] == ["u-1", "u-2"]
 
     @pytest.mark.asyncio
@@ -461,14 +466,14 @@ class TestOutbound:
             content="thanks!",
         )
         await channel.send(outbound)
-        payload = channel._sio.emit.await_args.args[1]
+        payload = channel._sio.call.await_args.args[1]
         assert "mentions" not in payload
 
     @pytest.mark.asyncio
     async def test_send_skips_progress_and_tool_hints(self, channel):
         """Until streaming is implemented, progress chunks mustn't leak to IM."""
         for flag in ("_progress", "_tool_hint", "_stream_delta", "_stream_end"):
-            channel._sio.emit.reset_mock()
+            channel._sio.call.reset_mock()
             outbound = OutboundMessage(
                 channel="agentclub",
                 chat_id="dc_chat-1",
@@ -476,7 +481,7 @@ class TestOutbound:
                 metadata={flag: True},
             )
             await channel.send(outbound)
-            channel._sio.emit.assert_not_awaited()
+            channel._sio.call.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_send_noop_when_disconnected(self, channel):
@@ -485,7 +490,51 @@ class TestOutbound:
             channel="agentclub", chat_id="dc_chat-1", content="hi"
         )
         await channel.send(outbound)
-        channel._sio.emit.assert_not_awaited()
+        channel._sio.call.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_send_logs_server_error_ack(self, channel, monkeypatch):
+        warnings = []
+        channel._sio.call = AsyncMock(return_value={"ok": False, "error": "denied"})
+        monkeypatch.setattr(
+            channel_mod.logger,
+            "warning",
+            lambda *args, **kwargs: warnings.append((args, kwargs)),
+        )
+
+        outbound = OutboundMessage(
+            channel="agentclub", chat_id="dc_chat-1", content="hi"
+        )
+        await channel.send(outbound)
+
+        assert warnings
+        assert warnings[0][0][:4] == (
+            "[agentclub] send_message failed: chat_type={} chat_id={} "
+            "content_type={} error={}",
+            "direct",
+            "dc_chat-1",
+            "text",
+        )
+        assert warnings[0][0][4] == "denied"
+
+    @pytest.mark.asyncio
+    async def test_send_logs_invalid_ack(self, channel, monkeypatch):
+        warnings = []
+        channel._sio.call = AsyncMock(return_value=None)
+        monkeypatch.setattr(
+            channel_mod.logger,
+            "warning",
+            lambda *args, **kwargs: warnings.append((args, kwargs)),
+        )
+
+        outbound = OutboundMessage(
+            channel="agentclub", chat_id="dc_chat-1", content="hi"
+        )
+        await channel.send(outbound)
+
+        assert warnings
+        assert "Invalid send_message ack" in warnings[0][0][0]
+        assert warnings[0][0][4] is None
 
     @pytest.mark.asyncio
     async def test_send_uploads_media_then_text(self, channel, tmp_path):
@@ -511,7 +560,7 @@ class TestOutbound:
         )
         await channel.send(outbound)
 
-        emits = [call.args for call in channel._sio.emit.await_args_list]
+        emits = [call.args for call in channel._sio.call.await_args_list]
         assert len(emits) == 2
         # First: file bubble with URL + filename, no text
         assert emits[0][0] == "send_message"
@@ -550,7 +599,7 @@ class TestOutbound:
 
         # Only the local file is uploaded; remote URLs are dropped.
         channel._upload_attachment.assert_awaited_once_with(str(fpath))
-        emits = [call.args for call in channel._sio.emit.await_args_list]
+        emits = [call.args for call in channel._sio.call.await_args_list]
         assert len(emits) == 1
         assert emits[0][1]["file_url"] == "/media/uploads/abc_local.png"
         assert emits[0][1]["content_type"] == "image"
@@ -580,7 +629,7 @@ class TestOutbound:
         )
         await channel.send(outbound)
 
-        emits = [call.args for call in channel._sio.emit.await_args_list]
+        emits = [call.args for call in channel._sio.call.await_args_list]
         assert len(emits) == 1
         assert emits[0][1]["content_type"] == "image"
         assert emits[0][1]["file_url"] == "/media/uploads/abc_cat.png"

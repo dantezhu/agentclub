@@ -630,7 +630,7 @@ async function processInbound(
             // other channels that consume the message can treat them as
             // real mentions without re-parsing the text).
             const outboundMentions = extractMentionsFromReply(text);
-            client.sendMessage({
+            await client.sendMessage({
               chat_type: msg.chatType as "group" | "direct",
               chat_id: msg.chatId,
               content: text,
@@ -663,7 +663,7 @@ async function processInbound(
                 new Uint8Array(loaded.buffer),
                 fileName,
               );
-              client.sendMessage({
+              await client.sendMessage({
                 chat_type: msg.chatType as "group" | "direct",
                 chat_id: msg.chatId,
                 content: "",
