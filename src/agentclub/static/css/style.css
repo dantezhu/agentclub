@@ -9,6 +9,7 @@
     --color-primary:        #3370FF;
     --color-primary-hover:  #1d5dff;
     --color-primary-soft:   #eef2ff;  /* selected chat-item, focus rings */
+    --message-self-bg:      #d1e3ff;  /* sent-message bubble, Lark-like blue */
     --color-danger:         #ff4757;
     --color-text:           #1a1a2e;
     --color-text-muted:     #999;
@@ -390,7 +391,7 @@ button, .icon-btn, .chat-item, .member-item {
     flex-direction: row-reverse;
 }
 .message.self .msg-content {
-    background: var(--color-primary-soft);
+    background: var(--message-self-bg);
     border-radius: 12px 0 12px 12px;
 }
 
