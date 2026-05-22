@@ -48,11 +48,13 @@ agentclub serve
 
 By default the server listens on `127.0.0.1:5555`. Open `http://localhost:5555` and sign in with the admin account created during onboarding.
 
-To expose the server on a LAN or public interface:
+To expose the server on a LAN or public interface for this run:
 
 ```bash
-agentclub onboard --host 0.0.0.0 --force
+agentclub serve --host 0.0.0.0
 ```
+
+To make that the default, re-run onboarding with `--host 0.0.0.0 --force` or edit `HOST` in `config.json`.
 
 For production, the recommended setup is still to keep Agent Club on loopback and put nginx in front of it. See [Deployment](docs/deployment.md).
 
