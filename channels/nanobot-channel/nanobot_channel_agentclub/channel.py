@@ -57,6 +57,8 @@ from nanobot.bus.queue import MessageBus
 from nanobot.channels.base import BaseChannel
 
 
+_LOG_PREFIX = "[agentclub.nanobot]"
+
 # Max inbound message ids to remember for dedup. 1024 matches the
 # OpenClaw-channel gateway's dedup window.
 _DEDUP_CAPACITY = 1024
@@ -76,8 +78,15 @@ _AT_TAG_RE = re.compile(r'<at user_id="([^"]+)">([^<]*)</at>')
 # extracting ``chat_type`` from the prefix on outbound.
 _GROUP_PREFIX = "gc_"
 _DIRECT_PREFIX = "dc_"
+_SOCKETIO_INFINITE_RECONNECT_ATTEMPTS = 0
+_INITIAL_HEARTBEAT_SECONDS = 30.0
 _INITIAL_RETRY_DELAY = 1.0
 _MAX_RETRY_DELAY = 30.0
+_MIN_HEARTBEAT_SLEEP_SECONDS = 1.0
+_SERVER_RESPONSE_TIMEOUT_SECONDS = 10
+_HTTP_OK = 200
+_LOG_MESSAGE_PREVIEW_CHARS = 80
+_LOG_BODY_PREVIEW_CHARS = 200
 
 
 def _decode_chat_id(encoded: str) -> tuple[str, str] | None:
@@ -239,10 +248,11 @@ class AgentClubChannel(BaseChannel):
         self._tmp_dir: str | None = None
         self._stop_event: asyncio.Event | None = None
         self._heartbeat_task: asyncio.Task | None = None
+        self._auth_future: asyncio.Future | None = None
         # Cadence of application-level heartbeats. Seeded with a sane
         # default and overwritten when `auth_ok` arrives so the server's
         # Config acts as the single source of truth.
-        self._heartbeat_interval: float = 30.0
+        self._heartbeat_interval: float = _INITIAL_HEARTBEAT_SECONDS
 
         # Populated on ``auth_ok``
         self._agent_user_id: str | None = None
@@ -266,10 +276,10 @@ class AgentClubChannel(BaseChannel):
 
     async def start(self) -> None:
         if not self._server_url:
-            logger.error("[agentclub] server_url is not configured")
+            logger.error("{} server_url is not configured", _LOG_PREFIX)
             return
         if not self._agent_token:
-            logger.error("[agentclub] agent_token is not configured")
+            logger.error("{} agent_token is not configured", _LOG_PREFIX)
             return
 
         self._running = True
@@ -283,24 +293,30 @@ class AgentClubChannel(BaseChannel):
             while self._running:
                 self._sio = socketio.AsyncClient(
                     reconnection=True,
-                    reconnection_attempts=0,  # infinite after first connect
+                    reconnection_attempts=_SOCKETIO_INFINITE_RECONNECT_ATTEMPTS,
                     reconnection_delay=_INITIAL_RETRY_DELAY,
                     reconnection_delay_max=_MAX_RETRY_DELAY,
                 )
+                self._auth_future = asyncio.get_running_loop().create_future()
                 self._register_sio_handlers(self._sio)
 
-                logger.info("[agentclub] connecting to {}", self._server_url)
+                logger.info("{} connecting to {}", _LOG_PREFIX, self._server_url)
                 try:
                     await self._sio.connect(
                         self._server_url,
                         auth={"agent_token": self._agent_token},
                         transports=["websocket", "polling"],
                     )
+                    await asyncio.wait_for(
+                        self._auth_future,
+                        timeout=_SERVER_RESPONSE_TIMEOUT_SECONDS,
+                    )
                 except Exception as exc:
                     attempt += 1
                     delay = _retry_delay_seconds(attempt)
                     logger.warning(
-                        "[agentclub] connect failed (attempt {}): {} ; retrying in {}s",
+                        "{} connect failed (attempt {}): {} ; retrying in {}s",
+                        _LOG_PREFIX,
                         attempt,
                         exc,
                         delay,
@@ -310,9 +326,10 @@ class AgentClubChannel(BaseChannel):
                         break
                     continue
 
+                self._auth_future = None
                 attempt = 0
                 self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
-                logger.info("[agentclub] started")
+                logger.info("{} started", _LOG_PREFIX)
                 await self._stop_event.wait()
                 break
         finally:
@@ -341,10 +358,12 @@ class AgentClubChannel(BaseChannel):
                     try:
                         await self._sio.emit("heartbeat")
                     except Exception as exc:
-                        logger.debug("[agentclub] heartbeat emit failed: {}", exc)
+                        logger.debug("{} heartbeat emit failed: {}", _LOG_PREFIX, exc)
                 # Re-read every iteration so an `auth_ok` mid-run (on
                 # reconnect) takes effect on the next beat.
-                await asyncio.sleep(max(1.0, self._heartbeat_interval))
+                await asyncio.sleep(
+                    max(_MIN_HEARTBEAT_SLEEP_SECONDS, self._heartbeat_interval)
+                )
         except asyncio.CancelledError:
             pass
 
@@ -364,7 +383,7 @@ class AgentClubChannel(BaseChannel):
             try:
                 await self._http.close()
             except Exception as exc:
-                logger.warning("[agentclub] http close error: {}", exc)
+                logger.warning("{} http close error: {}", _LOG_PREFIX, exc)
             self._http = None
         if self._tmp_dir and os.path.isdir(self._tmp_dir):
             try:
@@ -377,7 +396,7 @@ class AgentClubChannel(BaseChannel):
             except OSError:
                 pass
         self._tmp_dir = None
-        logger.info("[agentclub] stopped")
+        logger.info("{} stopped", _LOG_PREFIX)
 
     async def _reset_socket(self) -> None:
         """Disconnect and drop the current Socket.IO client if present."""
@@ -387,9 +406,10 @@ class AgentClubChannel(BaseChannel):
             if self._sio.connected:
                 await self._sio.disconnect()
         except Exception as exc:
-            logger.warning("[agentclub] disconnect error: {}", exc)
+            logger.warning("{} disconnect error: {}", _LOG_PREFIX, exc)
         finally:
             self._sio = None
+            self._auth_future = None
 
     async def _wait_for_retry(self, delay: float) -> bool:
         """Sleep until the next retry or exit early when stop() fires.
@@ -412,11 +432,11 @@ class AgentClubChannel(BaseChannel):
     def _register_sio_handlers(self, sio: socketio.AsyncClient) -> None:
         @sio.event
         async def connect() -> None:
-            logger.info("[agentclub] socket connected")
+            logger.info("{} socket connected", _LOG_PREFIX)
 
         @sio.event
         async def disconnect() -> None:
-            logger.warning("[agentclub] socket disconnected")
+            logger.warning("{} socket disconnected", _LOG_PREFIX)
 
         @sio.on("auth_ok")
         async def _on_auth_ok(data: dict[str, Any]) -> None:
@@ -430,15 +450,18 @@ class AgentClubChannel(BaseChannel):
             if interval_val > 0:
                 self._heartbeat_interval = interval_val
             logger.info(
-                "[agentclub] authenticated as {} ({}), heartbeat={}s",
+                "{} authenticated as {} ({}), heartbeat={}s",
+                _LOG_PREFIX,
                 self._display_name,
                 self._agent_user_id,
                 self._heartbeat_interval,
             )
+            if self._auth_future is not None and not self._auth_future.done():
+                self._auth_future.set_result(data)
 
         @sio.on("error")
         async def _on_error(data: dict[str, Any]) -> None:
-            logger.warning("[agentclub] server error: {}", data)
+            logger.warning("{} server error: {}", _LOG_PREFIX, data)
 
         @sio.on("new_message")
         async def _on_new_message(data: dict[str, Any]) -> None:
@@ -446,7 +469,7 @@ class AgentClubChannel(BaseChannel):
 
         @sio.on("offline_messages")
         async def _on_offline_messages(msgs: list[dict[str, Any]]) -> None:
-            logger.info("[agentclub] received {} offline message(s)", len(msgs))
+            logger.info("{} received {} offline message(s)", _LOG_PREFIX, len(msgs))
             for msg in msgs:
                 await self._process_inbound(msg)
 
@@ -495,14 +518,16 @@ class AgentClubChannel(BaseChannel):
             # reconnect.
             if not self.is_allowed(sender_id):
                 logger.info(
-                    "[agentclub] denied message from {} (not in allow_from)",
+                    "{} denied message from {} (not in allow_from)",
+                    _LOG_PREFIX,
                     sender_name,
                 )
                 await self._ack(message_id)
                 return
             if not self._is_sender_kind_allowed(sender_is_agent):
                 logger.info(
-                    "[agentclub] denied message from {} (kind not in allow_from_kind)",
+                    "{} denied message from {} (kind not in allow_from_kind)",
+                    _LOG_PREFIX,
                     sender_name,
                 )
                 await self._ack(message_id)
@@ -518,7 +543,8 @@ class AgentClubChannel(BaseChannel):
                 and not mentions_bot
             ):
                 logger.debug(
-                    "[agentclub] skipping group message from {} (no @mention)",
+                    "{} skipping group message from {} (no @mention)",
+                    _LOG_PREFIX,
                     sender_name,
                 )
                 await self._ack(message_id)
@@ -563,11 +589,12 @@ class AgentClubChannel(BaseChannel):
             # honest "these are the messages that actually reached the
             # agent" answer.
             logger.info(
-                "[agentclub] inbound [{}:{}] from {}: {}",
+                "{} inbound [{}:{}] from {}: {}",
+                _LOG_PREFIX,
                 chat_type,
                 chat_id,
                 sender_name,
-                text[:80],
+                text[:_LOG_MESSAGE_PREVIEW_CHARS],
             )
 
             # ACK immediately on accept — "plugin has taken
@@ -598,7 +625,7 @@ class AgentClubChannel(BaseChannel):
                 },
             )
         except Exception as exc:  # defensive: one bad message must not kill the loop
-            logger.exception("[agentclub] error processing inbound: {}", exc)
+            logger.exception("{} error processing inbound: {}", _LOG_PREFIX, exc)
 
     def _is_sender_kind_allowed(self, sender_is_agent: bool) -> bool:
         """Evaluate ``allow_from_kind`` against a sender's role.
@@ -625,7 +652,9 @@ class AgentClubChannel(BaseChannel):
         try:
             await self._sio.emit("mark_read", {"message_ids": [message_id]})
         except Exception as exc:
-            logger.warning("[agentclub] mark_read failed for {}: {}", message_id, exc)
+            logger.warning(
+                "{} mark_read failed for {}: {}", _LOG_PREFIX, message_id, exc
+            )
 
     # ----------------------------------------------------------------
     # Outbound pipeline
@@ -634,7 +663,7 @@ class AgentClubChannel(BaseChannel):
     async def send(self, msg: OutboundMessage) -> None:
         """Dispatch one outbound agent message to the IM server."""
         if self._sio is None or not self._sio.connected:
-            logger.warning("[agentclub] not connected; dropping outbound")
+            logger.warning("{} not connected; dropping outbound", _LOG_PREFIX)
             return
 
         meta = msg.metadata or {}
@@ -652,7 +681,7 @@ class AgentClubChannel(BaseChannel):
 
         chat_type, chat_id = self._resolve_chat_target(msg, meta)
         if not chat_id:
-            logger.warning("[agentclub] outbound missing chat_id; dropping")
+            logger.warning("{} outbound missing chat_id; dropping", _LOG_PREFIX)
             return
 
         # Upload any attachments first. Each one becomes its own
@@ -665,8 +694,9 @@ class AgentClubChannel(BaseChannel):
         for path in media_paths:
             if self._looks_like_remote_url(path):
                 logger.warning(
-                    "[agentclub] skipping remote URL in agent reply "
+                    "{} skipping remote URL in agent reply "
                     "(only local files are supported): {}",
+                    _LOG_PREFIX,
                     path,
                 )
                 continue
@@ -738,22 +768,28 @@ class AgentClubChannel(BaseChannel):
             return decoded
 
         logger.warning(
-            "[agentclub] outbound chat_id {!r} lacks gc_/dc_ prefix and no "
+            "{} outbound chat_id {!r} lacks gc_/dc_ prefix and no "
             "chat_type metadata; dropping",
+            _LOG_PREFIX,
             raw,
         )
         return "", ""
 
     async def _emit_send_message(self, payload: dict[str, Any]) -> dict[str, Any] | None:
         if self._sio is None or not self._sio.connected:
-            logger.warning("[agentclub] send_message skipped: not connected")
+            logger.warning("{} send_message skipped: not connected", _LOG_PREFIX)
             return None
         try:
-            ack = await self._sio.call("send_message", payload, timeout=10)
+            ack = await self._sio.call(
+                "send_message",
+                payload,
+                timeout=_SERVER_RESPONSE_TIMEOUT_SECONDS,
+            )
         except Exception as exc:
             logger.warning(
-                "[agentclub] send_message failed: chat_type={} chat_id={} "
+                "{} send_message failed: chat_type={} chat_id={} "
                 "content_type={} error={}",
+                _LOG_PREFIX,
                 payload.get("chat_type"),
                 payload.get("chat_id"),
                 payload.get("content_type"),
@@ -762,8 +798,9 @@ class AgentClubChannel(BaseChannel):
             return None
         if not isinstance(ack, dict):
             logger.warning(
-                "[agentclub] send_message failed: chat_type={} chat_id={} "
+                "{} send_message failed: chat_type={} chat_id={} "
                 "content_type={} error=Invalid send_message ack: {!r}",
+                _LOG_PREFIX,
                 payload.get("chat_type"),
                 payload.get("chat_id"),
                 payload.get("content_type"),
@@ -772,8 +809,9 @@ class AgentClubChannel(BaseChannel):
             return None
         if not ack.get("ok"):
             logger.warning(
-                "[agentclub] send_message failed: chat_type={} chat_id={} "
+                "{} send_message failed: chat_type={} chat_id={} "
                 "content_type={} error={}",
+                _LOG_PREFIX,
                 payload.get("chat_type"),
                 payload.get("chat_id"),
                 payload.get("content_type"),
@@ -826,7 +864,7 @@ class AgentClubChannel(BaseChannel):
             return None
         path = Path(local_path)
         if not path.is_file():
-            logger.warning("[agentclub] upload skipped; not a file: {}", local_path)
+            logger.warning("{} upload skipped; not a file: {}", _LOG_PREFIX, local_path)
             return None
         url = urljoin(self._server_url + "/", "api/agent/upload")
         try:
@@ -836,15 +874,18 @@ class AgentClubChannel(BaseChannel):
                     "file", fh, filename=path.name, content_type="application/octet-stream"
                 )
                 async with self._http.post(url, data=data) as resp:
-                    if resp.status != 200:
+                    if resp.status != _HTTP_OK:
                         body = await resp.text()
                         logger.warning(
-                            "[agentclub] upload failed HTTP {}: {}", resp.status, body[:200]
+                            "{} upload failed HTTP {}: {}",
+                            _LOG_PREFIX,
+                            resp.status,
+                            body[:_LOG_BODY_PREVIEW_CHARS],
                         )
                         return None
                     return await resp.json()
         except Exception as exc:
-            logger.warning("[agentclub] upload error for {}: {}", local_path, exc)
+            logger.warning("{} upload error for {}: {}", _LOG_PREFIX, local_path, exc)
             return None
 
     async def _download_attachment(
@@ -861,9 +902,12 @@ class AgentClubChannel(BaseChannel):
         local_path = os.path.join(self._tmp_dir, safe_name)
         try:
             async with self._http.get(absolute_url) as resp:
-                if resp.status != 200:
+                if resp.status != _HTTP_OK:
                     logger.warning(
-                        "[agentclub] download failed HTTP {}: {}", resp.status, absolute_url
+                        "{} download failed HTTP {}: {}",
+                        _LOG_PREFIX,
+                        resp.status,
+                        absolute_url,
                     )
                     return None
                 data = await resp.read()
@@ -871,7 +915,9 @@ class AgentClubChannel(BaseChannel):
                 fh.write(data)
             return local_path
         except Exception as exc:
-            logger.warning("[agentclub] download error for {}: {}", absolute_url, exc)
+            logger.warning(
+                "{} download error for {}: {}", _LOG_PREFIX, absolute_url, exc
+            )
             return None
 
     async def _list_group_members(self, group_id: str) -> list[dict[str, Any]]:
@@ -885,9 +931,10 @@ class AgentClubChannel(BaseChannel):
         )
         try:
             async with self._http.get(url) as resp:
-                if resp.status != 200:
+                if resp.status != _HTTP_OK:
                     logger.debug(
-                        "[agentclub] listGroupMembers({}) → HTTP {}",
+                        "{} listGroupMembers({}) → HTTP {}",
+                        _LOG_PREFIX,
                         group_id,
                         resp.status,
                     )
@@ -897,7 +944,9 @@ class AgentClubChannel(BaseChannel):
                 self._roster_cache[group_id] = roster
                 return roster
         except Exception as exc:
-            logger.debug("[agentclub] listGroupMembers({}) error: {}", group_id, exc)
+            logger.debug(
+                "{} listGroupMembers({}) error: {}", _LOG_PREFIX, group_id, exc
+            )
             return []
 
     async def list_chats(self) -> dict[str, list[dict[str, Any]]]:
@@ -922,12 +971,12 @@ class AgentClubChannel(BaseChannel):
         url = urljoin(self._server_url + "/", "api/agent/chats")
         try:
             async with self._http.get(url) as resp:
-                if resp.status != 200:
-                    logger.debug("[agentclub] listChats() → HTTP {}", resp.status)
+                if resp.status != _HTTP_OK:
+                    logger.debug("{} listChats() → HTTP {}", _LOG_PREFIX, resp.status)
                     return empty
                 data = await resp.json()
         except Exception as exc:
-            logger.debug("[agentclub] listChats() error: {}", exc)
+            logger.debug("{} listChats() error: {}", _LOG_PREFIX, exc)
             return empty
         if not isinstance(data, dict):
             return empty

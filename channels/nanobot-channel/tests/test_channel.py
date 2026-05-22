@@ -508,14 +508,15 @@ class TestOutbound:
         await channel.send(outbound)
 
         assert warnings
-        assert warnings[0][0][:4] == (
-            "[agentclub] send_message failed: chat_type={} chat_id={} "
+        assert warnings[0][0][:5] == (
+            "{} send_message failed: chat_type={} chat_id={} "
             "content_type={} error={}",
+            "[agentclub.nanobot]",
             "direct",
             "dc_chat-1",
             "text",
         )
-        assert warnings[0][0][4] == "denied"
+        assert warnings[0][0][5] == "denied"
 
     @pytest.mark.asyncio
     async def test_send_logs_invalid_ack(self, channel, monkeypatch):
@@ -534,7 +535,7 @@ class TestOutbound:
 
         assert warnings
         assert "Invalid send_message ack" in warnings[0][0][0]
-        assert warnings[0][0][4] is None
+        assert warnings[0][0][5] is None
 
     @pytest.mark.asyncio
     async def test_send_uploads_media_then_text(self, channel, tmp_path):
@@ -818,6 +819,15 @@ class _FakeSio:
         if isinstance(outcome, Exception):
             raise outcome
         self.connected = True
+        auth_ok = self._named_handlers.get("auth_ok")
+        if auth_ok is not None:
+            await auth_ok(
+                {
+                    "user_id": "agent-self",
+                    "display_name": "Agent",
+                    "heartbeat_interval": 30,
+                }
+            )
         if self._on_success is not None:
             await self._on_success(self)
 
@@ -955,3 +965,70 @@ class TestRetryLifecycle:
         finally:
             await ch.stop()
             await asyncio.wait_for(task, timeout=1)
+
+    @pytest.mark.asyncio
+    async def test_reconnect_logs_connected_and_authenticated(self, monkeypatch):
+        cfg = AgentClubConfig(
+            enabled=True,
+            server_url="http://localhost:5555",
+            agent_token="tok",
+            allow_from=["*"],
+            allow_from_kind=["*"],
+        )
+        ch = AgentClubChannel(cfg, MagicMock())
+        sio = _FakeSio([])
+        ch._register_sio_handlers(sio)
+        infos = []
+        monkeypatch.setattr(
+            channel_mod.logger,
+            "info",
+            lambda *args, **kwargs: infos.append(args),
+        )
+
+        ch._auth_future = asyncio.get_running_loop().create_future()
+        await sio._event_handlers["connect"]()
+        await sio._named_handlers["auth_ok"](
+            {
+                "user_id": "agent-1",
+                "display_name": "Agent One",
+                "heartbeat_interval": 30,
+            }
+        )
+        await ch._auth_future
+        ch._auth_future = None
+
+        await sio._event_handlers["disconnect"]()
+        await sio._event_handlers["connect"]()
+        await sio._named_handlers["auth_ok"](
+            {
+                "user_id": "agent-2",
+                "display_name": "Agent Two",
+                "heartbeat_interval": 15,
+            }
+        )
+
+        assert infos.count(("{} socket connected", "[agentclub.nanobot]")) == 2
+        auth_logs = [
+            args
+            for args in infos
+            if args and args[0] == "{} authenticated as {} ({}), heartbeat={}s"
+        ]
+        assert auth_logs == [
+            (
+                "{} authenticated as {} ({}), heartbeat={}s",
+                "[agentclub.nanobot]",
+                "Agent One",
+                "agent-1",
+                30.0,
+            ),
+            (
+                "{} authenticated as {} ({}), heartbeat={}s",
+                "[agentclub.nanobot]",
+                "Agent Two",
+                "agent-2",
+                15.0,
+            ),
+        ]
+        assert ch._agent_user_id == "agent-2"
+        assert ch._display_name == "Agent Two"
+        assert ch._heartbeat_interval == 15.0

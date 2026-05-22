@@ -7,9 +7,14 @@ import type {
   SendMessagePayload,
   UploadResponse,
 } from "./types.js";
-import { INITIAL_RETRY_DELAY_MS, MAX_RETRY_DELAY_MS } from "./retry.js";
-
-const SEND_MESSAGE_ACK_TIMEOUT_MS = 10000;
+import {
+  INITIAL_RETRY_DELAY_MS,
+  LOG_BODY_PREVIEW_CHARS,
+  LOG_PREFIX,
+  MAX_RETRY_DELAY_MS,
+  SERVER_RESPONSE_TIMEOUT_MS,
+  SOCKETIO_INFINITE_RECONNECT_ATTEMPTS,
+} from "./constants.js";
 
 export interface AgentClubClientOptions {
   serverUrl: string;
@@ -24,9 +29,9 @@ export interface AgentClubClientOptions {
 }
 
 const DEFAULT_LOGGER = {
-  info: (...args: unknown[]) => console.log("[agentclub]", ...args),
-  warn: (...args: unknown[]) => console.warn("[agentclub]", ...args),
-  error: (...args: unknown[]) => console.error("[agentclub]", ...args),
+  info: (...args: unknown[]) => console.log(LOG_PREFIX, ...args),
+  warn: (...args: unknown[]) => console.warn(LOG_PREFIX, ...args),
+  error: (...args: unknown[]) => console.error(LOG_PREFIX, ...args),
 };
 
 /**
@@ -72,28 +77,55 @@ export class AgentClubClient {
     if (this.socket) throw new Error("Already connected");
 
     return new Promise<AuthOkPayload>((resolve, reject) => {
+      let initialAuthResolved = false;
+      let rejected = false;
+      let timer: ReturnType<typeof setTimeout>;
+      const fail = (err: Error) => {
+        if (initialAuthResolved || rejected) return;
+        rejected = true;
+        clearTimeout(timer);
+        this._connected = false;
+        this.stopHeartbeat();
+        this.socket?.disconnect();
+        this.socket = null;
+        reject(err);
+      };
+
       this.socket = io(this.serverUrl, {
         auth: { agent_token: this.agentToken },
         transports: ["websocket", "polling"],
         reconnection: true,
         reconnectionDelay: INITIAL_RETRY_DELAY_MS,
         reconnectionDelayMax: MAX_RETRY_DELAY_MS,
-        reconnectionAttempts: Infinity,
+        reconnectionAttempts: SOCKETIO_INFINITE_RECONNECT_ATTEMPTS,
       });
 
       const onAuthOk = (data: AuthOkPayload) => {
+        if (rejected) return;
+        clearTimeout(timer);
         this._agentUserId = data.user_id;
         this._displayName = data.display_name;
         this._connected = true;
         this.logger.info(`Authenticated as ${data.display_name} (${data.user_id})`);
         this.startHeartbeat(data.heartbeat_interval);
-        resolve(data);
+        if (!initialAuthResolved) {
+          initialAuthResolved = true;
+          resolve(data);
+        }
       };
+
+      timer = setTimeout(() => {
+        fail(new Error("auth_ok acknowledgement timed out"));
+      }, SERVER_RESPONSE_TIMEOUT_MS);
 
       // Subscribe to every auth_ok — the server re-sends it on each
       // reconnect. Re-subscribing also lets config changes to
       // heartbeat_interval take effect without restarting the process.
       this.socket.on("auth_ok", onAuthOk);
+
+      this.socket.on("connect", () => {
+        this.logger.info("Socket connected");
+      });
 
       this.socket.on("new_message", (data: NewMessagePayload) => {
         this.onMessage(data);
@@ -114,7 +146,7 @@ export class AgentClubClient {
 
       this.socket.on("connect_error", (err: Error) => {
         this.logger.error("Connection error:", err.message);
-        reject(err);
+        fail(err);
       });
 
       this.socket.on("disconnect", (reason: string) => {
@@ -180,7 +212,7 @@ export class AgentClubClient {
       };
       timer = setTimeout(() => {
         fail(new Error("send_message acknowledgement timed out"));
-      }, SEND_MESSAGE_ACK_TIMEOUT_MS);
+      }, SERVER_RESPONSE_TIMEOUT_MS);
 
       try {
         socket.emit("send_message", payload, (ack: unknown) => {
@@ -299,7 +331,9 @@ export class AgentClubClient {
 
     if (!resp.ok) {
       const body = await resp.text();
-      throw new Error(`Upload failed (${resp.status}): ${body}`);
+      throw new Error(
+        `Upload failed (${resp.status}): ${body.slice(0, LOG_BODY_PREVIEW_CHARS)}`,
+      );
     }
 
     return (await resp.json()) as UploadResponse;

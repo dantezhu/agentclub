@@ -175,6 +175,23 @@ def _inbound(**overrides):
     return msg
 
 
+class _HandlerSio:
+    def __init__(self):
+        self.event_handlers = {}
+        self.named_handlers = {}
+
+    def event(self, fn):
+        self.event_handlers[fn.__name__] = fn
+        return fn
+
+    def on(self, name):
+        def decorator(fn):
+            self.named_handlers[name] = fn
+            return fn
+
+        return decorator
+
+
 def run(coro):
     return asyncio.run(coro)
 
@@ -225,8 +242,9 @@ class TestInbound:
         run(adapter._ack("msg-1"))
 
         assert warnings
-        assert warnings[0][0][:2] == (
-            "[agentclub] mark_read failed for {}: {}",
+        assert warnings[0][0][:3] == (
+            "{} mark_read failed for {}: {}",
+            "[agentclub.hermes]",
             "msg-1",
         )
 
@@ -350,14 +368,15 @@ class TestOutbound:
         assert result.error == "denied"
         assert result.retryable is False
         assert warnings
-        assert warnings[0][0][:4] == (
-            "[agentclub] send_message failed: chat_type={} chat_id={} "
+        assert warnings[0][0][:5] == (
+            "{} send_message failed: chat_type={} chat_id={} "
             "content_type={} error={}",
+            "[agentclub.hermes]",
             "direct",
             "dc_chat-1",
             "text",
         )
-        assert warnings[0][0][4] == "denied"
+        assert warnings[0][0][5] == "denied"
 
     def test_send_returns_invalid_ack_as_retryable(self, adapter, monkeypatch):
         warnings = []
@@ -374,7 +393,70 @@ class TestOutbound:
         assert "Invalid send_message ack" in result.error
         assert result.retryable is True
         assert warnings
-        assert "Invalid send_message ack" in warnings[0][0][4]
+        assert "Invalid send_message ack" in warnings[0][0][5]
+
+
+class TestLifecycle:
+    def test_reconnect_logs_connected_and_authenticated(self, adapter, monkeypatch):
+        sio = _HandlerSio()
+        adapter._register_sio_handlers(sio)
+        infos = []
+        monkeypatch.setattr(
+            adapter_mod.logger,
+            "info",
+            lambda *args, **kwargs: infos.append(args),
+        )
+
+        async def scenario():
+            adapter._auth_future = asyncio.get_running_loop().create_future()
+            await sio.event_handlers["connect"]()
+            await sio.named_handlers["auth_ok"](
+                {
+                    "user_id": "agent-1",
+                    "display_name": "Agent One",
+                    "heartbeat_interval": 30,
+                }
+            )
+            await adapter._auth_future
+            adapter._auth_future = None
+
+            await sio.event_handlers["disconnect"]()
+            await sio.event_handlers["connect"]()
+            await sio.named_handlers["auth_ok"](
+                {
+                    "user_id": "agent-2",
+                    "display_name": "Agent Two",
+                    "heartbeat_interval": 15,
+                }
+            )
+
+        run(scenario())
+
+        assert infos.count(("{} socket connected", "[agentclub.hermes]")) == 2
+        auth_logs = [
+            args
+            for args in infos
+            if args and args[0] == "{} authenticated as {} ({}), heartbeat={}s"
+        ]
+        assert auth_logs == [
+            (
+                "{} authenticated as {} ({}), heartbeat={}s",
+                "[agentclub.hermes]",
+                "Agent One",
+                "agent-1",
+                30.0,
+            ),
+            (
+                "{} authenticated as {} ({}), heartbeat={}s",
+                "[agentclub.hermes]",
+                "Agent Two",
+                "agent-2",
+                15.0,
+            ),
+        ]
+        assert adapter._agent_user_id == "agent-2"
+        assert adapter._display_name == "Agent Two"
+        assert adapter._heartbeat_interval == 15.0
 
 
 class TestConfigBridge:

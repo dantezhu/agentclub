@@ -1,4 +1,5 @@
 import type { ChatType } from "./types.js";
+import { CHANNEL_ID, SESSION_KEY_SEPARATOR } from "./constants.js";
 
 /**
  * Separator used in this channel's conversation-side session key.
@@ -15,9 +16,6 @@ import type { ChatType } from "./types.js";
  * is what prevents the class of bug where a reply targets a stale
  * conversation ID after the chat has been recreated.
  */
-const CHANNEL_PREFIX = "agentclub";
-const SEP = ":";
-
 export interface ParsedSession {
   chatType: ChatType;
   /**
@@ -38,7 +36,7 @@ export interface ParsedSession {
  * @example toSessionKey("direct", "abc123") => "agentclub:direct:abc123"
  */
 export function toSessionKey(chatType: ChatType, chatId: string): string {
-  return `${CHANNEL_PREFIX}${SEP}${chatType}${SEP}${chatId}`;
+  return `${CHANNEL_ID}${SESSION_KEY_SEPARATOR}${chatType}${SESSION_KEY_SEPARATOR}${chatId}`;
 }
 
 /**
@@ -47,13 +45,13 @@ export function toSessionKey(chatType: ChatType, chatId: string): string {
  * (e.g. if an SDK-shaped `agent:...` key accidentally reaches here).
  */
 export function parseSessionKey(sessionKey: string): ParsedSession | null {
-  if (!sessionKey.startsWith(CHANNEL_PREFIX + SEP)) return null;
-  const rest = sessionKey.slice(CHANNEL_PREFIX.length + SEP.length);
-  const idx = rest.indexOf(SEP);
+  if (!sessionKey.startsWith(CHANNEL_ID + SESSION_KEY_SEPARATOR)) return null;
+  const rest = sessionKey.slice(CHANNEL_ID.length + SESSION_KEY_SEPARATOR.length);
+  const idx = rest.indexOf(SESSION_KEY_SEPARATOR);
   if (idx === -1) return null;
 
   const chatType = rest.slice(0, idx) as ChatType;
-  const chatId = rest.slice(idx + SEP.length);
+  const chatId = rest.slice(idx + SESSION_KEY_SEPARATOR.length);
   if (!chatId || (chatType !== "group" && chatType !== "direct")) return null;
 
   return { chatType, chatId };

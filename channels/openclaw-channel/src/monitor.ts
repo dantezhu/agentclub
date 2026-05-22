@@ -7,15 +7,13 @@ import { createInboundGateway, type InboundMessage } from "./gateway.js";
 import { setActiveClient, getRuntime } from "./runtime.js";
 import { inferContentTypeFromUploadType } from "./mime.js";
 import { toSessionKey } from "./session.js";
-import { INITIAL_RETRY_DELAY_MS, MAX_RETRY_DELAY_MS } from "./retry.js";
+import {
+  ATTACHMENT_MAX_BYTES,
+  CHANNEL_ID,
+  INITIAL_RETRY_DELAY_MS,
+  MAX_RETRY_DELAY_MS,
+} from "./constants.js";
 import { basename } from "node:path";
-
-const CHANNEL_ID = "agentclub";
-
-// Matches the upload limit of the Agent Club IM server (see backend
-// `config.py` MAX_CONTENT_LENGTH). `saveMediaBuffer` defaults to 5MB which
-// would truncate large attachments; we raise it to the IM server's own cap.
-const ATTACHMENT_MAX_BYTES = 50 * 1024 * 1024;
 
 /**
  * Wire format for @mentions, mirrored from the feishu channel:
@@ -109,7 +107,7 @@ function inferMimeType(filename: string, bucket: string | undefined): string | u
  * OpenClaw's plugin logger appears to treat only the first argument as the
  * log message (additional args are silently dropped or interpreted as
  * structured metadata). It also already prefixes each line with the plugin
- * namespace (e.g. `[agentclub]`), so we must NOT add our own prefix or pass
+ * namespace, so we must NOT add our own prefix or pass
  * multiple positional args — otherwise the visible message collapses to just
  * the namespace tag with an empty body.
  *

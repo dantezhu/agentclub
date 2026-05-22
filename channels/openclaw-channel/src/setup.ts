@@ -4,6 +4,7 @@ import {
   type AllowFromKindToken,
   type ResolvedAccount,
 } from "./types.js";
+import { CHANNEL_ID } from "./constants.js";
 
 /**
  * Validate the raw `allowFromKind` list. Unknown tokens (e.g. typos like
@@ -14,14 +15,14 @@ function validateAllowFromKind(raw: unknown): AllowFromKindToken[] {
   if (raw === undefined || raw === null) return [];
   if (!Array.isArray(raw)) {
     throw new Error(
-      `agentclub: allowFromKind must be an array, got ${typeof raw}`,
+      `${CHANNEL_ID}: allowFromKind must be an array, got ${typeof raw}`,
     );
   }
   const valid = new Set<string>(ALLOW_FROM_KIND_TOKENS);
   const invalid = raw.filter((t) => !valid.has(t as string));
   if (invalid.length > 0) {
     throw new Error(
-      `agentclub: allowFromKind entries must be one of ${JSON.stringify(
+      `${CHANNEL_ID}: allowFromKind entries must be one of ${JSON.stringify(
         ALLOW_FROM_KIND_TOKENS,
       )}; got invalid tokens: ${JSON.stringify(invalid)}`,
     );
@@ -38,10 +39,10 @@ export function resolveAccount(
   accountId?: string | null,
 ): ResolvedAccount {
   const channels = cfg.channels as Record<string, unknown> | undefined;
-  const section = channels?.["agentclub"] as AgentClubConfig | undefined;
+  const section = channels?.[CHANNEL_ID] as AgentClubConfig | undefined;
 
-  if (!section?.serverUrl) throw new Error("agentclub: serverUrl is required");
-  if (!section?.agentToken) throw new Error("agentclub: agentToken is required");
+  if (!section?.serverUrl) throw new Error(`${CHANNEL_ID}: serverUrl is required`);
+  if (!section?.agentToken) throw new Error(`${CHANNEL_ID}: agentToken is required`);
 
   return {
     accountId: accountId ?? null,
@@ -59,7 +60,7 @@ export function inspectAccount(
   _accountId?: string | null,
 ): { enabled: boolean; configured: boolean; tokenStatus: string } {
   const channels = cfg.channels as Record<string, unknown> | undefined;
-  const section = channels?.["agentclub"] as AgentClubConfig | undefined;
+  const section = channels?.[CHANNEL_ID] as AgentClubConfig | undefined;
 
   return {
     enabled: Boolean(section?.serverUrl && section?.agentToken),

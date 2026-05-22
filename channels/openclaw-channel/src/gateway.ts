@@ -1,5 +1,6 @@
 import type { NewMessagePayload, ResolvedAccount } from "./types.js";
 import { toSessionKey } from "./session.js";
+import { LOG_MESSAGE_PREVIEW_CHARS, LOG_PREFIX } from "./constants.js";
 
 export interface InboundMessage {
   sessionKey: string;
@@ -76,8 +77,8 @@ const SEEN_MESSAGE_CAPACITY = 1024;
 export function createInboundGateway(opts: InboundGatewayOptions) {
   const { agentUserId, account, onInbound, onAck } = opts;
   const logger = opts.logger ?? {
-    info: (...args: unknown[]) => console.log("[agentclub:gw]", ...args),
-    warn: (...args: unknown[]) => console.warn("[agentclub:gw]", ...args),
+    info: (...args: unknown[]) => console.log(LOG_PREFIX, ...args),
+    warn: (...args: unknown[]) => console.warn(LOG_PREFIX, ...args),
   };
 
   // Second layer of defense: dedupe recently-seen message ids within this
@@ -156,7 +157,7 @@ export function createInboundGateway(opts: InboundGatewayOptions) {
     const sessionKey = toSessionKey(msg.chat_type, msg.chat_id);
 
     logger.info(
-      `Inbound [${msg.chat_type}:${msg.chat_id}] from ${msg.sender_name}: ${text.slice(0, 80)}`,
+      `Inbound [${msg.chat_type}:${msg.chat_id}] from ${msg.sender_name}: ${text.slice(0, LOG_MESSAGE_PREVIEW_CHARS)}`,
     );
 
     // ACK immediately on accept — "plugin has taken responsibility". This is

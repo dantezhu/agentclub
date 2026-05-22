@@ -10,18 +10,16 @@ import { parseSessionKey } from "./session.js";
 import { getActiveClient, tryGetRuntime } from "./runtime.js";
 import { startAgentClubMonitor } from "./monitor.js";
 import { inferContentTypeFromUploadType } from "./mime.js";
+import { CHANNEL_ID, DEFAULT_ACCOUNT_ID } from "./constants.js";
 import { basename } from "node:path";
 
 export { resolveAccount, inspectAccount } from "./setup.js";
-
-/** Single-account plugin uses this constant for the only account id. */
-const DEFAULT_ACCOUNT_ID = "default";
 
 function getAgentClubSection(cfg: OpenClawConfig | Record<string, unknown>): AgentClubConfig | null {
   const channels = (cfg as Record<string, unknown>).channels as
     | Record<string, unknown>
     | undefined;
-  const section = channels?.["agentclub"] as AgentClubConfig | undefined;
+  const section = channels?.[CHANNEL_ID] as AgentClubConfig | undefined;
   return section ?? null;
 }
 
@@ -77,13 +75,13 @@ const agentClubConfigAdapter = {
   }),
 
   unconfiguredReason: (_account: ResolvedAccount, _cfg: OpenClawConfig): string =>
-    "agentclub: serverUrl and agentToken are required",
+    `${CHANNEL_ID}: serverUrl and agentToken are required`,
 };
 
 export const agentClubPlugin = createChatChannelPlugin<ResolvedAccount>({
   base: {
     ...createChannelPluginBase({
-      id: "agentclub",
+      id: CHANNEL_ID,
       setup: { resolveAccount, inspectAccount },
     }),
 
@@ -120,15 +118,15 @@ export const agentClubPlugin = createChatChannelPlugin<ResolvedAccount>({
       },
 
       targetResolver: {
-        looksLikeId: (raw: string) => raw.startsWith("agentclub:"),
-        hint: "agentclub:direct:<id> or agentclub:group:<id>",
+        looksLikeId: (raw: string) => raw.startsWith(`${CHANNEL_ID}:`),
+        hint: `${CHANNEL_ID}:direct:<id> or ${CHANNEL_ID}:group:<id>`,
       },
     },
   },
 
   security: {
     dm: {
-      channelKey: "agentclub",
+      channelKey: CHANNEL_ID,
       resolvePolicy: (account) => account.dmPolicy,
       resolveAllowFrom: (account) => account.allowFrom,
       defaultPolicy: "open",
@@ -139,7 +137,7 @@ export const agentClubPlugin = createChatChannelPlugin<ResolvedAccount>({
 
   outbound: {
     attachedResults: {
-      channel: "agentclub",
+      channel: CHANNEL_ID,
 
       async sendText(params) {
         const parsed = parseSessionKey(params.to);

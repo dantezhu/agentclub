@@ -1,12 +1,13 @@
 import { createPluginRuntimeStore } from "openclaw/plugin-sdk/runtime-store";
 import type { PluginRuntime } from "openclaw/plugin-sdk/channel-core";
 import type { AgentClubClient } from "./client.js";
+import { CHANNEL_ID } from "./constants.js";
 
 // -- Plugin runtime store ---------------------------------------------------
 
 const store = createPluginRuntimeStore<PluginRuntime>({
-  pluginId: "agentclub",
-  errorMessage: "agentclub runtime not initialized",
+  pluginId: CHANNEL_ID,
+  errorMessage: `${CHANNEL_ID} runtime not initialized`,
 });
 
 export const setRuntime = store.setRuntime;

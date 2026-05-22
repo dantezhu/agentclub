@@ -31,12 +31,20 @@ from gateway.platforms.base import (
 )
 
 
+_LOG_PREFIX = "[agentclub.hermes]"
 _DEDUP_CAPACITY = 1024
 _GROUP_PREFIX = "gc_"
 _DIRECT_PREFIX = "dc_"
+_SOCKETIO_INFINITE_RECONNECT_ATTEMPTS = 0
 _INITIAL_HEARTBEAT_SECONDS = 30.0
 _INITIAL_RETRY_DELAY = 1.0
 _MAX_RETRY_DELAY = 30.0
+_MIN_HEARTBEAT_SLEEP_SECONDS = 1.0
+_SERVER_RESPONSE_TIMEOUT_SECONDS = 10
+_HTTP_OK = 200
+_LOG_MESSAGE_PREVIEW_CHARS = 80
+_LOG_BODY_PREVIEW_CHARS = 200
+_TOKEN_LOCK_HASH_CHARS = 16
 _AT_TAG_RE = re.compile(r'<at user_id="([^"]+)">([^<]*)</at>')
 _ALLOW_KIND_TOKENS = {"*", "human", "agent"}
 _TRUE_VALUES = {"1", "true", "yes", "on"}
@@ -215,7 +223,7 @@ class AgentClubAdapter(BasePlatformAdapter):
         try:
             self.config.extra.setdefault("group_sessions_per_user", False)
         except Exception as exc:
-            logger.debug("[agentclub] could not set group session default: {}", exc)
+            logger.debug("{} could not set group session default: {}", _LOG_PREFIX, exc)
 
         self.server_url = (
             os.getenv("AGENTCLUB_SERVER_URL")
@@ -256,7 +264,7 @@ class AgentClubAdapter(BasePlatformAdapter):
 
     async def connect(self) -> bool:
         if not self.server_url:
-            logger.error("[agentclub] server_url is not configured")
+            logger.error("{} server_url is not configured", _LOG_PREFIX)
             self._set_fatal_error(
                 "config_missing",
                 "AGENTCLUB_SERVER_URL or agentclub.server_url is required",
@@ -264,7 +272,7 @@ class AgentClubAdapter(BasePlatformAdapter):
             )
             return False
         if not self.agent_token:
-            logger.error("[agentclub] agent_token is not configured")
+            logger.error("{} agent_token is not configured", _LOG_PREFIX)
             self._set_fatal_error(
                 "config_missing",
                 "AGENTCLUB_AGENT_TOKEN or agentclub.agent_token is required",
@@ -276,13 +284,13 @@ class AgentClubAdapter(BasePlatformAdapter):
             import aiohttp
             import socketio
         except ImportError as exc:
-            logger.error("[agentclub] missing dependency: {}", exc)
+            logger.error("{} missing dependency: {}", _LOG_PREFIX, exc)
             self._set_fatal_error("missing_dependency", str(exc), retryable=False)
             return False
 
         token_hash = hashlib.sha256(
             f"{self.server_url}:{self.agent_token}".encode("utf-8")
-        ).hexdigest()[:16]
+        ).hexdigest()[:_TOKEN_LOCK_HASH_CHARS]
         try:
             self._lock_acquired = self._acquire_platform_lock(
                 "agentclub",
@@ -290,10 +298,10 @@ class AgentClubAdapter(BasePlatformAdapter):
                 "Agent Club token",
             )
             if not self._lock_acquired:
-                logger.warning("[agentclub] Agent Club token lock is already held")
+                logger.warning("{} Agent Club token lock is already held", _LOG_PREFIX)
                 return False
         except Exception as exc:
-            logger.warning("[agentclub] platform lock acquisition failed: {}", exc)
+            logger.warning("{} platform lock acquisition failed: {}", _LOG_PREFIX, exc)
             self._lock_acquired = False
 
         self._tmp_dir = tempfile.mkdtemp(prefix="agentclub_hermes_")
@@ -302,30 +310,34 @@ class AgentClubAdapter(BasePlatformAdapter):
         )
         self._sio = socketio.AsyncClient(
             reconnection=True,
-            reconnection_attempts=0,
+            reconnection_attempts=_SOCKETIO_INFINITE_RECONNECT_ATTEMPTS,
             reconnection_delay=_INITIAL_RETRY_DELAY,
             reconnection_delay_max=_MAX_RETRY_DELAY,
         )
         self._register_sio_handlers(self._sio)
         self._auth_future = asyncio.get_running_loop().create_future()
 
-        logger.info("[agentclub] connecting to {}", self.server_url)
+        logger.info("{} connecting to {}", _LOG_PREFIX, self.server_url)
         try:
             await self._sio.connect(
                 self.server_url,
                 auth={"agent_token": self.agent_token},
                 transports=["websocket", "polling"],
             )
-            await asyncio.wait_for(self._auth_future, timeout=30.0)
+            await asyncio.wait_for(
+                self._auth_future,
+                timeout=_SERVER_RESPONSE_TIMEOUT_SECONDS,
+            )
+            self._auth_future = None
         except Exception as exc:
-            logger.warning("[agentclub] connect failed: {}", exc)
+            logger.warning("{} connect failed: {}", _LOG_PREFIX, exc)
             self._set_fatal_error("connect_failed", str(exc), retryable=True)
             await self.disconnect()
             return False
 
         self._mark_connected()
         self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
-        logger.info("[agentclub] started")
+        logger.info("{} started", _LOG_PREFIX)
         return True
 
     async def disconnect(self) -> None:
@@ -337,20 +349,21 @@ class AgentClubAdapter(BasePlatformAdapter):
             except asyncio.CancelledError:
                 pass
             except Exception as exc:
-                logger.debug("[agentclub] heartbeat task shutdown error: {}", exc)
+                logger.debug("{} heartbeat task shutdown error: {}", _LOG_PREFIX, exc)
             self._heartbeat_task = None
         if self._sio is not None:
             try:
                 if self._sio.connected:
                     await self._sio.disconnect()
             except Exception as exc:
-                logger.warning("[agentclub] disconnect error: {}", exc)
+                logger.warning("{} disconnect error: {}", _LOG_PREFIX, exc)
             self._sio = None
+        self._auth_future = None
         if self._http is not None:
             try:
                 await self._http.close()
             except Exception as exc:
-                logger.warning("[agentclub] http close error: {}", exc)
+                logger.warning("{} http close error: {}", _LOG_PREFIX, exc)
             self._http = None
         if self._tmp_dir:
             shutil.rmtree(self._tmp_dir, ignore_errors=True)
@@ -359,7 +372,7 @@ class AgentClubAdapter(BasePlatformAdapter):
             try:
                 self._release_platform_lock()
             except Exception as exc:
-                logger.warning("[agentclub] platform lock release failed: {}", exc)
+                logger.warning("{} platform lock release failed: {}", _LOG_PREFIX, exc)
             self._lock_acquired = False
 
     async def send(
@@ -373,10 +386,19 @@ class AgentClubAdapter(BasePlatformAdapter):
         decoded = _decode_chat_id(chat_id or "")
         if decoded is None:
             error = "Agent Club chat_id must start with gc_ or dc_"
-            logger.warning("[agentclub] send_message failed: chat_id={} error={}", chat_id, error)
+            logger.warning(
+                "{} send_message failed: chat_id={} error={}",
+                _LOG_PREFIX,
+                chat_id,
+                error,
+            )
             return SendResult(success=False, error=error)
         if not self._is_socket_connected():
-            logger.warning("[agentclub] send_message failed: chat_id={} error=Not connected", chat_id)
+            logger.warning(
+                "{} send_message failed: chat_id={} error=Not connected",
+                _LOG_PREFIX,
+                chat_id,
+            )
             return SendResult(success=False, error="Not connected", retryable=True)
 
         chat_type, target_chat_id = decoded
@@ -485,12 +507,12 @@ class AgentClubAdapter(BasePlatformAdapter):
         url = urljoin(self.server_url + "/", "api/agent/chats")
         try:
             async with self._http.get(url) as resp:
-                if resp.status != 200:
-                    logger.debug("[agentclub] listChats() HTTP {}", resp.status)
+                if resp.status != _HTTP_OK:
+                    logger.debug("{} listChats() HTTP {}", _LOG_PREFIX, resp.status)
                     return empty
                 data = await resp.json()
         except Exception as exc:
-            logger.debug("[agentclub] listChats() error: {}", exc)
+            logger.debug("{} listChats() error: {}", _LOG_PREFIX, exc)
             return empty
         if not isinstance(data, dict):
             return empty
@@ -501,11 +523,11 @@ class AgentClubAdapter(BasePlatformAdapter):
     def _register_sio_handlers(self, sio: Any) -> None:
         @sio.event
         async def connect() -> None:
-            logger.info("[agentclub] socket connected")
+            logger.info("{} socket connected", _LOG_PREFIX)
 
         @sio.event
         async def disconnect() -> None:
-            logger.warning("[agentclub] socket disconnected")
+            logger.warning("{} socket disconnected", _LOG_PREFIX)
 
         @sio.on("auth_ok")
         async def _on_auth_ok(data: dict[str, Any]) -> None:
@@ -518,7 +540,8 @@ class AgentClubAdapter(BasePlatformAdapter):
             if interval > 0:
                 self._heartbeat_interval = interval
             logger.info(
-                "[agentclub] authenticated as {} ({}), heartbeat={}s",
+                "{} authenticated as {} ({}), heartbeat={}s",
+                _LOG_PREFIX,
                 self._display_name,
                 self._agent_user_id,
                 self._heartbeat_interval,
@@ -528,7 +551,7 @@ class AgentClubAdapter(BasePlatformAdapter):
 
         @sio.on("error")
         async def _on_error(data: dict[str, Any]) -> None:
-            logger.warning("[agentclub] server error: {}", data)
+            logger.warning("{} server error: {}", _LOG_PREFIX, data)
 
         @sio.on("new_message")
         async def _on_new_message(data: dict[str, Any]) -> None:
@@ -536,7 +559,9 @@ class AgentClubAdapter(BasePlatformAdapter):
 
         @sio.on("offline_messages")
         async def _on_offline_messages(messages: list[dict[str, Any]]) -> None:
-            logger.info("[agentclub] received {} offline message(s)", len(messages or []))
+            logger.info(
+                "{} received {} offline message(s)", _LOG_PREFIX, len(messages or [])
+            )
             for message in messages or []:
                 await self._process_inbound(message)
 
@@ -547,8 +572,10 @@ class AgentClubAdapter(BasePlatformAdapter):
                     try:
                         await self._sio.emit("heartbeat")
                     except Exception as exc:
-                        logger.debug("[agentclub] heartbeat emit failed: {}", exc)
-                await asyncio.sleep(max(1.0, self._heartbeat_interval))
+                        logger.debug("{} heartbeat emit failed: {}", _LOG_PREFIX, exc)
+                await asyncio.sleep(
+                    max(_MIN_HEARTBEAT_SLEEP_SECONDS, self._heartbeat_interval)
+                )
         except asyncio.CancelledError:
             pass
 
@@ -622,6 +649,15 @@ class AgentClubAdapter(BasePlatformAdapter):
 
         await self._ack(message_id)
 
+        logger.info(
+            "{} inbound [{}:{}] from {}: {}",
+            _LOG_PREFIX,
+            chat_type,
+            chat_id,
+            sender_name,
+            text[:_LOG_MESSAGE_PREVIEW_CHARS],
+        )
+
         source = self.build_source(
             chat_id=chat_id,
             chat_name=chat_id,
@@ -657,15 +693,18 @@ class AgentClubAdapter(BasePlatformAdapter):
         try:
             await self._sio.emit("mark_read", {"message_ids": [message_id]})
         except Exception as exc:
-            logger.warning("[agentclub] mark_read failed for {}: {}", message_id, exc)
+            logger.warning(
+                "{} mark_read failed for {}: {}", _LOG_PREFIX, message_id, exc
+            )
 
     async def _send_payload(self, payload: dict[str, Any]) -> SendResult:
         try:
             ack = await self._emit_send_message(payload)
         except Exception as exc:
             logger.warning(
-                "[agentclub] send_message failed: chat_type={} chat_id={} "
+                "{} send_message failed: chat_type={} chat_id={} "
                 "content_type={} error={}",
+                _LOG_PREFIX,
                 payload.get("chat_type"),
                 payload.get("chat_id"),
                 payload.get("content_type"),
@@ -675,8 +714,9 @@ class AgentClubAdapter(BasePlatformAdapter):
         if not isinstance(ack, dict):
             error = f"Invalid send_message ack: {ack!r}"
             logger.warning(
-                "[agentclub] send_message failed: chat_type={} chat_id={} "
+                "{} send_message failed: chat_type={} chat_id={} "
                 "content_type={} error={}",
+                _LOG_PREFIX,
                 payload.get("chat_type"),
                 payload.get("chat_id"),
                 payload.get("content_type"),
@@ -691,8 +731,9 @@ class AgentClubAdapter(BasePlatformAdapter):
         if not ack.get("ok"):
             error = str(ack.get("error") or "send_message failed")
             logger.warning(
-                "[agentclub] send_message failed: chat_type={} chat_id={} "
+                "{} send_message failed: chat_type={} chat_id={} "
                 "content_type={} error={}",
+                _LOG_PREFIX,
                 payload.get("chat_type"),
                 payload.get("chat_id"),
                 payload.get("content_type"),
@@ -711,7 +752,11 @@ class AgentClubAdapter(BasePlatformAdapter):
         )
 
     async def _emit_send_message(self, payload: dict[str, Any]) -> Any:
-        return await self._sio.call("send_message", payload, timeout=10)
+        return await self._sio.call(
+            "send_message",
+            payload,
+            timeout=_SERVER_RESPONSE_TIMEOUT_SECONDS,
+        )
 
     async def _send_file_message(
         self,
@@ -723,16 +768,30 @@ class AgentClubAdapter(BasePlatformAdapter):
         decoded = _decode_chat_id(chat_id or "")
         if decoded is None:
             error = "Agent Club chat_id must start with gc_ or dc_"
-            logger.warning("[agentclub] send_message failed: chat_id={} error={}", chat_id, error)
+            logger.warning(
+                "{} send_message failed: chat_id={} error={}",
+                _LOG_PREFIX,
+                chat_id,
+                error,
+            )
             return SendResult(success=False, error=error)
         if not self._is_socket_connected():
-            logger.warning("[agentclub] send_message failed: chat_id={} error=Not connected", chat_id)
+            logger.warning(
+                "{} send_message failed: chat_id={} error=Not connected",
+                _LOG_PREFIX,
+                chat_id,
+            )
             return SendResult(success=False, error="Not connected", retryable=True)
 
         uploaded = await self._upload_attachment(local_path)
         if not uploaded:
             error = f"Upload failed: {local_path}"
-            logger.warning("[agentclub] send_message failed: chat_id={} error={}", chat_id, error)
+            logger.warning(
+                "{} send_message failed: chat_id={} error={}",
+                _LOG_PREFIX,
+                chat_id,
+                error,
+            )
             return SendResult(success=False, error=error)
         chat_type, target_chat_id = decoded
         content = (caption or "").strip()
@@ -756,12 +815,12 @@ class AgentClubAdapter(BasePlatformAdapter):
             return None
         path = Path(local_path).expanduser()
         if not path.is_file():
-            logger.warning("[agentclub] upload skipped; not a file: {}", local_path)
+            logger.warning("{} upload skipped; not a file: {}", _LOG_PREFIX, local_path)
             return None
         try:
             import aiohttp
         except ImportError as exc:
-            logger.warning("[agentclub] upload skipped; missing dependency: {}", exc)
+            logger.warning("{} upload skipped; missing dependency: {}", _LOG_PREFIX, exc)
             return None
         url = urljoin(self.server_url + "/", "api/agent/upload")
         try:
@@ -774,17 +833,18 @@ class AgentClubAdapter(BasePlatformAdapter):
                     content_type="application/octet-stream",
                 )
                 async with self._http.post(url, data=data) as resp:
-                    if resp.status != 200:
+                    if resp.status != _HTTP_OK:
                         body = await resp.text()
                         logger.warning(
-                            "[agentclub] upload failed HTTP {}: {}",
+                            "{} upload failed HTTP {}: {}",
+                            _LOG_PREFIX,
                             resp.status,
-                            body[:200],
+                            body[:_LOG_BODY_PREVIEW_CHARS],
                         )
                         return None
                     return await resp.json()
         except Exception as exc:
-            logger.warning("[agentclub] upload error for {}: {}", local_path, exc)
+            logger.warning("{} upload error for {}: {}", _LOG_PREFIX, local_path, exc)
             return None
 
     async def _download_attachment(self, file_url: str, file_name: str) -> str | None:
@@ -799,9 +859,10 @@ class AgentClubAdapter(BasePlatformAdapter):
         local_path = os.path.join(self._tmp_dir, safe_name)
         try:
             async with self._http.get(absolute_url) as resp:
-                if resp.status != 200:
+                if resp.status != _HTTP_OK:
                     logger.warning(
-                        "[agentclub] download failed HTTP {}: {}",
+                        "{} download failed HTTP {}: {}",
+                        _LOG_PREFIX,
                         resp.status,
                         absolute_url,
                     )
@@ -811,7 +872,9 @@ class AgentClubAdapter(BasePlatformAdapter):
                 fh.write(data)
             return local_path
         except Exception as exc:
-            logger.warning("[agentclub] download error for {}: {}", absolute_url, exc)
+            logger.warning(
+                "{} download error for {}: {}", _LOG_PREFIX, absolute_url, exc
+            )
             return None
 
     async def _list_group_members(self, group_id: str) -> list[dict[str, Any]]:
@@ -822,16 +885,19 @@ class AgentClubAdapter(BasePlatformAdapter):
         url = urljoin(self.server_url + "/", f"api/agent/groups/{group_id}/members")
         try:
             async with self._http.get(url) as resp:
-                if resp.status != 200:
+                if resp.status != _HTTP_OK:
                     logger.debug(
-                        "[agentclub] listGroupMembers({}) HTTP {}",
+                        "{} listGroupMembers({}) HTTP {}",
+                        _LOG_PREFIX,
                         group_id,
                         resp.status,
                     )
                     return []
                 data = await resp.json()
         except Exception as exc:
-            logger.debug("[agentclub] listGroupMembers({}) error: {}", group_id, exc)
+            logger.debug(
+                "{} listGroupMembers({}) error: {}", _LOG_PREFIX, group_id, exc
+            )
             return []
         roster = data if isinstance(data, list) else []
         self._roster_cache[group_id] = roster
