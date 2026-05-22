@@ -800,6 +800,7 @@ class _FakeSio:
         self._outcomes = outcomes
         self._on_success = on_success
         self.connected = False
+        self.disconnect_count = 0
         self._event_handlers = {}
         self._named_handlers = {}
 
@@ -832,6 +833,7 @@ class _FakeSio:
             await self._on_success(self)
 
     async def disconnect(self):
+        self.disconnect_count += 1
         self.connected = False
 
     async def emit(self, *args, **kwargs):
@@ -914,6 +916,7 @@ class TestRetryLifecycle:
             await asyncio.wait_for(connected.wait(), timeout=1)
             assert retry_delays == [1.0]
             assert len(sio_instances) == 2
+            assert sio_instances[0].disconnect_count == 1
             assert ch.is_running is True
         finally:
             await ch.stop()
@@ -962,6 +965,50 @@ class TestRetryLifecycle:
                     "reconnection_delay_max": _MAX_RETRY_DELAY,
                 }
             ]
+        finally:
+            await ch.stop()
+            await asyncio.wait_for(task, timeout=1)
+
+    @pytest.mark.asyncio
+    async def test_stop_closes_http_session_before_start_task_finishes(
+        self, monkeypatch
+    ):
+        cfg = AgentClubConfig(
+            enabled=True,
+            server_url="http://localhost:5555",
+            agent_token="tok",
+            allow_from=["*"],
+            allow_from_kind=["*"],
+        )
+        ch = AgentClubChannel(cfg, MagicMock())
+        connected = asyncio.Event()
+
+        async def on_success(_sio):
+            connected.set()
+
+        def fake_async_client(*args, **kwargs):
+            return _FakeSio(["ok"], on_success=on_success)
+
+        monkeypatch.setattr(
+            "nanobot_channel_agentclub.channel.aiohttp.ClientSession",
+            _FakeClientSession,
+        )
+        monkeypatch.setattr(
+            "nanobot_channel_agentclub.channel.socketio.AsyncClient",
+            fake_async_client,
+        )
+
+        task = asyncio.create_task(ch.start())
+        try:
+            await asyncio.wait_for(connected.wait(), timeout=1)
+            session = ch._http
+            assert session is not None
+            assert session.closed is False
+
+            await ch.stop()
+
+            assert session.closed is True
+            assert ch._http is None
         finally:
             await ch.stop()
             await asyncio.wait_for(task, timeout=1)

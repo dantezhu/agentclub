@@ -249,6 +249,7 @@ class AgentClubChannel(BaseChannel):
         self._stop_event: asyncio.Event | None = None
         self._heartbeat_task: asyncio.Task | None = None
         self._auth_future: asyncio.Future | None = None
+        self._cleanup_done = True
         # Cadence of application-level heartbeats. Seeded with a sane
         # default and overwritten when `auth_ok` arrives so the server's
         # Config acts as the single source of truth.
@@ -283,6 +284,7 @@ class AgentClubChannel(BaseChannel):
             return
 
         self._running = True
+        self._cleanup_done = False
         self._tmp_dir = tempfile.mkdtemp(prefix="agentclub_")
         self._stop_event = asyncio.Event()
         self._http = aiohttp.ClientSession(
@@ -339,6 +341,7 @@ class AgentClubChannel(BaseChannel):
         self._running = False
         if self._stop_event is not None:
             self._stop_event.set()
+        await self._cleanup()
 
     async def _heartbeat_loop(self) -> None:
         """Emit an application-level heartbeat while connected.
@@ -369,6 +372,8 @@ class AgentClubChannel(BaseChannel):
 
     async def _cleanup(self) -> None:
         """Tear down in a fixed order: heartbeat, sio, http, tmp dir."""
+        if self._cleanup_done:
+            return
         if self._heartbeat_task is not None:
             self._heartbeat_task.cancel()
             try:
@@ -396,6 +401,7 @@ class AgentClubChannel(BaseChannel):
             except OSError:
                 pass
         self._tmp_dir = None
+        self._cleanup_done = True
         logger.info("{} stopped", _LOG_PREFIX)
 
     async def _reset_socket(self) -> None:
@@ -403,8 +409,7 @@ class AgentClubChannel(BaseChannel):
         if self._sio is None:
             return
         try:
-            if self._sio.connected:
-                await self._sio.disconnect()
+            await self._sio.disconnect()
         except Exception as exc:
             logger.warning("{} disconnect error: {}", _LOG_PREFIX, exc)
         finally:

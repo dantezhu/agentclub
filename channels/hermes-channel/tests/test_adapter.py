@@ -397,6 +397,15 @@ class TestOutbound:
 
 
 class TestLifecycle:
+    def test_disconnect_resets_socket_even_when_connect_never_succeeded(self, adapter):
+        sio = SimpleNamespace(connected=False, disconnect=AsyncMock())
+        adapter._sio = sio
+
+        run(adapter.disconnect())
+
+        sio.disconnect.assert_awaited_once()
+        assert adapter._sio is None
+
     def test_reconnect_logs_connected_and_authenticated(self, adapter, monkeypatch):
         sio = _HandlerSio()
         adapter._register_sio_handlers(sio)

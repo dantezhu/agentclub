@@ -353,8 +353,7 @@ class AgentClubAdapter(BasePlatformAdapter):
             self._heartbeat_task = None
         if self._sio is not None:
             try:
-                if self._sio.connected:
-                    await self._sio.disconnect()
+                await self._sio.disconnect()
             except Exception as exc:
                 logger.warning("{} disconnect error: {}", _LOG_PREFIX, exc)
             self._sio = None
