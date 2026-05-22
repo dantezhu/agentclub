@@ -335,23 +335,46 @@ class TestOutbound:
         assert payload["file_url"] == "/media/uploads/doc.txt"
         assert payload["mentions"] == ["u1"]
 
-    def test_send_returns_server_error_ack(self, adapter):
+    def test_send_returns_server_error_ack(self, adapter, monkeypatch):
+        warnings = []
         adapter._sio.call = AsyncMock(return_value={"ok": False, "error": "denied"})
+        monkeypatch.setattr(
+            adapter_mod.logger,
+            "warning",
+            lambda *args, **kwargs: warnings.append((args, kwargs)),
+        )
 
         result = run(adapter.send("dc_chat-1", "hi"))
 
         assert result.success is False
         assert result.error == "denied"
         assert result.retryable is False
+        assert warnings
+        assert warnings[0][0][:4] == (
+            "[agentclub] send_message failed: chat_type={} chat_id={} "
+            "content_type={} error={}",
+            "direct",
+            "dc_chat-1",
+            "text",
+        )
+        assert warnings[0][0][4] == "denied"
 
-    def test_send_returns_invalid_ack_as_retryable(self, adapter):
+    def test_send_returns_invalid_ack_as_retryable(self, adapter, monkeypatch):
+        warnings = []
         adapter._sio.call = AsyncMock(return_value=None)
+        monkeypatch.setattr(
+            adapter_mod.logger,
+            "warning",
+            lambda *args, **kwargs: warnings.append((args, kwargs)),
+        )
 
         result = run(adapter.send("dc_chat-1", "hi"))
 
         assert result.success is False
         assert "Invalid send_message ack" in result.error
         assert result.retryable is True
+        assert warnings
+        assert "Invalid send_message ack" in warnings[0][0][4]
 
 
 class TestConfigBridge:

@@ -372,11 +372,11 @@ class AgentClubAdapter(BasePlatformAdapter):
         del reply_to, metadata
         decoded = _decode_chat_id(chat_id or "")
         if decoded is None:
-            return SendResult(
-                success=False,
-                error="Agent Club chat_id must start with gc_ or dc_",
-            )
+            error = "Agent Club chat_id must start with gc_ or dc_"
+            logger.warning("[agentclub] send_message failed: chat_id={} error={}", chat_id, error)
+            return SendResult(success=False, error=error)
         if not self._is_socket_connected():
+            logger.warning("[agentclub] send_message failed: chat_id={} error=Not connected", chat_id)
             return SendResult(success=False, error="Not connected", retryable=True)
 
         chat_type, target_chat_id = decoded
@@ -663,18 +663,44 @@ class AgentClubAdapter(BasePlatformAdapter):
         try:
             ack = await self._emit_send_message(payload)
         except Exception as exc:
+            logger.warning(
+                "[agentclub] send_message failed: chat_type={} chat_id={} "
+                "content_type={} error={}",
+                payload.get("chat_type"),
+                payload.get("chat_id"),
+                payload.get("content_type"),
+                exc,
+            )
             return SendResult(success=False, error=str(exc), retryable=True)
         if not isinstance(ack, dict):
+            error = f"Invalid send_message ack: {ack!r}"
+            logger.warning(
+                "[agentclub] send_message failed: chat_type={} chat_id={} "
+                "content_type={} error={}",
+                payload.get("chat_type"),
+                payload.get("chat_id"),
+                payload.get("content_type"),
+                error,
+            )
             return SendResult(
                 success=False,
-                error=f"Invalid send_message ack: {ack!r}",
+                error=error,
                 raw_response=ack,
                 retryable=True,
             )
         if not ack.get("ok"):
+            error = str(ack.get("error") or "send_message failed")
+            logger.warning(
+                "[agentclub] send_message failed: chat_type={} chat_id={} "
+                "content_type={} error={}",
+                payload.get("chat_type"),
+                payload.get("chat_id"),
+                payload.get("content_type"),
+                error,
+            )
             return SendResult(
                 success=False,
-                error=str(ack.get("error") or "send_message failed"),
+                error=error,
                 raw_response=ack,
                 retryable=False,
             )
@@ -696,16 +722,18 @@ class AgentClubAdapter(BasePlatformAdapter):
     ) -> SendResult:
         decoded = _decode_chat_id(chat_id or "")
         if decoded is None:
-            return SendResult(
-                success=False,
-                error="Agent Club chat_id must start with gc_ or dc_",
-            )
+            error = "Agent Club chat_id must start with gc_ or dc_"
+            logger.warning("[agentclub] send_message failed: chat_id={} error={}", chat_id, error)
+            return SendResult(success=False, error=error)
         if not self._is_socket_connected():
+            logger.warning("[agentclub] send_message failed: chat_id={} error=Not connected", chat_id)
             return SendResult(success=False, error="Not connected", retryable=True)
 
         uploaded = await self._upload_attachment(local_path)
         if not uploaded:
-            return SendResult(success=False, error=f"Upload failed: {local_path}")
+            error = f"Upload failed: {local_path}"
+            logger.warning("[agentclub] send_message failed: chat_id={} error={}", chat_id, error)
+            return SendResult(success=False, error=error)
         chat_type, target_chat_id = decoded
         content = (caption or "").strip()
         payload: dict[str, Any] = {
