@@ -36,7 +36,8 @@ from .config import Config
 _FORMAT = "%(asctime)s %(levelname)s [%(name)s] %(message)s"
 _DATEFMT = "%Y-%m-%d %H:%M:%S"
 
-_LOG_FILENAME = "agentclub.log"
+_LOGGER_NAMESPACE = __name__.partition(".")[0]
+_LOG_FILENAME = f"{_LOGGER_NAMESPACE}.log"
 
 # Module-level guard so multiple imports / repeated CLI invocations
 # in the same process (notably tests) don't stack handlers and
@@ -45,7 +46,7 @@ _configured = False
 
 
 def setup_logging() -> str:
-    """Configure the ``agentclub`` logger tree. Returns the log file path.
+    """Configure the package logger tree. Returns the log file path.
 
     Idempotent: a second call with the same Config is a no-op. If the
     log directory cannot be created we fall back to stdout-only and
@@ -59,19 +60,18 @@ def setup_logging() -> str:
     level = getattr(logging, Config.LOG_LEVEL, logging.INFO)
     formatter = logging.Formatter(_FORMAT, datefmt=_DATEFMT)
 
-    # We attach handlers to the ``agentclub`` namespace logger rather
+    # We attach handlers to the package namespace logger rather
     # than the root logger, so noisy third-party libraries (werkzeug,
     # engineio, socketio) keep their default behaviour and don't pollute
     # our file. Application code should always log via
-    # ``logging.getLogger("agentclub.<module>")`` (i.e. ``__name__`` from
-    # inside the package) to participate.
-    root = logging.getLogger("agentclub")
-    root.setLevel(level)
-    root.propagate = False
+    # ``logging.getLogger(__name__)`` from inside the package to participate.
+    namespace_logger = logging.getLogger(_LOGGER_NAMESPACE)
+    namespace_logger.setLevel(level)
+    namespace_logger.propagate = False
 
     stream = logging.StreamHandler(sys.stdout)
     stream.setFormatter(formatter)
-    root.addHandler(stream)
+    namespace_logger.addHandler(stream)
 
     log_path = os.path.join(Config.LOG_DIR, _LOG_FILENAME)
     try:
@@ -85,16 +85,16 @@ def setup_logging() -> str:
         # Rotated files are named ``agentclub.log.1`` (most recent),
         # ``agentclub.log.2``, ... up to .{LOG_BACKUP_COUNT}.
         file_handler.setFormatter(formatter)
-        root.addHandler(file_handler)
+        namespace_logger.addHandler(file_handler)
     except OSError as e:
         # File handler couldn't open. Stay alive on stdout only.
-        root.warning(
+        namespace_logger.warning(
             "logging_setup: cannot write to %s (%s); stdout-only mode",
             log_path, e,
         )
 
     _configured = True
-    root.info(
+    namespace_logger.info(
         "logging ready: level=%s file=%s rotation=%dMB×%d",
         Config.LOG_LEVEL, log_path,
         Config.LOG_MAX_SIZE_MB, Config.LOG_BACKUP_COUNT,
