@@ -46,7 +46,7 @@ If you do not pass `--admin-password`, Agent Club generates one and prints it on
 agentclub serve
 ```
 
-By default the server listens on `127.0.0.1:5555`. Open `http://localhost:5555` and sign in with the admin account created during onboarding.
+By default the server listens on `127.0.0.1:5555`. Open `http://127.0.0.1:5555` and sign in with the admin account created during onboarding.
 
 To expose the server on a LAN or public interface for this run:
 
