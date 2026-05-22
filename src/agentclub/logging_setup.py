@@ -5,8 +5,8 @@ bootstrap, after configuration has been resolved. After that, any module
 can do::
 
     import logging
-    log = logging.getLogger(__name__)
-    log.info("hello")
+    logger = logging.getLogger(__name__)
+    logger.info("hello")
 
 and the message ends up in two places:
 

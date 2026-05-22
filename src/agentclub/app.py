@@ -15,7 +15,7 @@ from flask_socketio import SocketIO
 from .config import Config
 from . import models
 
-log = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 
 app = Flask(__name__, static_folder="static", template_folder="templates")
@@ -110,11 +110,11 @@ def ensure_db():
 def _log_unhandled(e):
     """Last-resort logger for anything routes don't catch. HTTPException
     is returned as-is so Flask still serves the intended 4xx page; only
-    true 5xx-class bugs hit ``log.exception`` and surface a generic 500.
+    true 5xx-class bugs hit ``logger.exception`` and surface a generic 500.
     """
     if isinstance(e, HTTPException):
         return e
-    log.exception("unhandled exception on %s %s", request.method, request.path)
+    logger.exception("unhandled exception on %s %s", request.method, request.path)
     return jsonify({"error": "Internal server error"}), 500
 
 

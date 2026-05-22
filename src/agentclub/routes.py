@@ -10,7 +10,7 @@ from .auth import hash_password, verify_password, generate_agent_token, login_re
 from . import models
 
 api = Blueprint("api", __name__)
-log = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 
 def _get_ext(filename):
@@ -91,12 +91,12 @@ def login():
         # Brute-force / typo investigation needs to know the attempted
         # username and the source IP, but never the password (don't even
         # log its length — gives attackers a sidechannel).
-        log.warning("login failed: username=%r ip=%s", username, request.remote_addr)
+        logger.warning("login failed: username=%r ip=%s", username, request.remote_addr)
         return jsonify({"error": "Invalid username or password"}), 401
 
     session.permanent = True
     session["user_id"] = user["id"]
-    log.info("login ok: user=%s (%s) ip=%s", user["username"], user["id"], request.remote_addr)
+    logger.info("login ok: user=%s (%s) ip=%s", user["username"], user["id"], request.remote_addr)
     return jsonify(_safe_user(user))
 
 
@@ -161,7 +161,7 @@ def delete_agent(agent_id):
         # Either delete_user is out of sync with the schema (a new table
         # references users(id) without being cleaned up) or the DB has
         # corrupt-looking rows. Either way it's a bug, not user error.
-        log.exception("delete_agent failed: agent_id=%s", agent_id)
+        logger.exception("delete_agent failed: agent_id=%s", agent_id)
         return jsonify({
             "error": f"Delete failed: related data still exists ({e})"
         }), 500
