@@ -1,5 +1,7 @@
 /* ── State ── */
 const t = window.AgentClubI18n.t;
+const showAppAlert = window.AgentClubUI.showAlert;
+const showAppConfirm = window.AgentClubUI.showConfirm;
 let currentUser = null;
 let socket = null;
 let currentChat = null; // { type: 'group'|'direct', id, name }
@@ -754,7 +756,7 @@ function sendSocketMessage(payload) {
 function showSendFailed(err) {
     const base = t('chat.sendFailed');
     const detail = err && err.message ? String(err.message) : '';
-    alert(detail && detail !== base ? `${base}: ${detail}` : base);
+    showAppAlert(detail && detail !== base ? `${base}: ${detail}` : base);
 }
 
 async function sendMessage() {
@@ -832,9 +834,9 @@ async function uploadAndSendFile(file) {
     let data;
     try {
         const res = await fetch('/api/upload', { method: 'POST', body: formData });
-        if (!res.ok) { alert(t('common.uploadFailed')); return; }
+        if (!res.ok) { showAppAlert(t('common.uploadFailed')); return; }
         data = await res.json();
-    } catch { alert(t('common.uploadFailed')); return; }
+    } catch { showAppAlert(t('common.uploadFailed')); return; }
 
     try {
         await sendSocketMessage({
@@ -1516,14 +1518,17 @@ async function toggleMembers() {
 
 async function removeMember(groupId, userId) {
     document.getElementById('contextMenu').classList.add('hidden');
-    if (!confirm(t('chat.removeMemberConfirm'))) return;
+    if (!(await showAppConfirm(t('chat.removeMemberConfirm'), {
+        confirmText: t('chat.removeMember'),
+        danger: true,
+    }))) return;
     const res = await fetch(`/api/groups/${groupId}/members/${userId}`, { method: 'DELETE' });
     if (res.ok) {
         invalidateMentionMembers();
         await renderMembersPanel();
     } else {
         const data = await res.json();
-        alert(data.error || t('chat.removeFailed'));
+        showAppAlert(data.error || t('chat.removeFailed'));
     }
 }
 
@@ -1564,7 +1569,7 @@ async function addMember(groupId, userId, btn) {
             btn.disabled = false;
             btn.style.opacity = '';
             btn.innerHTML = originalHTML;
-            alert(data.error || t('chat.addFailed'));
+            showAppAlert(data.error || t('chat.addFailed'));
             return;
         }
 
@@ -1586,7 +1591,7 @@ async function addMember(groupId, userId, btn) {
         btn.disabled = false;
         btn.style.opacity = '';
         btn.innerHTML = originalHTML;
-        alert(t('chat.addFailed') + ': ' + e);
+        showAppAlert(t('chat.addFailed') + ': ' + e);
     }
 }
 
@@ -1610,7 +1615,7 @@ async function uploadAvatar(event) {
     const formData = new FormData();
     formData.append('file', file);
     const res = await fetch('/api/upload', { method: 'POST', body: formData });
-    if (!res.ok) { alert(t('common.uploadFailed')); return; }
+    if (!res.ok) { showAppAlert(t('common.uploadFailed')); return; }
     const data = await res.json();
     currentUser.avatar = data.url;
     const el = document.getElementById('profileAvatar');
@@ -1630,7 +1635,7 @@ async function saveProfile() {
         closeModal('profileModal');
         loadChats();
     } else {
-        alert(t('common.saveFailed'));
+        showAppAlert(t('common.saveFailed'));
     }
 }
 
@@ -1688,7 +1693,10 @@ document.addEventListener('click', () => {
 
 async function dissolveGroup(groupId) {
     document.getElementById('contextMenu').classList.add('hidden');
-    if (!confirm(t('chat.dissolveGroupConfirm'))) return;
+    if (!(await showAppConfirm(t('chat.dissolveGroupConfirm'), {
+        confirmText: t('chat.dissolveGroup'),
+        danger: true,
+    }))) return;
     const res = await fetch(`/api/groups/${groupId}`, { method: 'DELETE' });
     if (res.ok) {
         if (currentChat && currentChat.type === 'group' && currentChat.id === groupId) {
@@ -1699,13 +1707,16 @@ async function dissolveGroup(groupId) {
         loadChats();
     } else {
         const data = await res.json();
-        alert(data.error || t('chat.dissolveFailed'));
+        showAppAlert(data.error || t('chat.dissolveFailed'));
     }
 }
 
 async function leaveGroup(groupId) {
     document.getElementById('contextMenu').classList.add('hidden');
-    if (!confirm(t('chat.leaveGroupConfirm'))) return;
+    if (!(await showAppConfirm(t('chat.leaveGroupConfirm'), {
+        confirmText: t('chat.leaveGroup'),
+        danger: true,
+    }))) return;
     const res = await fetch(`/api/groups/${groupId}/leave`, { method: 'POST' });
     if (res.ok) {
         if (currentChat && currentChat.type === 'group' && currentChat.id === groupId) {
@@ -1716,13 +1727,16 @@ async function leaveGroup(groupId) {
         loadChats();
     } else {
         const data = await res.json();
-        alert(data.error || t('chat.leaveFailed'));
+        showAppAlert(data.error || t('chat.leaveFailed'));
     }
 }
 
 async function deleteDirectChat(chatId) {
     document.getElementById('contextMenu').classList.add('hidden');
-    if (!confirm(t('chat.deleteChatConfirm'))) return;
+    if (!(await showAppConfirm(t('chat.deleteChatConfirm'), {
+        confirmText: t('chat.deleteChat'),
+        danger: true,
+    }))) return;
     const res = await fetch(`/api/direct-chats/${chatId}`, { method: 'DELETE' });
     if (res.ok) {
         if (currentChat && currentChat.type === 'direct' && currentChat.id === chatId) {
@@ -1732,7 +1746,7 @@ async function deleteDirectChat(chatId) {
         }
         loadChats();
     } else {
-        alert(t('common.deleteFailed'));
+        showAppAlert(t('common.deleteFailed'));
     }
 }
 
@@ -1762,7 +1776,7 @@ function renderGroupSettingsAvatar() {
 
 async function openGroupSettings(groupId) {
     const res = await fetch(`/api/groups/${groupId}`);
-    if (!res.ok) { alert(t('chat.loadGroupFailed')); return; }
+    if (!res.ok) { showAppAlert(t('chat.loadGroupFailed')); return; }
     const group = await res.json();
     groupSettingsState = {
         groupId,
@@ -1792,7 +1806,7 @@ async function uploadGroupSettingsAvatar(event) {
     const res = await fetch('/api/upload', { method: 'POST', body: formData });
     if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        alert(err.error || t('common.uploadFailed'));
+        showAppAlert(err.error || t('common.uploadFailed'));
         return;
     }
     const data = await res.json();
@@ -1803,7 +1817,7 @@ async function uploadGroupSettingsAvatar(event) {
 async function saveGroupSettings() {
     if (!groupSettingsState) return;
     const name = document.getElementById('groupSettingsName').value.trim();
-    if (!name) { alert(t('chat.groupNameRequired')); return; }
+    if (!name) { showAppAlert(t('chat.groupNameRequired')); return; }
     const description = document.getElementById('groupSettingsDescription').value.trim();
     const isCreate = !groupSettingsState.groupId;
     const btn = document.getElementById('groupSettingsSaveBtn');
@@ -1826,7 +1840,7 @@ async function saveGroupSettings() {
         });
         if (!res.ok) {
             const err = await res.json().catch(() => ({}));
-            alert(err.error || (isCreate ? t('chat.createFailed') : t('common.saveFailed')));
+            showAppAlert(err.error || (isCreate ? t('chat.createFailed') : t('common.saveFailed')));
             return;
         }
         const group = await res.json();
@@ -1909,7 +1923,7 @@ async function startDirectChat(userId, userName, isAgent = false) {
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({user_id: userId}),
     });
-    if (!res.ok) { alert(t('chat.createChatFailed')); return; }
+    if (!res.ok) { showAppAlert(t('chat.createChatFailed')); return; }
     const chat = await res.json();
     await loadChats();
     openChat('direct', chat.id, userName, isAgent);
@@ -1930,10 +1944,10 @@ async function openProfileModal(userId) {
     let user;
     try {
         const res = await fetch(`/api/users/${userId}`);
-        if (!res.ok) { alert(t('chat.loadUserFailed')); return; }
+        if (!res.ok) { showAppAlert(t('chat.loadUserFailed')); return; }
         user = await res.json();
     } catch (e) {
-        alert(t('chat.loadUserFailed'));
+        showAppAlert(t('chat.loadUserFailed'));
         return;
     }
     _profileViewState = user;
@@ -1999,10 +2013,10 @@ async function openGroupInfoModal(groupId) {
     let group;
     try {
         const res = await fetch(`/api/groups/${groupId}`);
-        if (!res.ok) { alert(t('chat.loadGroupFailed')); return; }
+        if (!res.ok) { showAppAlert(t('chat.loadGroupFailed')); return; }
         group = await res.json();
     } catch (e) {
-        alert(t('chat.loadGroupFailed'));
+        showAppAlert(t('chat.loadGroupFailed'));
         return;
     }
     const name = group.name || '';

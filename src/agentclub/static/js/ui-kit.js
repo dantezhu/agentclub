@@ -136,6 +136,126 @@
         }
     }
 
+    let dialogResolve = null;
+    let dialogPreviousFocus = null;
+    let dialogKeyHandlerBound = false;
+
+    function dialogText(key, fallback) {
+        const i18n = global.AgentClubI18n;
+        return i18n && i18n.t ? i18n.t(key) : fallback;
+    }
+
+    function ensureDialog() {
+        let modal = document.getElementById('appDialogModal');
+        if (modal) return modal;
+
+        modal = document.createElement('div');
+        modal.id = 'appDialogModal';
+        modal.className = 'modal hidden';
+        modal.innerHTML = `
+            <div class="modal-content modal-sm app-dialog" role="dialog" aria-modal="true" aria-labelledby="appDialogTitle">
+                <div class="modal-header">
+                    <h3 id="appDialogTitle"></h3>
+                    <button class="app-dialog-close" id="appDialogCloseBtn" type="button" title="${dialogText('common.close', 'Close')}">${iconHTML('x')}</button>
+                </div>
+                <div class="modal-body">
+                    <p class="app-dialog-message" id="appDialogMessage"></p>
+                    <div class="app-dialog-actions">
+                        <button class="modal-action ghost" id="appDialogCancelBtn" type="button"></button>
+                        <button class="modal-action" id="appDialogConfirmBtn" type="button"></button>
+                    </div>
+                </div>
+            </div>`;
+        document.body.appendChild(modal);
+        document.getElementById('appDialogCloseBtn').addEventListener('click', () => {
+            settleDialog(false);
+        });
+        document.getElementById('appDialogCancelBtn').addEventListener('click', () => {
+            settleDialog(false);
+        });
+        document.getElementById('appDialogConfirmBtn').addEventListener('click', () => {
+            settleDialog(true);
+        });
+        if (!dialogKeyHandlerBound) {
+            dialogKeyHandlerBound = true;
+            document.addEventListener('keydown', (event) => {
+                const current = document.getElementById('appDialogModal');
+                if (event.key === 'Escape' && current && !current.classList.contains('hidden')) {
+                    settleDialog(false);
+                }
+            });
+        }
+        return modal;
+    }
+
+    function settleDialog(value) {
+        const modal = document.getElementById('appDialogModal');
+        if (modal) modal.classList.add('hidden');
+        const resolve = dialogResolve;
+        dialogResolve = null;
+        if (
+            dialogPreviousFocus
+            && typeof dialogPreviousFocus.focus === 'function'
+            && document.contains(dialogPreviousFocus)
+        ) {
+            dialogPreviousFocus.focus();
+        }
+        dialogPreviousFocus = null;
+        if (resolve) resolve(value);
+    }
+
+    function showDialog(options) {
+        const opts = options || {};
+        const modal = ensureDialog();
+        const title = document.getElementById('appDialogTitle');
+        const message = document.getElementById('appDialogMessage');
+        const cancelBtn = document.getElementById('appDialogCancelBtn');
+        const confirmBtn = document.getElementById('appDialogConfirmBtn');
+        const closeBtn = document.getElementById('appDialogCloseBtn');
+
+        if (dialogResolve) settleDialog(false);
+        dialogPreviousFocus = document.activeElement;
+
+        title.textContent = opts.title || dialogText('common.error', 'Error');
+        message.textContent = opts.message || '';
+        closeBtn.title = dialogText('common.close', 'Close');
+
+        if (opts.cancelText) {
+            cancelBtn.textContent = opts.cancelText;
+            cancelBtn.classList.remove('hidden');
+        } else {
+            cancelBtn.classList.add('hidden');
+        }
+        confirmBtn.textContent = opts.confirmText || dialogText('common.ok', 'OK');
+        confirmBtn.className = 'modal-action' + (opts.danger ? ' danger' : '');
+
+        modal.classList.remove('hidden');
+        setTimeout(() => confirmBtn.focus(), 0);
+        return new Promise((resolve) => {
+            dialogResolve = resolve;
+        });
+    }
+
+    function showAlert(message, options) {
+        const opts = options || {};
+        return showDialog({
+            title: opts.title || dialogText('common.error', 'Error'),
+            message,
+            confirmText: opts.confirmText || dialogText('common.ok', 'OK'),
+        });
+    }
+
+    function showConfirm(message, options) {
+        const opts = options || {};
+        return showDialog({
+            title: opts.title || dialogText('common.confirm', 'Confirm'),
+            message,
+            confirmText: opts.confirmText || dialogText('common.confirm', 'Confirm'),
+            cancelText: opts.cancelText || dialogText('common.cancel', 'Cancel'),
+            danger: !!opts.danger,
+        });
+    }
+
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', () => mountIcons());
     } else {
@@ -148,6 +268,8 @@
         avatarColor,
         avatarStyle,
         mountIcons,
+        showAlert,
+        showConfirm,
         AVATAR_PALETTE,
     };
 })(window);

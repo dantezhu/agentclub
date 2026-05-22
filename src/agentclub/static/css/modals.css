@@ -1,0 +1,115 @@
+/* Shared modal shell used by chat and admin pages. */
+.hidden { display: none !important; }
+
+.modal {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0,0,0,0.4);
+    z-index: 300;
+    padding: 16px;
+}
+
+.modal-content {
+    background: #fff;
+    border-radius: 16px;
+    width: 90%;
+    max-width: 560px;
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+}
+
+.modal-sm { max-width: 400px; }
+
+.modal-header {
+    padding: 16px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid #eee;
+    flex-shrink: 0;
+}
+
+.modal-header h3 {
+    font-size: 15px;
+    color: #333;
+}
+
+.modal-body {
+    padding: 20px;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+}
+
+.app-dialog-message {
+    color: #4a4a55;
+    font-size: 14px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.app-dialog-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 20px;
+}
+
+.modal-action {
+    min-width: 84px;
+    padding: 8px 16px;
+    background: var(--color-primary);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 13px;
+    cursor: pointer;
+    white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1.2;
+}
+
+.modal-action:hover { background: var(--color-primary-hover); }
+.modal-action.danger { background: var(--color-danger); }
+.modal-action.danger:hover { opacity: 0.9; }
+
+.modal-action.ghost {
+    background: #fff;
+    color: #4a4a55;
+    border: 1px solid #e1e4e8;
+    font-weight: 500;
+}
+
+.modal-action.ghost:hover {
+    background: #f6f8fa;
+    border-color: #d0d4d9;
+    color: var(--color-text);
+}
+
+.app-dialog-close {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 6px;
+    border-radius: 8px;
+    color: #555;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+}
+
+.app-dialog-close:hover {
+    background: #f0f0f0;
+    color: var(--color-text);
+}
+

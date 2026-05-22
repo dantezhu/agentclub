@@ -8,6 +8,7 @@
     <link rel="icon" href="{{ site_logo }}">
     <link rel="apple-touch-icon" href="{{ site_logo }}">
     {% endif %}
+    <link rel="stylesheet" href="/static/css/modals.css">
     <style>
         /* Design tokens — kept in sync with static/css/style.css. Inline
            here so admin.html can be served standalone without the chat
@@ -501,6 +502,8 @@
 
     <script>
     const t = window.AgentClubI18n.t;
+    const showAppAlert = window.AgentClubUI.showAlert;
+    const showAppConfirm = window.AgentClubUI.showConfirm;
 
     let currentUser = null;
     // Cache of the most recent /api/agents response. Indexed lookups
@@ -707,7 +710,7 @@
         const res = await fetch('/api/upload', { method: 'POST', body: formData });
         if (!res.ok) {
             const err = await res.json().catch(() => ({}));
-            alert(err.error || t('common.uploadFailed'));
+            showAppAlert(err.error || t('common.uploadFailed'));
             return;
         }
         const data = await res.json();
@@ -721,11 +724,11 @@
         const displayName = document.getElementById('editAgentDisplayName').value.trim();
         const description = document.getElementById('editAgentDescription').value.trim();
         if (isCreate) {
-            if (!username) { alert(t('admin.enterUsername')); return; }
+            if (!username) { showAppAlert(t('admin.enterUsername')); return; }
         } else {
             // For edit, display name must remain non-empty (matches the
             // CLI's `agent edit --display-name` validation).
-            if (!displayName) { alert(t('admin.displayNameRequired')); return; }
+            if (!displayName) { showAppAlert(t('admin.displayNameRequired')); return; }
         }
         const btn = document.getElementById('editAgentSaveBtn');
         btn.disabled = true;
@@ -755,7 +758,7 @@
             });
             if (!res.ok) {
                 const err = await res.json().catch(() => ({}));
-                alert(err.error || (isCreate ? t('admin.createFailed') : t('common.saveFailed')));
+                showAppAlert(err.error || (isCreate ? t('admin.createFailed') : t('common.saveFailed')));
                 return;
             }
             const data = await res.json();
@@ -773,10 +776,13 @@
     }
 
     async function deleteAgent(agentId, name) {
-        if (!confirm(t('admin.deleteAgentConfirm', { name }))) return;
+        if (!(await showAppConfirm(t('admin.deleteAgentConfirm', { name }), {
+            confirmText: t('common.delete'),
+            danger: true,
+        }))) return;
         const res = await fetch(`/api/agents/${agentId}`, { method: 'DELETE' });
         if (res.ok) loadAgents();
-        else alert(t('common.deleteFailed'));
+        else showAppAlert(t('common.deleteFailed'));
     }
 
     function showTokenDialog(token) {
