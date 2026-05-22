@@ -1,6 +1,6 @@
 import type { NewMessagePayload, ResolvedAccount } from "./types.js";
 import { toSessionKey } from "./session.js";
-import { LOG_MESSAGE_PREVIEW_CHARS, LOG_PREFIX } from "./constants.js";
+import { LOG_MESSAGE_PREVIEW_CHARS } from "./constants.js";
 
 export interface InboundMessage {
   sessionKey: string;
@@ -32,7 +32,7 @@ export interface InboundGatewayOptions {
    * on subsequent reconnects.
    */
   onAck?: (messageId: string) => void;
-  logger?: {
+  logger: {
     info: (...args: unknown[]) => void;
     warn: (...args: unknown[]) => void;
   };
@@ -75,11 +75,7 @@ export function isSenderKindAllowed(
 const SEEN_MESSAGE_CAPACITY = 1024;
 
 export function createInboundGateway(opts: InboundGatewayOptions) {
-  const { agentUserId, account, onInbound, onAck } = opts;
-  const logger = opts.logger ?? {
-    info: (...args: unknown[]) => console.log(LOG_PREFIX, ...args),
-    warn: (...args: unknown[]) => console.warn(LOG_PREFIX, ...args),
-  };
+  const { agentUserId, account, onInbound, onAck, logger } = opts;
 
   // Second layer of defense: dedupe recently-seen message ids within this
   // process. The primary mechanism is ACK-based clearing on the server, but

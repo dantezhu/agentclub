@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { createInboundGateway, type InboundMessage } from "../src/gateway.js";
+import {
+  createInboundGateway as createInboundGatewayImpl,
+  type InboundGatewayOptions,
+  type InboundMessage,
+} from "../src/gateway.js";
 import type { NewMessagePayload, ResolvedAccount } from "../src/types.js";
 
 let _msgSeq = 0;
@@ -36,6 +40,21 @@ function makeAccount(overrides: Partial<ResolvedAccount> = {}): ResolvedAccount 
 }
 
 const AGENT_ID = "agent-42";
+
+function makeLogger() {
+  return {
+    info: () => {},
+    warn: () => {},
+  };
+}
+
+function createInboundGateway(
+  opts: Omit<InboundGatewayOptions, "logger"> & {
+    logger?: InboundGatewayOptions["logger"];
+  },
+) {
+  return createInboundGatewayImpl({ logger: makeLogger(), ...opts });
+}
 
 describe("createInboundGateway", () => {
   it("forwards direct messages to onInbound", () => {

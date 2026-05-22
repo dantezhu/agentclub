@@ -331,6 +331,9 @@ describe("startAgentClubMonitor", () => {
       await Promise.resolve();
 
       expect(createdSockets).toHaveLength(1);
+      expect(log.error).toHaveBeenCalledWith(
+        "[agentclub.openclaw] Connection error: ECONNREFUSED",
+      );
 
       await vi.advanceTimersByTimeAsync(1000);
       expect(createdSockets).toHaveLength(2);
@@ -339,6 +342,9 @@ describe("startAgentClubMonitor", () => {
       triggerSocketEvent(secondSocket, "auth_ok", AUTH_OK);
       await Promise.resolve();
 
+      expect(log.warn).toHaveBeenCalledWith(
+        expect.stringContaining("[agentclub.openclaw] Agent Club connect failed"),
+      );
       expect(log.warn).toHaveBeenCalledWith(
         expect.stringContaining("retrying in 1s"),
       );

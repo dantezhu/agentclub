@@ -11,6 +11,7 @@ import {
   ATTACHMENT_MAX_BYTES,
   CHANNEL_ID,
   INITIAL_RETRY_DELAY_MS,
+  LOG_PREFIX,
   MAX_RETRY_DELAY_MS,
 } from "./constants.js";
 import { basename } from "node:path";
@@ -106,10 +107,9 @@ function inferMimeType(filename: string, bucket: string | undefined): string | u
 /**
  * OpenClaw's plugin logger appears to treat only the first argument as the
  * log message (additional args are silently dropped or interpreted as
- * structured metadata). It also already prefixes each line with the plugin
- * namespace, so we must NOT add our own prefix or pass
- * multiple positional args — otherwise the visible message collapses to just
- * the namespace tag with an empty body.
+ * structured metadata). It also prefixes each line with the plugin id
+ * (`[agentclub]`), which we cannot replace here, so we put the channel-specific
+ * prefix in the message body.
  *
  * This helper normalizes any (...args) call to a single joined string so
  * downstream subcomponents (Socket.IO client, gateway, etc.) can keep using
@@ -127,6 +127,19 @@ function formatLogArg(arg: unknown): string {
 
 function joinArgs(args: unknown[]): string {
   return args.map(formatLogArg).join(" ");
+}
+
+function withLogPrefix(message: string): string {
+  return message.startsWith(LOG_PREFIX) ? message : `${LOG_PREFIX} ${message}`;
+}
+
+function createPrefixedLogger(log: PluginLogger): PluginLogger {
+  return {
+    debug: (...args: unknown[]) => log.debug(withLogPrefix(joinArgs(args))),
+    info: (...args: unknown[]) => log.info(withLogPrefix(joinArgs(args))),
+    warn: (...args: unknown[]) => log.warn(withLogPrefix(joinArgs(args))),
+    error: (...args: unknown[]) => log.error(withLogPrefix(joinArgs(args))),
+  };
 }
 
 export interface MonitorContext {
@@ -222,14 +235,15 @@ async function waitForRetryOrAbort(
  * OpenClaw gateway lifecycle to prevent unwanted restart loops.
  */
 export async function startAgentClubMonitor(ctx: MonitorContext): Promise<void> {
-  const { account, cfg, abortSignal, log } = ctx;
+  const { abortSignal } = ctx;
+  const log = createPrefixedLogger(ctx.log);
 
   if (abortSignal.aborted) return;
 
   let attempt = 0;
   while (!abortSignal.aborted) {
     try {
-      await runMonitorSession(ctx);
+      await runMonitorSession({ ...ctx, log });
       return;
     } catch (err) {
       attempt += 1;

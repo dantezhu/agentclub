@@ -10,7 +10,6 @@ import type {
 import {
   INITIAL_RETRY_DELAY_MS,
   LOG_BODY_PREVIEW_CHARS,
-  LOG_PREFIX,
   MAX_RETRY_DELAY_MS,
   SERVER_RESPONSE_TIMEOUT_MS,
   SOCKETIO_INFINITE_RECONNECT_ATTEMPTS,
@@ -21,18 +20,12 @@ export interface AgentClubClientOptions {
   agentToken: string;
   onMessage: (msg: NewMessagePayload) => void;
   onOfflineMessages?: (msgs: NewMessagePayload[]) => void;
-  logger?: {
+  logger: {
     info: (...args: unknown[]) => void;
     warn: (...args: unknown[]) => void;
     error: (...args: unknown[]) => void;
   };
 }
-
-const DEFAULT_LOGGER = {
-  info: (...args: unknown[]) => console.log(LOG_PREFIX, ...args),
-  warn: (...args: unknown[]) => console.warn(LOG_PREFIX, ...args),
-  error: (...args: unknown[]) => console.error(LOG_PREFIX, ...args),
-};
 
 /**
  * Socket.IO client wrapper for the Agent Club IM server.
@@ -55,7 +48,7 @@ export class AgentClubClient {
     this.agentToken = opts.agentToken;
     this.onMessage = opts.onMessage;
     this.onOfflineMessages = opts.onOfflineMessages;
-    this.logger = opts.logger ?? DEFAULT_LOGGER;
+    this.logger = opts.logger;
   }
 
   get agentUserId(): string | null {
