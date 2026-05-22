@@ -74,6 +74,7 @@ class Config:
     MESSAGE_PAGE_SIZE = None
     ALLOW_REGISTRATION = None
     MESSAGE_RETENTION_DAYS = None
+    MESSAGE_CLEANUP_INTERVAL_SECONDS = None
     HEARTBEAT_INTERVAL = None
     ACTIVE_TIMEOUT = None
     PRESENCE_POLL_INTERVAL = None
@@ -163,6 +164,9 @@ def refresh_config():
     # endpoint only ever mints ``role=user``, never ``admin``.
     Config.ALLOW_REGISTRATION = _bool("ALLOW_REGISTRATION", False)
     Config.MESSAGE_RETENTION_DAYS = int(os.environ.get("MESSAGE_RETENTION_DAYS", "30"))
+    Config.MESSAGE_CLEANUP_INTERVAL_SECONDS = int(
+        os.environ.get("MESSAGE_CLEANUP_INTERVAL_SECONDS", "3600")
+    )
     Config.MESSAGE_PAGE_SIZE = int(os.environ.get("MESSAGE_PAGE_SIZE", "50"))
 
     # Presence cadences (see README § online status)

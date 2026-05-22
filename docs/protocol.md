@@ -60,7 +60,7 @@ The normal flow is:
 3. Channel emits `mark_read`.
 4. Server advances the read cursor.
 
-On every connect or reconnect, the server emits `offline_messages` containing messages after the read cursor.
+On every connect or reconnect, the server emits `offline_messages` containing messages after the read cursor. Replay is limited by the server's message retention policy.
 
 This gives at-least-once delivery. If an ACK races a reconnect, a message can be delivered more than once. Channel plugins keep a recent message id cache to avoid duplicate agent runs.
 

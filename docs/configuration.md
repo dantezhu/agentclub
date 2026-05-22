@@ -83,7 +83,8 @@ All configurable keys are uppercase.
 | `LOG_MAX_SIZE_MB` | `100` | Max size of one log file before rotation. |
 | `LOG_BACKUP_COUNT` | `5` | Number of rotated log files to keep. |
 | `ALLOW_REGISTRATION` | `false` | Whether the web registration endpoint is enabled. Disabled by default. |
-| `MESSAGE_RETENTION_DAYS` | `30` | Message retention period in days. |
+| `MESSAGE_RETENTION_DAYS` | `30` | Message and upload-file retention period in days. Set to `0` to keep history permanently. |
+| `MESSAGE_CLEANUP_INTERVAL_SECONDS` | `3600` | How often the background message cleanup runs. |
 | `MESSAGE_PAGE_SIZE` | `50` | History page size. |
 | `HEARTBEAT_INTERVAL` | `30` | Client heartbeat interval in seconds. Sent to clients in `auth_ok`. |
 | `ACTIVE_TIMEOUT` | `90` | Presence timeout in seconds. Should be at least twice `HEARTBEAT_INTERVAL`. |

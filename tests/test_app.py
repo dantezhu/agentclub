@@ -15,7 +15,7 @@ _tmpdb = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
 config.Config.DATABASE = _tmpdb.name
 config.Config.UPLOAD_FOLDER = tempfile.mkdtemp()
 
-from agentclub import models
+from agentclub import maintenance, models
 from agentclub.app import app, socketio
 from agentclub.auth import hash_password
 
@@ -848,8 +848,43 @@ class TestModels:
 
         models.save_message("group", gid, uid, "new")
 
-        models.cleanup_old_messages(30)
+        deleted = models.cleanup_old_messages(30)
 
         msgs = models.get_messages("group", gid)
+        assert deleted == 1
         assert len(msgs) == 1
         assert msgs[0]["content"] == "new"
+
+    def test_retention_cleanup_deletes_old_uploads_by_mtime(self, tmp_path, monkeypatch):
+        upload_dir = tmp_path / "uploads"
+        upload_dir.mkdir()
+        monkeypatch.setattr(config.Config, "UPLOAD_FOLDER", str(upload_dir))
+        monkeypatch.setattr(config.Config, "MESSAGE_RETENTION_DAYS", 30)
+
+        old_file = upload_dir / "old.txt"
+        new_file = upload_dir / "new.txt"
+        old_file.write_text("old", encoding="utf-8")
+        new_file.write_text("new", encoding="utf-8")
+
+        import time
+        current = time.time()
+        old_ts = current - 100 * 86400
+        os.utime(old_file, (old_ts, old_ts))
+
+        uid = models.create_user("u1", hash_password("pass"), "User1")
+        gid = models.create_group("G1", uid)
+        with models.get_db_ctx() as db:
+            db.execute(
+                "INSERT INTO messages (id, chat_type, chat_id, sender_id, content, content_type, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                ("old_msg", "group", gid, uid, "old", "text", old_ts),
+            )
+        models.save_message("group", gid, uid, "new")
+
+        result = maintenance.run_retention_cleanup(now_ts=current)
+
+        msgs = models.get_messages("group", gid)
+        assert result == {"messages_deleted": 1, "files_deleted": 1}
+        assert [m["content"] for m in msgs] == ["new"]
+        assert not old_file.exists()
+        assert new_file.exists()

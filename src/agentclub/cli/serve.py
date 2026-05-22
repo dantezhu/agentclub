@@ -36,9 +36,11 @@ def serve(data_dir_flag, host, port, debug):
 
     from ..app import app, socketio
     from .. import models
+    from ..maintenance import start_retention_cleanup_task
 
     models.init_db()
     os.makedirs(Config.UPLOAD_FOLDER, exist_ok=True)
+    start_retention_cleanup_task(socketio)
 
     echo_header("AgentClub")
     click.echo(f"  data dir : {data_dir}")

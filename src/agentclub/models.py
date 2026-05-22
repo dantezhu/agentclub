@@ -944,12 +944,16 @@ def get_unread_messages(user_id):
     return [dict(r) for r in rows]
 
 
-def cleanup_old_messages(days=None):
+def cleanup_old_messages(days=None, *, cutoff=None):
     if days is None:
         days = Config.MESSAGE_RETENTION_DAYS
-    cutoff = now() - days * 86400
+    if days <= 0:
+        return 0
+    if cutoff is None:
+        cutoff = now() - days * 86400
     with get_db_ctx() as db:
-        db.execute("DELETE FROM messages WHERE created_at < ?", (cutoff,))
+        cur = db.execute("DELETE FROM messages WHERE created_at < ?", (cutoff,))
+        return cur.rowcount
 
 
 # ── Settings ──
