@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -192,6 +192,24 @@ class _HandlerSio:
         return decorator
 
 
+class _FakeHttpResponse:
+    def __init__(self, *, status=200, payload=None, raise_exc=None):
+        self.status = status
+        self._payload = payload
+        self._raise_exc = raise_exc
+
+    async def __aenter__(self):
+        if self._raise_exc is not None:
+            raise self._raise_exc
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def json(self):
+        return self._payload
+
+
 def run(coro):
     return asyncio.run(coro)
 
@@ -297,6 +315,31 @@ class TestInbound:
 
         assert adapter.handled_events == []
         adapter._sio.emit.assert_awaited_once_with("mark_read", {"message_ids": ["msg-1"]})
+
+
+class TestListGroupMembers:
+    def test_roster_is_fetched_on_every_call(self, adapter):
+        responses = [
+            _FakeHttpResponse(
+                payload=[
+                    {"id": "agent-self", "display_name": "Bot", "is_agent": True},
+                    {"id": "user-a", "display_name": "Alice", "is_agent": False},
+                ]
+            ),
+            _FakeHttpResponse(
+                payload=[
+                    {"id": "agent-self", "display_name": "Bot", "is_agent": True},
+                ]
+            ),
+        ]
+        adapter._http = SimpleNamespace(get=MagicMock(side_effect=responses))
+
+        first = run(adapter._list_group_members("gc_room"))
+        second = run(adapter._list_group_members("gc_room"))
+
+        assert [row["id"] for row in first] == ["agent-self", "user-a"]
+        assert [row["id"] for row in second] == ["agent-self"]
+        assert adapter._http.get.call_count == 2
 
 
 class TestOutbound:

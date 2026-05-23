@@ -263,13 +263,6 @@ class AgentClubChannel(BaseChannel):
         # reconnect can still produce a duplicate — this catches it.
         self._seen_message_ids: OrderedDict[str, None] = OrderedDict()
 
-        # Best-effort in-memory cache of group rosters, keyed by
-        # ``group_id``. Invalidated passively: if an agent sees a
-        # mention it doesn't recognize the cache will just look stale;
-        # a restart refreshes it. Kept on the instance so unit tests
-        # can inspect/seed it.
-        self._roster_cache: dict[str, list[dict[str, Any]]] = {}
-
     # ----------------------------------------------------------------
     # BaseChannel lifecycle
     # ----------------------------------------------------------------
@@ -924,8 +917,6 @@ class AgentClubChannel(BaseChannel):
         """GET the roster for ``group_id``; empty list on any failure."""
         if self._http is None or not group_id:
             return []
-        if group_id in self._roster_cache:
-            return self._roster_cache[group_id]
         url = urljoin(
             self._server_url + "/", f"api/agent/groups/{group_id}/members"
         )
@@ -940,9 +931,7 @@ class AgentClubChannel(BaseChannel):
                     )
                     return []
                 data = await resp.json()
-                roster = data if isinstance(data, list) else []
-                self._roster_cache[group_id] = roster
-                return roster
+                return data if isinstance(data, list) else []
         except Exception as exc:
             logger.debug(
                 "{} listGroupMembers({}) error: {}", _LOG_PREFIX, group_id, exc

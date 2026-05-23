@@ -255,7 +255,6 @@ class AgentClubAdapter(BasePlatformAdapter):
         self._display_name: str | None = None
         self._auth_future: asyncio.Future | None = None
         self._seen_message_ids: OrderedDict[str, None] = OrderedDict()
-        self._roster_cache: dict[str, list[dict[str, Any]]] = {}
         self._lock_acquired = False
 
     @property
@@ -879,8 +878,6 @@ class AgentClubAdapter(BasePlatformAdapter):
     async def _list_group_members(self, group_id: str) -> list[dict[str, Any]]:
         if self._http is None or not group_id:
             return []
-        if group_id in self._roster_cache:
-            return self._roster_cache[group_id]
         url = urljoin(self.server_url + "/", f"api/agent/groups/{group_id}/members")
         try:
             async with self._http.get(url) as resp:
@@ -898,9 +895,7 @@ class AgentClubAdapter(BasePlatformAdapter):
                 "{} listGroupMembers({}) error: {}", _LOG_PREFIX, group_id, exc
             )
             return []
-        roster = data if isinstance(data, list) else []
-        self._roster_cache[group_id] = roster
-        return roster
+        return data if isinstance(data, list) else []
 
     def _is_socket_connected(self) -> bool:
         return bool(self._sio is not None and getattr(self._sio, "connected", False))

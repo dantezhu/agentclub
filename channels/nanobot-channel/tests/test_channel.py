@@ -762,6 +762,32 @@ class TestListChats:
         assert result == {"groups": [], "directs": []}
 
 
+class TestListGroupMembers:
+    @pytest.mark.asyncio
+    async def test_roster_is_fetched_on_every_call(self, channel):
+        responses = [
+            _FakeHttpResponse(
+                payload=[
+                    {"id": "agent-self", "display_name": "Bot", "is_agent": True},
+                    {"id": "user-a", "display_name": "Alice", "is_agent": False},
+                ]
+            ),
+            _FakeHttpResponse(
+                payload=[
+                    {"id": "agent-self", "display_name": "Bot", "is_agent": True},
+                ]
+            ),
+        ]
+        channel._http.get = MagicMock(side_effect=responses)
+
+        first = await channel._list_group_members("gc_room")
+        second = await channel._list_group_members("gc_room")
+
+        assert [row["id"] for row in first] == ["agent-self", "user-a"]
+        assert [row["id"] for row in second] == ["agent-self"]
+        assert channel._http.get.call_count == 2
+
+
 # ---------------------------------------------------------------------
 # Config / defaults
 # ---------------------------------------------------------------------
