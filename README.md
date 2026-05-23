@@ -6,7 +6,7 @@ Agent Club is an open-source, self-hosted chat server for humans and AI agents, 
 - Socket.IO agent protocol with offline replay and read acknowledgements.
 - Agent accounts with one-time tokens and default-deny sender allowlists.
 - Built-in channel plugins for OpenClaw, Hermes Agent, and Nanobot.
-- Simple self-hosted deployment: pip-installable, SQLite persistence, no Redis required.
+- Simple self-hosted deployment: pip-installable, Peewee ORM persistence with SQLite by default, no Redis required.
 
 ![Agent Club Web UI](https://raw.githubusercontent.com/dantezhu/agentclub/master/docs/assets/chat.png)
 
@@ -34,7 +34,7 @@ pip install -e '.[dev]'
 agentclub onboard
 ```
 
-This creates the runtime data directory, `config.json`, the SQLite database, upload directories, logs, and an initial admin user.
+This creates the runtime data directory, `config.json`, the default SQLite database, upload directories, logs, and an initial admin user.
 
 The default data directory is `~/.agentclub`. You can override it with `--data-dir` or `AGENTCLUB_HOME`.
 
@@ -118,6 +118,7 @@ All commands support `--data-dir`. If omitted, Agent Club uses `$AGENTCLUB_HOME`
 {
   "HOST": "127.0.0.1",
   "PORT": 5555,
+  "DATABASE_URL": "sqlite:////<data-dir>/agentclub.db",
   "SECRET_KEY": "<64-char hex>"
 }
 ```
@@ -129,6 +130,27 @@ built-in defaults < config.json < environment variables / CLI flags
 ```
 
 See [Configuration](docs/configuration.md) for the full list of settings.
+
+Agent Club uses SQLite by default. To use an external database, set `DATABASE_URL` in `config.json` or the environment:
+
+For SQLite, `<data-dir>` is the resolved data directory. By default it is `~/.agentclub`, for example `sqlite:////home/<user>/.agentclub/agentclub.db` on Linux.
+
+```bash
+agentclub onboard --database-url mysql://user:password@host:3306/agentclub
+```
+
+```json
+{
+  "DATABASE_URL": "mysql://user:password@host:3306/agentclub"
+}
+```
+
+Install the matching driver extra for non-SQLite deployments:
+
+```bash
+pip install 'agentclub[mysql]'
+pip install 'agentclub[postgres]'
+```
 
 ## Technical Documentation
 
@@ -178,7 +200,7 @@ pytest
 |   |-- auth.py                 # Passwords, sessions, agent tokens
 |   |-- cli/                    # agentclub CLI
 |   |-- config.py               # Runtime configuration
-|   |-- models.py               # SQLite schema and data access
+|   |-- models.py               # Peewee ORM models and data access
 |   |-- routes.py               # HTTP routes
 |   |-- socket_events.py        # Socket.IO events
 |   |-- static/                 # Web assets

@@ -1,125 +1,221 @@
-import sqlite3
-import uuid
 import time
+import uuid
 from contextlib import contextmanager
+
+from peewee import (
+    Case,
+    CharField,
+    CompositeKey,
+    DatabaseProxy,
+    FloatField,
+    ForeignKeyField,
+    IntegrityError,
+    IntegerField,
+    Model,
+    TextField,
+    fn,
+)
+from playhouse.db_url import connect as connect_database_url
+
 from .config import Config
 
-SCHEMA = """
--- ── Foreign-key conventions in this schema ─────────────────────────────
--- Tables that should disappear with their owner use ON DELETE CASCADE
--- (group_members, read_cursors). Everywhere else (groups.created_by,
--- direct_chats.user1/2_id, messages.sender_id) the FK is left at SQLite's
--- default of NO ACTION, which behaves like RESTRICT: deleting a parent row
--- (a user) will fail at commit time if any of these child rows still
--- reference it. This is intentional defensive armor for delete_user() —
--- if a future table starts referencing users(id) and someone forgets to
--- extend delete_user, the next call will raise IntegrityError instead of
--- silently leaving orphan messages/chats. PRAGMA foreign_keys=ON in
--- get_db() makes all of this enforceable.
--- ─────────────────────────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS users (
-    id TEXT PRIMARY KEY,
-    username TEXT UNIQUE NOT NULL,
-    password_hash TEXT,
-    display_name TEXT NOT NULL,
-    avatar TEXT DEFAULT '',
-    -- Free-form short bio. Currently surfaced only for agents (admin
-    -- create/edit + chat header subtitle), but we store it on every
-    -- row so future "user bio" features don't need another migration.
-    description TEXT DEFAULT '',
-    role TEXT DEFAULT 'user',
-    is_agent INTEGER DEFAULT 0,
-    agent_token TEXT UNIQUE,
-    last_active_at REAL,
-    created_at REAL NOT NULL
-);
 
-CREATE TABLE IF NOT EXISTS groups (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    avatar TEXT DEFAULT '',
-    -- Optional one-line "what's this group for". Surfaced in the group
-    -- settings modal (creator-editable) and the read-only group-info
-    -- card opened from the chat-header avatar.
-    description TEXT DEFAULT '',
-    created_by TEXT NOT NULL REFERENCES users(id),
-    created_at REAL NOT NULL
-);
+db_proxy = DatabaseProxy()
+_database = None
+_database_url = None
 
-CREATE TABLE IF NOT EXISTS group_members (
-    group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
-    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    joined_at REAL NOT NULL,
-    PRIMARY KEY (group_id, user_id)
-);
+DatabaseIntegrityError = IntegrityError
 
-CREATE TABLE IF NOT EXISTS direct_chats (
-    id TEXT PRIMARY KEY,
-    user1_id TEXT NOT NULL REFERENCES users(id),
-    user2_id TEXT NOT NULL REFERENCES users(id),
-    created_at REAL NOT NULL,
-    UNIQUE(user1_id, user2_id)
-);
 
-CREATE TABLE IF NOT EXISTS messages (
-    id TEXT PRIMARY KEY,
-    chat_type TEXT NOT NULL,
-    chat_id TEXT NOT NULL,
-    sender_id TEXT NOT NULL REFERENCES users(id),
-    content TEXT DEFAULT '',
-    content_type TEXT DEFAULT 'text',
-    file_url TEXT DEFAULT '',
-    file_name TEXT DEFAULT '',
-    mentions TEXT DEFAULT '[]',
-    created_at REAL NOT NULL
-);
+def _connect_database(url):
+    kwargs = {}
+    if url.startswith("sqlite:"):
+        kwargs["pragmas"] = {
+            "foreign_keys": 1,
+            "journal_mode": "wal",
+        }
+    return connect_database_url(url, **kwargs)
 
--- Per-user, per-chat "read cursor". `last_read_at` is a unix timestamp; any
--- message in the chat with `created_at > last_read_at` and `sender_id !=
--- user_id` is considered unread. A user's first-time baseline for a chat is
--- either the chat creation time (direct) or the group membership join time
--- (group), so joining a chat does not retroactively flag history as unread.
-CREATE TABLE IF NOT EXISTS read_cursors (
-    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    chat_type TEXT NOT NULL,
-    chat_id TEXT NOT NULL,
-    last_read_at REAL NOT NULL,
-    PRIMARY KEY (user_id, chat_type, chat_id)
-);
 
--- Legacy table from the per-message unread model; kept as a no-op drop so
--- upgrading instances don't leave orphan data around.
-DROP TABLE IF EXISTS unread_messages;
+def configure_database():
+    global _database, _database_url
+    url = Config.DATABASE_URL
+    if _database is not None and _database_url == url:
+        return _database
+    if _database is not None and not _database.is_closed():
+        _database.close()
+    _database = _connect_database(url)
+    _database_url = url
+    db_proxy.initialize(_database)
+    return _database
 
-CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages(chat_type, chat_id, created_at);
-CREATE INDEX IF NOT EXISTS idx_messages_created ON messages(created_at);
-CREATE INDEX IF NOT EXISTS idx_read_cursors_user ON read_cursors(user_id);
-CREATE INDEX IF NOT EXISTS idx_users_agent_token ON users(agent_token);
 
-CREATE TABLE IF NOT EXISTS settings (
-    key TEXT PRIMARY KEY,
-    value TEXT NOT NULL
-);
-"""
+@contextmanager
+def _connection():
+    db = configure_database()
+    should_close = db.is_closed()
+    if should_close:
+        db.connect(reuse_if_open=True)
+    try:
+        yield db
+    finally:
+        if should_close and not db.is_closed():
+            db.close()
 
-_DEFAULT_SETTINGS = {}
+
+@contextmanager
+def _transaction():
+    with _connection() as db:
+        with db.atomic():
+            yield db
+
+
+class BaseModel(Model):
+    class Meta:
+        database = db_proxy
+
+
+class User(BaseModel):
+    id = CharField(primary_key=True, max_length=64)
+    username = CharField(unique=True, max_length=255)
+    password_hash = CharField(null=True, max_length=255)
+    display_name = CharField(max_length=255)
+    avatar = CharField(default="", max_length=1024)
+    description = TextField()
+    role = CharField(default="user", max_length=32)
+    is_agent = IntegerField(default=0)
+    agent_token = CharField(unique=True, null=True, max_length=255)
+    last_active_at = FloatField(null=True)
+    created_at = FloatField()
+
+    class Meta:
+        table_name = "users"
+        indexes = (
+            (("created_at",), False),
+            (("agent_token",), False),
+        )
+
+
+class Group(BaseModel):
+    id = CharField(primary_key=True, max_length=64)
+    name = CharField(max_length=255)
+    avatar = CharField(default="", max_length=1024)
+    description = TextField()
+    created_by = ForeignKeyField(
+        User,
+        backref="created_groups",
+        column_name="created_by",
+        on_delete="RESTRICT",
+    )
+    created_at = FloatField()
+
+    class Meta:
+        table_name = "groups"
+        indexes = ((("created_at",), False),)
+
+
+class GroupMember(BaseModel):
+    group = ForeignKeyField(
+        Group,
+        backref="memberships",
+        column_name="group_id",
+        on_delete="CASCADE",
+    )
+    user = ForeignKeyField(
+        User,
+        backref="group_memberships",
+        column_name="user_id",
+        on_delete="CASCADE",
+    )
+    joined_at = FloatField()
+
+    class Meta:
+        table_name = "group_members"
+        primary_key = CompositeKey("group", "user")
+        indexes = ((("user",), False),)
+
+
+class DirectChat(BaseModel):
+    id = CharField(primary_key=True, max_length=64)
+    user1 = ForeignKeyField(
+        User,
+        backref="direct_chats_as_user1",
+        column_name="user1_id",
+        on_delete="RESTRICT",
+    )
+    user2 = ForeignKeyField(
+        User,
+        backref="direct_chats_as_user2",
+        column_name="user2_id",
+        on_delete="RESTRICT",
+    )
+    created_at = FloatField()
+
+    class Meta:
+        table_name = "direct_chats"
+        indexes = ((("user1", "user2"), True),)
+
+
+class Message(BaseModel):
+    id = CharField(primary_key=True, max_length=64)
+    chat_type = CharField(max_length=16)
+    chat_id = CharField(max_length=64)
+    sender = ForeignKeyField(
+        User,
+        backref="messages",
+        column_name="sender_id",
+        on_delete="RESTRICT",
+    )
+    content = TextField()
+    content_type = CharField(default="text", max_length=64)
+    file_url = CharField(default="", max_length=2048)
+    file_name = CharField(default="", max_length=1024)
+    mentions = TextField()
+    created_at = FloatField()
+
+    class Meta:
+        table_name = "messages"
+        indexes = (
+            (("chat_type", "chat_id", "created_at"), False),
+            (("created_at",), False),
+        )
+
+
+class ReadCursor(BaseModel):
+    user = ForeignKeyField(
+        User,
+        backref="read_cursors",
+        column_name="user_id",
+        on_delete="CASCADE",
+    )
+    chat_type = CharField(max_length=16)
+    chat_id = CharField(max_length=64)
+    last_read_at = FloatField()
+
+    class Meta:
+        table_name = "read_cursors"
+        primary_key = CompositeKey("user", "chat_type", "chat_id")
+        indexes = ((("user",), False),)
+
+
+class Setting(BaseModel):
+    key = CharField(primary_key=True, max_length=255)
+    value = TextField()
+
+    class Meta:
+        table_name = "settings"
+
+
+_MODELS = [User, Group, GroupMember, DirectChat, Message, ReadCursor, Setting]
 
 
 def _is_active(last_active_at):
-    """Decide whether a `last_active_at` timestamp is recent enough to
-    treat the user as online. Used as the single source of truth everywhere
-    the code previously looked at a persisted `is_online` flag."""
     if not last_active_at:
         return False
     return last_active_at >= (time.time() - Config.ACTIVE_TIMEOUT)
 
 
 def _apply_online(user_dict):
-    """Decorate a user row with a derived `is_online` field based on
-    `last_active_at`. The DB no longer stores an `is_online` column — any
-    client activity (heartbeat, send_message, mark_read) bumps
-    `last_active_at`, and `ACTIVE_TIMEOUT` turns that into a boolean. Safe
-    on None / rows missing the column (returned as-is)."""
     if not user_dict:
         return user_dict
     user_dict["is_online"] = 1 if _is_active(user_dict.get("last_active_at")) else 0
@@ -127,129 +223,87 @@ def _apply_online(user_dict):
 
 
 def _apply_peer_online(row_dict):
-    """Same as `_apply_online` but for the aliased `peer_last_active_at`
-    column produced by the direct-chat query."""
     if not row_dict or "peer_last_active_at" not in row_dict:
         return row_dict
     row_dict["peer_online"] = 1 if _is_active(row_dict.get("peer_last_active_at")) else 0
+    row_dict["peer_description"] = row_dict.get("peer_description") or ""
+    row_dict["peer_avatar"] = row_dict.get("peer_avatar") or ""
+    row_dict["peer_is_agent"] = int(row_dict.get("peer_is_agent") or 0)
     return row_dict
 
 
-def get_db():
-    db = sqlite3.connect(Config.DATABASE)
-    db.row_factory = sqlite3.Row
-    db.execute("PRAGMA journal_mode=WAL")
-    db.execute("PRAGMA foreign_keys=ON")
-    return db
+def _user_dict(user, *, include_password_hash=True, include_agent_token=True):
+    if not user:
+        return None
+    data = {
+        "id": user.id,
+        "username": user.username,
+        "display_name": user.display_name,
+        "avatar": user.avatar or "",
+        "description": user.description or "",
+        "role": user.role,
+        "is_agent": int(user.is_agent or 0),
+        "last_active_at": user.last_active_at,
+        "created_at": user.created_at,
+    }
+    if include_password_hash:
+        data["password_hash"] = user.password_hash
+    if include_agent_token:
+        data["agent_token"] = user.agent_token
+    return _apply_online(data)
 
 
-@contextmanager
-def get_db_ctx():
-    db = get_db()
-    try:
-        yield db
-        db.commit()
-    except Exception:
-        db.rollback()
-        raise
-    finally:
-        db.close()
+def _group_dict(group):
+    if not group:
+        return None
+    return {
+        "id": group.id,
+        "name": group.name,
+        "avatar": group.avatar or "",
+        "description": group.description or "",
+        "created_by": group.created_by_id,
+        "created_at": group.created_at,
+    }
+
+
+def _direct_chat_dict(chat):
+    if not chat:
+        return None
+    return {
+        "id": chat.id,
+        "user1_id": chat.user1_id,
+        "user2_id": chat.user2_id,
+        "created_at": chat.created_at,
+    }
+
+
+def _message_dict(row):
+    return {
+        "id": row["id"],
+        "chat_type": row["chat_type"],
+        "chat_id": row["chat_id"],
+        "sender_id": row["sender_id"],
+        "content": row.get("content") or "",
+        "content_type": row.get("content_type") or "text",
+        "file_url": row.get("file_url") or "",
+        "file_name": row.get("file_name") or "",
+        "mentions": row.get("mentions") or "[]",
+        "created_at": row["created_at"],
+        "sender_name": row.get("sender_name"),
+        "sender_avatar": row.get("sender_avatar") or "",
+        "sender_is_agent": int(row.get("sender_is_agent") or 0),
+    }
 
 
 def init_db():
-    with get_db_ctx() as db:
-        db.executescript(SCHEMA)
-        _migrate_user_columns(db)
-        _migrate_group_columns(db)
-
-
-def _migrate_group_columns(db):
-    """Bring an existing ``groups`` table up to the current schema.
-
-    Currently just adds the optional ``description`` column when missing
-    (added after 0.1.10). Guarded so it's safe on every startup.
-    """
-    cols = {r["name"] for r in db.execute("PRAGMA table_info(groups)").fetchall()}
-    if "description" not in cols:
-        db.execute("ALTER TABLE groups ADD COLUMN description TEXT DEFAULT ''")
-
-
-def _migrate_user_columns(db):
-    """Bring an existing ``users`` table up to the current schema.
-
-    Two migrations live here:
-      1. Presence: legacy ``is_online`` / ``last_seen`` → single
-         ``last_active_at`` (see commit history for the rationale).
-      2. Description: optional bio column added in 0.1.8.
-
-    All ALTERs are guarded by a column-existence check so this function
-    is safe to run on every startup.
-    """
-    _migrate_presence_columns(db)
-    cols = {r["name"] for r in db.execute("PRAGMA table_info(users)").fetchall()}
-    if "description" not in cols:
-        db.execute("ALTER TABLE users ADD COLUMN description TEXT DEFAULT ''")
-
-
-def _migrate_presence_columns(db):
-    """Upgrade legacy `users` tables to the simplified presence model.
-
-    Old schema had `is_online INTEGER` + `last_seen REAL` and relied on a
-    sweeper to keep them consistent. New schema is a single
-    `last_active_at REAL`; online-ness is derived at read time from
-    `ACTIVE_TIMEOUT`. Migration rules for an existing DB:
-      - If `last_active_at` is missing but `last_seen` exists → rename.
-      - If `is_online` still exists → drop it (SQLite ≥ 3.35).
-      - Fresh install: SCHEMA already has `last_active_at`, nothing to do.
-    All ALTERs are idempotent and safe to run on every startup.
-    """
-    cols = {r["name"] for r in db.execute("PRAGMA table_info(users)").fetchall()}
-    if "last_active_at" not in cols:
-        if "last_seen" in cols:
-            db.execute("ALTER TABLE users RENAME COLUMN last_seen TO last_active_at")
-        else:
-            db.execute("ALTER TABLE users ADD COLUMN last_active_at REAL")
-    elif "last_seen" in cols:
-        # Both columns present (shouldn't happen but be defensive): copy
-        # any fresher `last_seen` forward, then drop the legacy column.
-        db.execute(
-            "UPDATE users SET last_active_at = MAX(COALESCE(last_active_at, 0), "
-            "COALESCE(last_seen, 0)) WHERE last_seen IS NOT NULL"
-        )
-        db.execute("ALTER TABLE users DROP COLUMN last_seen")
-    if "is_online" in cols:
-        db.execute("ALTER TABLE users DROP COLUMN is_online")
+    with _connection() as db:
+        db.create_tables(_MODELS, safe=True)
 
 
 def now():
     return time.time()
 
 
-# ── ID prefix scheme ──────────────────────────────────────────────────
-# Stripe-style: every primary key is ``<prefix>_<uuid4_hex>``. Reasons:
-#   * Mismatched-id bugs (e.g. passing a group_id where a user_id is
-#     expected) become visible at a glance instead of hiding behind
-#     opaque 32-char strings.
-#   * Logs / exception payloads / DB dumps gain instant entity-type
-#     legibility.
-#   * Agents share the ``users`` table and namespace — they're a *role*,
-#     not a separate entity, so they MUST carry the same ``u_`` prefix.
-#     Splitting agents into their own ``a_`` prefix would fracture
-#     foreign keys (groups.created_by, messages.sender_id, …) along an
-#     attribute that isn't part of the relational identity.
-#   * The ``dc_`` (direct chat) and ``gc_`` (group chat) prefixes are
-#     deliberately symmetric: first letter switches on chat *kind*
-#     (direct vs group), second letter is anchored on "chat" — so
-#     they map 1:1 onto the ``chat_type ∈ {'direct', 'group'}`` column
-#     and leave no room for the "is this a group or a private repo?"
-#     ambiguity that ``pr_`` invited. Channels (``nanobot-channel``)
-#     used to synthesize prefixes on top of bare uuids; promoting the
-#     scheme to a server-side invariant lets that encode/decode layer
-#     go away entirely.
-#
-# Kinds are exposed as module-level constants so call sites read as
-# ``new_id(KIND_USER)`` instead of ``new_id("user")`` — typos become
-# NameError at import time instead of ValueError at runtime.
 KIND_USER = "user"
 KIND_GROUP = "group"
 KIND_DIRECT = "direct"
@@ -264,12 +318,6 @@ _ID_PREFIX = {
 
 
 def new_id(kind):
-    """Mint a fresh prefixed primary key for the given entity kind.
-
-    ``kind`` MUST be one of the ``KIND_*`` module constants. Unknown
-    kinds raise — silently falling back to a bare uuid would defeat
-    the whole point of the scheme (we want misuse to be loud).
-    """
     try:
         prefix = _ID_PREFIX[kind]
     except KeyError as e:
@@ -280,227 +328,162 @@ def new_id(kind):
 
 
 def assert_kind(value, kind):
-    """Cheap runtime guard: raise unless ``value`` carries the expected
-    prefix for ``kind``. Sprinkled at the most error-prone write joints
-    (``save_message``, ``add_group_member``, etc.) so a mis-routed id
-    blows up at insertion time instead of corrupting the chat graph
-    silently. Keep these calls surgical — they're a typo catcher, not a
-    full validator."""
     prefix = _ID_PREFIX.get(kind)
     if prefix is None:
         raise ValueError(f"unknown id kind {kind!r}")
     if not isinstance(value, str) or not value.startswith(prefix):
-        raise ValueError(
-            f"expected {kind} id (prefix {prefix!r}), got {value!r}"
-        )
+        raise ValueError(f"expected {kind} id (prefix {prefix!r}), got {value!r}")
 
-
-# ── User operations ──
 
 def create_user(username, password_hash, display_name, role="user", avatar=""):
     uid = new_id(KIND_USER)
-    with get_db_ctx() as db:
-        db.execute(
-            "INSERT INTO users (id, username, password_hash, display_name, avatar, role, is_agent, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, 0, ?)",
-            (uid, username, password_hash, display_name, avatar, role, now()),
+    with _transaction():
+        User.create(
+            id=uid,
+            username=username,
+            password_hash=password_hash,
+            display_name=display_name,
+            avatar=avatar or "",
+            description="",
+            role=role,
+            is_agent=0,
+            created_at=now(),
         )
     return uid
 
 
 def create_agent(username, display_name, token, avatar="", description=""):
     uid = new_id(KIND_USER)
-    with get_db_ctx() as db:
-        db.execute(
-            "INSERT INTO users (id, username, password_hash, display_name, avatar, description, role, is_agent, agent_token, created_at) "
-            "VALUES (?, ?, NULL, ?, ?, ?, 'agent', 1, ?, ?)",
-            (uid, username, display_name, avatar, description, token, now()),
+    with _transaction():
+        User.create(
+            id=uid,
+            username=username,
+            password_hash=None,
+            display_name=display_name,
+            avatar=avatar or "",
+            description=description or "",
+            role="agent",
+            is_agent=1,
+            agent_token=token,
+            created_at=now(),
         )
     return uid
 
 
 def get_user_by_username(username):
-    db = get_db()
-    row = db.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
-    db.close()
-    return _apply_online(dict(row)) if row else None
+    with _connection():
+        return _user_dict(User.get_or_none(User.username == username))
 
 
 def get_user_by_id(user_id):
-    db = get_db()
-    row = db.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
-    db.close()
-    return _apply_online(dict(row)) if row else None
+    with _connection():
+        return _user_dict(User.get_or_none(User.id == user_id))
 
 
 def get_user_by_agent_token(token):
-    db = get_db()
-    row = db.execute("SELECT * FROM users WHERE agent_token = ? AND is_agent = 1", (token,)).fetchone()
-    db.close()
-    return _apply_online(dict(row)) if row else None
+    with _connection():
+        user = User.get_or_none((User.agent_token == token) & (User.is_agent == 1))
+        return _user_dict(user)
 
 
 def touch_active(user_id):
-    """Refresh a user's `last_active_at` to now.
-
-    Called on every inbound signal that proves the client is alive and
-    kicking: heartbeat, send_message, mark_read, etc. Cheap enough to run
-    per-event (single indexed UPDATE). Derived `is_online` follows
-    automatically — no separate flag to keep in sync."""
     if not user_id:
         return
-    with get_db_ctx() as db:
-        db.execute("UPDATE users SET last_active_at = ? WHERE id = ?", (now(), user_id))
+    with _transaction():
+        User.update(last_active_at=now()).where(User.id == user_id).execute()
 
 
 def list_users():
-    db = get_db()
-    rows = db.execute(
-        "SELECT id, username, display_name, avatar, description, role, is_agent, "
-        "       last_active_at, created_at "
-        "FROM users ORDER BY created_at"
-    ).fetchall()
-    db.close()
-    return [_apply_online(dict(r)) for r in rows]
+    with _connection():
+        users = list(User.select().order_by(User.created_at))
+    return [
+        _user_dict(user, include_password_hash=False, include_agent_token=False)
+        for user in users
+    ]
 
 
 def list_agents():
-    db = get_db()
-    rows = db.execute(
-        "SELECT id, username, display_name, avatar, description, agent_token, "
-        "       last_active_at "
-        "FROM users WHERE is_agent = 1 ORDER BY created_at"
-    ).fetchall()
-    db.close()
-    return [_apply_online(dict(r)) for r in rows]
+    with _connection():
+        users = list(User.select().where(User.is_agent == 1).order_by(User.created_at))
+    return [
+        _user_dict(user, include_password_hash=False, include_agent_token=True)
+        for user in users
+    ]
 
 
 def get_user_footprint(user_id):
-    """Count what would be wiped by ``delete_user(user_id)``.
-
-    Returned counts are *destructive* — they include data that belongs to
-    other users but lives inside chats/groups this user owns or
-    co-participates in (since deleting the user collapses those chats too).
-    Used by the CLI / admin UI to surface a "you're about to nuke N
-    messages" prompt before confirmation.
-    """
-    db = get_db()
-    try:
-        direct_chat_ids = [r["id"] for r in db.execute(
-            "SELECT id FROM direct_chats WHERE user1_id = ? OR user2_id = ?",
-            (user_id, user_id),
-        ).fetchall()]
-        owned_group_ids = [r["id"] for r in db.execute(
-            "SELECT id FROM groups WHERE created_by = ?", (user_id,)
-        ).fetchall()]
-
-        direct_msg_count = 0
-        if direct_chat_ids:
-            ph = ",".join("?" * len(direct_chat_ids))
-            direct_msg_count = db.execute(
-                f"SELECT COUNT(*) AS c FROM messages "
-                f"WHERE chat_type='direct' AND chat_id IN ({ph})",
-                direct_chat_ids,
-            ).fetchone()["c"]
-
-        owned_group_msg_count = 0
-        if owned_group_ids:
-            ph = ",".join("?" * len(owned_group_ids))
-            owned_group_msg_count = db.execute(
-                f"SELECT COUNT(*) AS c FROM messages "
-                f"WHERE chat_type='group' AND chat_id IN ({ph})",
-                owned_group_ids,
-            ).fetchone()["c"]
-
-        own_messages = db.execute(
-            "SELECT COUNT(*) AS c FROM messages WHERE sender_id = ?",
-            (user_id,),
-        ).fetchone()["c"]
-
-        joined_groups = db.execute(
-            "SELECT COUNT(*) AS c FROM group_members WHERE user_id = ?",
-            (user_id,),
-        ).fetchone()["c"]
-
-        return {
-            "direct_chats": len(direct_chat_ids),
-            "direct_messages": direct_msg_count,
-            "owned_groups": len(owned_group_ids),
-            "owned_group_messages": owned_group_msg_count,
-            "joined_groups": joined_groups,
-            "own_messages": own_messages,
-        }
-    finally:
-        db.close()
+    with _connection():
+        direct_chat_ids = [
+            row.id for row in DirectChat
+            .select(DirectChat.id)
+            .where((DirectChat.user1 == user_id) | (DirectChat.user2 == user_id))
+        ]
+        owned_group_ids = [
+            row.id for row in Group
+            .select(Group.id)
+            .where(Group.created_by == user_id)
+        ]
+        direct_msg_count = (
+            Message
+            .select()
+            .where((Message.chat_type == "direct") & (Message.chat_id.in_(direct_chat_ids)))
+            .count()
+            if direct_chat_ids else 0
+        )
+        owned_group_msg_count = (
+            Message
+            .select()
+            .where((Message.chat_type == "group") & (Message.chat_id.in_(owned_group_ids)))
+            .count()
+            if owned_group_ids else 0
+        )
+        own_messages = Message.select().where(Message.sender == user_id).count()
+        joined_groups = GroupMember.select().where(GroupMember.user == user_id).count()
+    return {
+        "direct_chats": len(direct_chat_ids),
+        "direct_messages": direct_msg_count,
+        "owned_groups": len(owned_group_ids),
+        "owned_group_messages": owned_group_msg_count,
+        "joined_groups": joined_groups,
+        "own_messages": own_messages,
+    }
 
 
 def delete_user(user_id):
-    """Hard-delete a user and ALL of their footprint.
+    with _transaction():
+        direct_chat_ids = [
+            row.id for row in DirectChat
+            .select(DirectChat.id)
+            .where((DirectChat.user1 == user_id) | (DirectChat.user2 == user_id))
+        ]
+        for chat_id in direct_chat_ids:
+            ReadCursor.delete().where(
+                (ReadCursor.chat_type == "direct") & (ReadCursor.chat_id == chat_id)
+            ).execute()
+            Message.delete().where(
+                (Message.chat_type == "direct") & (Message.chat_id == chat_id)
+            ).execute()
+            DirectChat.delete().where(DirectChat.id == chat_id).execute()
 
-    Order matters: we must clear every row that points at this user before
-    deleting the ``users`` row itself, otherwise the FK constraints (NO
-    ACTION on messages/direct_chats/groups, which behaves like RESTRICT in
-    SQLite) reject the final DELETE at commit time.
+        owned_group_ids = [
+            row.id for row in Group
+            .select(Group.id)
+            .where(Group.created_by == user_id)
+        ]
+        for group_id in owned_group_ids:
+            ReadCursor.delete().where(
+                (ReadCursor.chat_type == "group") & (ReadCursor.chat_id == group_id)
+            ).execute()
+            Message.delete().where(
+                (Message.chat_type == "group") & (Message.chat_id == group_id)
+            ).execute()
+            GroupMember.delete().where(GroupMember.group == group_id).execute()
+            Group.delete().where(Group.id == group_id).execute()
 
-    Destructive scope (intentional, per project decision to keep delete
-    semantics simple):
-
-      - Direct chats this user is in → the whole chat (incl. messages and
-        the peer's read cursor) is wiped. Same semantics as the user
-        clicking "delete chat".
-      - Groups this user *created* → disbanded entirely (members,
-        messages, read cursors, the group row).
-      - Groups this user only joined → user is removed; the group and its
-        history stay intact, except their own messages (next bullet).
-      - Every message authored by this user, anywhere (group or direct).
-      - The user's read cursors and the ``users`` row itself.
-
-    The FK constraints in the schema are deliberately RESTRICT-ish so that
-    if a *new* table starts referencing ``users`` and someone forgets to
-    extend this function, the next call will raise ``IntegrityError``
-    instead of silently leaving orphans.
-    """
-    with get_db_ctx() as db:
-        direct_chat_ids = [r["id"] for r in db.execute(
-            "SELECT id FROM direct_chats WHERE user1_id = ? OR user2_id = ?",
-            (user_id, user_id),
-        ).fetchall()]
-        for cid in direct_chat_ids:
-            db.execute(
-                "DELETE FROM read_cursors WHERE chat_type='direct' AND chat_id=?",
-                (cid,),
-            )
-            db.execute(
-                "DELETE FROM messages WHERE chat_type='direct' AND chat_id=?",
-                (cid,),
-            )
-            db.execute("DELETE FROM direct_chats WHERE id=?", (cid,))
-
-        owned_group_ids = [r["id"] for r in db.execute(
-            "SELECT id FROM groups WHERE created_by = ?", (user_id,)
-        ).fetchall()]
-        for gid in owned_group_ids:
-            db.execute(
-                "DELETE FROM read_cursors WHERE chat_type='group' AND chat_id=?",
-                (gid,),
-            )
-            db.execute(
-                "DELETE FROM messages WHERE chat_type='group' AND chat_id=?",
-                (gid,),
-            )
-            db.execute("DELETE FROM group_members WHERE group_id=?", (gid,))
-            db.execute("DELETE FROM groups WHERE id=?", (gid,))
-
-        # Remaining messages this user sent in groups they don't own.
-        db.execute("DELETE FROM messages WHERE sender_id = ?", (user_id,))
-
-        # Group memberships + this user's read cursors. (read_cursors would
-        # also CASCADE on the final users DELETE, but we wipe explicitly to
-        # keep the function's behaviour independent of FK actions.)
-        db.execute("DELETE FROM group_members WHERE user_id = ?", (user_id,))
-        db.execute("DELETE FROM read_cursors WHERE user_id = ?", (user_id,))
-
-        db.execute("DELETE FROM users WHERE id = ?", (user_id,))
+        Message.delete().where(Message.sender == user_id).execute()
+        GroupMember.delete().where(GroupMember.user == user_id).execute()
+        ReadCursor.delete().where(ReadCursor.user == user_id).execute()
+        User.delete().where(User.id == user_id).execute()
 
 
 def update_user(user_id, **kwargs):
@@ -508,51 +491,58 @@ def update_user(user_id, **kwargs):
     fields = {k: v for k, v in kwargs.items() if k in allowed}
     if not fields:
         return
-    set_clause = ", ".join(f"{k} = ?" for k in fields)
-    values = list(fields.values()) + [user_id]
-    with get_db_ctx() as db:
-        db.execute(f"UPDATE users SET {set_clause} WHERE id = ?", values)
+    with _transaction():
+        User.update(**fields).where(User.id == user_id).execute()
 
 
-# ── Group operations ──
+def reset_agent_token(agent_id, token):
+    with _transaction():
+        User.update(agent_token=token).where(User.id == agent_id).execute()
+
 
 def create_group(name, created_by, avatar="", description=""):
     assert_kind(created_by, KIND_USER)
     gid = new_id(KIND_GROUP)
     ts = now()
-    with get_db_ctx() as db:
-        db.execute(
-            "INSERT INTO groups (id, name, avatar, description, created_by, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (gid, name, avatar, description, created_by, ts),
+    with _transaction():
+        Group.create(
+            id=gid,
+            name=name,
+            avatar=avatar or "",
+            description=description or "",
+            created_by=created_by,
+            created_at=ts,
         )
-        db.execute(
-            "INSERT INTO group_members (group_id, user_id, joined_at) VALUES (?, ?, ?)",
-            (gid, created_by, ts),
-        )
+        GroupMember.create(group=gid, user=created_by, joined_at=ts)
     return gid
 
 
 def get_group(group_id):
-    db = get_db()
-    row = db.execute("SELECT * FROM groups WHERE id = ?", (group_id,)).fetchone()
-    db.close()
-    return dict(row) if row else None
+    with _connection():
+        return _group_dict(Group.get_or_none(Group.id == group_id))
 
 
 def add_group_member(group_id, user_id):
     assert_kind(group_id, KIND_GROUP)
     assert_kind(user_id, KIND_USER)
-    with get_db_ctx() as db:
-        db.execute(
-            "INSERT OR IGNORE INTO group_members (group_id, user_id, joined_at) VALUES (?, ?, ?)",
-            (group_id, user_id, now()),
-        )
+    condition = (GroupMember.group == group_id) & (GroupMember.user == user_id)
+    try:
+        with _transaction():
+            if GroupMember.select().where(condition).exists():
+                return
+            GroupMember.create(group=group_id, user=user_id, joined_at=now())
+    except IntegrityError:
+        with _transaction():
+            if GroupMember.select().where(condition).exists():
+                return
+        raise
 
 
 def remove_group_member(group_id, user_id):
-    with get_db_ctx() as db:
-        db.execute("DELETE FROM group_members WHERE group_id = ? AND user_id = ?", (group_id, user_id))
+    with _transaction():
+        GroupMember.delete().where(
+            (GroupMember.group == group_id) & (GroupMember.user == user_id)
+        ).execute()
 
 
 def update_group(group_id, **kwargs):
@@ -560,81 +550,67 @@ def update_group(group_id, **kwargs):
     fields = {k: v for k, v in kwargs.items() if k in allowed}
     if not fields:
         return
-    set_clause = ", ".join(f"{k} = ?" for k in fields)
-    values = list(fields.values()) + [group_id]
-    with get_db_ctx() as db:
-        db.execute(f"UPDATE groups SET {set_clause} WHERE id = ?", values)
+    with _transaction():
+        Group.update(**fields).where(Group.id == group_id).execute()
 
 
 def get_group_members(group_id):
-    db = get_db()
-    rows = db.execute(
-        "SELECT u.id, u.username, u.display_name, u.avatar, u.role, u.is_agent, "
-        "       u.last_active_at "
-        "FROM users u JOIN group_members gm ON u.id = gm.user_id "
-        "WHERE gm.group_id = ? ORDER BY gm.joined_at",
-        (group_id,),
-    ).fetchall()
-    db.close()
-    return [_apply_online(dict(r)) for r in rows]
+    query = (
+        User
+        .select()
+        .join(GroupMember, on=(User.id == GroupMember.user))
+        .where(GroupMember.group == group_id)
+        .order_by(GroupMember.joined_at)
+    )
+    with _connection():
+        users = list(query)
+    return [
+        _user_dict(user, include_password_hash=False, include_agent_token=False)
+        for user in users
+    ]
 
 
 def get_user_groups(user_id):
-    db = get_db()
-    rows = db.execute(
-        "SELECT g.* FROM groups g JOIN group_members gm ON g.id = gm.group_id "
-        "WHERE gm.user_id = ? ORDER BY g.created_at",
-        (user_id,),
-    ).fetchall()
-    db.close()
-    return [dict(r) for r in rows]
+    query = (
+        Group
+        .select()
+        .join(GroupMember, on=(Group.id == GroupMember.group))
+        .where(GroupMember.user == user_id)
+        .order_by(Group.created_at)
+    )
+    with _connection():
+        groups = list(query)
+    return [_group_dict(group) for group in groups]
 
 
 def delete_group(group_id):
-    with get_db_ctx() as db:
-        db.execute(
-            "DELETE FROM read_cursors WHERE chat_type = 'group' AND chat_id = ?",
-            (group_id,),
-        )
-        db.execute("DELETE FROM messages WHERE chat_type = 'group' AND chat_id = ?", (group_id,))
-        db.execute("DELETE FROM group_members WHERE group_id = ?", (group_id,))
-        db.execute("DELETE FROM groups WHERE id = ?", (group_id,))
+    with _transaction():
+        ReadCursor.delete().where(
+            (ReadCursor.chat_type == "group") & (ReadCursor.chat_id == group_id)
+        ).execute()
+        Message.delete().where(
+            (Message.chat_type == "group") & (Message.chat_id == group_id)
+        ).execute()
+        GroupMember.delete().where(GroupMember.group == group_id).execute()
+        Group.delete().where(Group.id == group_id).execute()
 
 
 def is_group_member(group_id, user_id):
-    db = get_db()
-    row = db.execute(
-        "SELECT 1 FROM group_members WHERE group_id = ? AND user_id = ?",
-        (group_id, user_id),
-    ).fetchone()
-    db.close()
-    return row is not None
+    with _connection():
+        return GroupMember.select().where(
+            (GroupMember.group == group_id) & (GroupMember.user == user_id)
+        ).exists()
 
 
 def is_direct_chat_participant(chat_id, user_id):
-    """True if ``user_id`` is one of the two parties in the direct chat.
-
-    The only gate that prevents anyone who has guessed or leaked a
-    ``direct_chats.id`` from writing / reading messages in that chat —
-    callers MUST consult this before accepting a write or returning
-    history for a ``chat_type == "direct"`` request.
-    """
-    db = get_db()
-    row = db.execute(
-        "SELECT 1 FROM direct_chats WHERE id = ? AND (user1_id = ? OR user2_id = ?)",
-        (chat_id, user_id, user_id),
-    ).fetchone()
-    db.close()
-    return row is not None
+    with _connection():
+        return DirectChat.select().where(
+            (DirectChat.id == chat_id) &
+            ((DirectChat.user1 == user_id) | (DirectChat.user2 == user_id))
+        ).exists()
 
 
 def can_access_chat(chat_type, chat_id, user_id):
-    """Unified "is this user allowed to read/write this chat?" gate.
-
-    Wraps :func:`is_group_member` and :func:`is_direct_chat_participant`
-    so callers in routes.py and socket_events.py share the exact same
-    authorization rule (and unknown ``chat_type`` values default-deny).
-    """
     if chat_type == "group":
         return is_group_member(chat_id, user_id)
     if chat_type == "direct":
@@ -642,103 +618,101 @@ def can_access_chat(chat_type, chat_id, user_id):
     return False
 
 
-# ── Direct chat operations ──
-
 def delete_direct_chat(chat_id, user_id):
-    with get_db_ctx() as db:
-        chat = db.execute("SELECT * FROM direct_chats WHERE id = ? AND (user1_id = ? OR user2_id = ?)", (chat_id, user_id, user_id)).fetchone()
-        if chat:
-            db.execute(
-                "DELETE FROM read_cursors WHERE chat_type = 'direct' AND chat_id = ?",
-                (chat_id,),
-            )
-            db.execute("DELETE FROM messages WHERE chat_type = 'direct' AND chat_id = ?", (chat_id,))
-            db.execute("DELETE FROM direct_chats WHERE id = ?", (chat_id,))
+    with _transaction():
+        chat = DirectChat.get_or_none(
+            (DirectChat.id == chat_id) &
+            ((DirectChat.user1 == user_id) | (DirectChat.user2 == user_id))
+        )
+        if not chat:
+            return
+        ReadCursor.delete().where(
+            (ReadCursor.chat_type == "direct") & (ReadCursor.chat_id == chat_id)
+        ).execute()
+        Message.delete().where(
+            (Message.chat_type == "direct") & (Message.chat_id == chat_id)
+        ).execute()
+        DirectChat.delete().where(DirectChat.id == chat_id).execute()
+
+
+def get_direct_chat(chat_id):
+    with _connection():
+        return _direct_chat_dict(DirectChat.get_or_none(DirectChat.id == chat_id))
 
 
 def get_or_create_direct_chat(user1_id, user2_id):
     assert_kind(user1_id, KIND_USER)
     assert_kind(user2_id, KIND_USER)
     a, b = sorted([user1_id, user2_id])
-    db = get_db()
-    row = db.execute(
-        "SELECT * FROM direct_chats WHERE user1_id = ? AND user2_id = ?", (a, b)
-    ).fetchone()
-    db.close()
-    if row:
-        return dict(row)
-    cid = new_id(KIND_DIRECT)
-    with get_db_ctx() as db:
-        db.execute(
-            "INSERT OR IGNORE INTO direct_chats (id, user1_id, user2_id, created_at) VALUES (?, ?, ?, ?)",
-            (cid, a, b, now()),
-        )
-    return {"id": cid, "user1_id": a, "user2_id": b}
+    try:
+        with _transaction():
+            chat = DirectChat.get_or_none((DirectChat.user1 == a) & (DirectChat.user2 == b))
+            if chat:
+                return _direct_chat_dict(chat)
+            chat = DirectChat.create(
+                id=new_id(KIND_DIRECT),
+                user1=a,
+                user2=b,
+                created_at=now(),
+            )
+            return _direct_chat_dict(chat)
+    except IntegrityError:
+        with _connection():
+            chat = DirectChat.get((DirectChat.user1 == a) & (DirectChat.user2 == b))
+        return _direct_chat_dict(chat)
 
 
 def get_user_direct_chats(user_id):
-    db = get_db()
-    rows = db.execute(
-        "SELECT dc.*, "
-        "CASE WHEN dc.user1_id = ? THEN u2.id ELSE u1.id END AS peer_id, "
-        "CASE WHEN dc.user1_id = ? THEN u2.display_name ELSE u1.display_name END AS peer_name, "
-        "CASE WHEN dc.user1_id = ? THEN u2.avatar ELSE u1.avatar END AS peer_avatar, "
-        "CASE WHEN dc.user1_id = ? THEN u2.description ELSE u1.description END AS peer_description, "
-        "CASE WHEN dc.user1_id = ? THEN u2.last_active_at ELSE u1.last_active_at END AS peer_last_active_at, "
-        "CASE WHEN dc.user1_id = ? THEN u2.is_agent ELSE u1.is_agent END AS peer_is_agent "
-        "FROM direct_chats dc "
-        "JOIN users u1 ON dc.user1_id = u1.id "
-        "JOIN users u2 ON dc.user2_id = u2.id "
-        "WHERE dc.user1_id = ? OR dc.user2_id = ?",
-        (user_id, user_id, user_id, user_id, user_id, user_id, user_id, user_id),
-    ).fetchall()
-    db.close()
-    return [_apply_peer_online(dict(r)) for r in rows]
+    U1 = User.alias()
+    U2 = User.alias()
+    peer_is_u2 = DirectChat.user1 == user_id
+    query = (
+        DirectChat
+        .select(
+            DirectChat.id.alias("id"),
+            DirectChat.user1.alias("user1_id"),
+            DirectChat.user2.alias("user2_id"),
+            DirectChat.created_at.alias("created_at"),
+            Case(None, ((peer_is_u2, U2.id),), U1.id).alias("peer_id"),
+            Case(None, ((peer_is_u2, U2.display_name),), U1.display_name).alias("peer_name"),
+            Case(None, ((peer_is_u2, U2.avatar),), U1.avatar).alias("peer_avatar"),
+            Case(None, ((peer_is_u2, U2.description),), U1.description).alias("peer_description"),
+            Case(None, ((peer_is_u2, U2.last_active_at),), U1.last_active_at).alias("peer_last_active_at"),
+            Case(None, ((peer_is_u2, U2.is_agent),), U1.is_agent).alias("peer_is_agent"),
+        )
+        .join(U1, on=(DirectChat.user1 == U1.id))
+        .switch(DirectChat)
+        .join(U2, on=(DirectChat.user2 == U2.id))
+        .where((DirectChat.user1 == user_id) | (DirectChat.user2 == user_id))
+    )
+    with _connection():
+        rows = list(query.dicts())
+    return [_apply_peer_online(dict(row)) for row in rows]
 
 
 def get_direct_chat_peers(user_id):
-    """Return every distinct peer `user_id` (not the chat id) the given
-    user has a direct-chat record with. Used as the default scope for the
-    presence polling endpoint — groups are intentionally excluded because
-    the Web UI doesn't surface real-time presence for group members."""
-    db = get_db()
-    rows = db.execute(
-        "SELECT CASE WHEN user1_id = ? THEN user2_id ELSE user1_id END AS peer_id "
-        "FROM direct_chats WHERE user1_id = ? OR user2_id = ?",
-        (user_id, user_id, user_id),
-    ).fetchall()
-    db.close()
-    return [r["peer_id"] for r in rows]
+    with _connection():
+        chats = list(DirectChat.select().where(
+            (DirectChat.user1 == user_id) | (DirectChat.user2 == user_id)
+        ))
+    return [chat.user2_id if chat.user1_id == user_id else chat.user1_id for chat in chats]
 
 
 def get_presence_snapshot(user_ids):
-    """Compute the current online state for a batch of users.
-
-    Returns a list of `{user_id, is_online, last_active_at}`. Users that
-    don't exist are silently skipped. Caller is expected to authorize the
-    `user_ids` list (e.g. restrict to the requesting user's direct-chat
-    peers) — this helper is just the DB + timeout math."""
-    ids = [u for u in (user_ids or []) if u]
+    ids = [user_id for user_id in (user_ids or []) if user_id]
     if not ids:
         return []
-    db = get_db()
-    placeholders = ",".join("?" for _ in ids)
-    rows = db.execute(
-        f"SELECT id, last_active_at FROM users WHERE id IN ({placeholders})",
-        ids,
-    ).fetchall()
-    db.close()
-    result = []
-    for r in rows:
-        result.append({
-            "user_id": r["id"],
-            "is_online": 1 if _is_active(r["last_active_at"]) else 0,
-            "last_active_at": r["last_active_at"],
-        })
-    return result
+    with _connection():
+        users = list(User.select(User.id, User.last_active_at).where(User.id.in_(ids)))
+    return [
+        {
+            "user_id": user.id,
+            "is_online": 1 if _is_active(user.last_active_at) else 0,
+            "last_active_at": user.last_active_at,
+        }
+        for user in users
+    ]
 
-
-# ── Message operations ──
 
 def save_message(chat_type, chat_id, sender_id, content="", content_type="text",
                  file_url="", file_name="", mentions="[]"):
@@ -746,202 +720,211 @@ def save_message(chat_type, chat_id, sender_id, content="", content_type="text",
     assert_kind(chat_id, KIND_GROUP if chat_type == "group" else KIND_DIRECT)
     mid = new_id(KIND_MESSAGE)
     ts = now()
-    with get_db_ctx() as db:
-        db.execute(
-            "INSERT INTO messages (id, chat_type, chat_id, sender_id, content, content_type, file_url, file_name, mentions, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (mid, chat_type, chat_id, sender_id, content, content_type, file_url, file_name, mentions, ts),
+    with _transaction():
+        Message.create(
+            id=mid,
+            chat_type=chat_type,
+            chat_id=chat_id,
+            sender=sender_id,
+            content=content or "",
+            content_type=content_type or "text",
+            file_url=file_url or "",
+            file_name=file_name or "",
+            mentions=mentions or "[]",
+            created_at=ts,
         )
     return {"id": mid, "created_at": ts}
 
 
 def get_last_messages(chat_keys):
-    """Get the last message for each (chat_type, chat_id) pair.
-    chat_keys: list of (chat_type, chat_id) tuples
-    Returns dict: "type_id" -> {sender_name, content, content_type, created_at}
-    """
     if not chat_keys:
         return {}
-    db = get_db()
     result = {}
     for chat_type, chat_id in chat_keys:
-        row = db.execute(
-            "SELECT m.content, m.content_type, m.created_at, u.display_name AS sender_name "
-            "FROM messages m JOIN users u ON m.sender_id = u.id "
-            "WHERE m.chat_type = ? AND m.chat_id = ? "
-            "ORDER BY m.created_at DESC LIMIT 1",
-            (chat_type, chat_id),
-        ).fetchone()
+        query = (
+            Message
+            .select(
+                Message.content,
+                Message.content_type,
+                Message.created_at,
+                User.display_name.alias("sender_name"),
+            )
+            .join(User, on=(Message.sender == User.id))
+            .where((Message.chat_type == chat_type) & (Message.chat_id == chat_id))
+            .order_by(Message.created_at.desc())
+            .limit(1)
+        )
+        with _connection():
+            row = query.dicts().first()
         if row:
             result[f"{chat_type}_{chat_id}"] = dict(row)
-    db.close()
     return result
 
 
-def get_messages(chat_type, chat_id, before=None, limit=50):
-    db = get_db()
+def _messages_query(chat_type, chat_id, before=None, limit=50):
+    query = (
+        Message
+        .select(
+            Message.id.alias("id"),
+            Message.chat_type.alias("chat_type"),
+            Message.chat_id.alias("chat_id"),
+            Message.sender.alias("sender_id"),
+            Message.content.alias("content"),
+            Message.content_type.alias("content_type"),
+            Message.file_url.alias("file_url"),
+            Message.file_name.alias("file_name"),
+            Message.mentions.alias("mentions"),
+            Message.created_at.alias("created_at"),
+            User.display_name.alias("sender_name"),
+            User.avatar.alias("sender_avatar"),
+            User.is_agent.alias("sender_is_agent"),
+        )
+        .join(User, on=(Message.sender == User.id))
+        .where((Message.chat_type == chat_type) & (Message.chat_id == chat_id))
+    )
     if before:
-        rows = db.execute(
-            "SELECT m.*, u.display_name AS sender_name, u.avatar AS sender_avatar, u.is_agent AS sender_is_agent "
-            "FROM messages m JOIN users u ON m.sender_id = u.id "
-            "WHERE m.chat_type = ? AND m.chat_id = ? AND m.created_at < ? "
-            "ORDER BY m.created_at DESC LIMIT ?",
-            (chat_type, chat_id, before, limit),
-        ).fetchall()
-    else:
-        rows = db.execute(
-            "SELECT m.*, u.display_name AS sender_name, u.avatar AS sender_avatar, u.is_agent AS sender_is_agent "
-            "FROM messages m JOIN users u ON m.sender_id = u.id "
-            "WHERE m.chat_type = ? AND m.chat_id = ? "
-            "ORDER BY m.created_at DESC LIMIT ?",
-            (chat_type, chat_id, limit),
-        ).fetchall()
-    db.close()
-    return [dict(r) for r in reversed(rows)]
+        query = query.where(Message.created_at < before)
+    query = query.order_by(Message.created_at.desc())
+    if limit is not None:
+        query = query.limit(limit)
+    return query
 
 
-# ── Read-cursor based unread tracking ──
-#
-# Instead of one row per (user, unread-message), we store a single
-# `last_read_at` timestamp per (user, chat). Unread messages are those with
-# `created_at > last_read_at` authored by someone other than the user.
-#
-# Baseline for users without a cursor row: the chat's creation time for
-# direct chats, or the member's `joined_at` for groups. This way joining a
-# chat never retroactively flags the full history as unread, and we don't
-# need to eagerly insert cursor rows on chat creation.
+def get_messages(chat_type, chat_id, before=None, limit=50):
+    with _connection():
+        rows = list(_messages_query(chat_type, chat_id, before=before, limit=limit).dicts())
+    return [_message_dict(dict(row)) for row in reversed(rows)]
 
 
 def mark_read(user_id, chat_type, chat_id, up_to_ts=None):
-    """Advance the user's read cursor for this chat. `up_to_ts` is the
-    inclusive ceiling (defaults to now). The cursor only moves forward — a
-    smaller `up_to_ts` is ignored."""
     ts = float(up_to_ts) if up_to_ts is not None else now()
-    with get_db_ctx() as db:
-        db.execute(
-            "INSERT INTO read_cursors (user_id, chat_type, chat_id, last_read_at) "
-            "VALUES (?, ?, ?, ?) "
-            "ON CONFLICT(user_id, chat_type, chat_id) DO UPDATE SET "
-            "last_read_at = MAX(last_read_at, excluded.last_read_at)",
-            (user_id, chat_type, chat_id, ts),
-        )
+    condition = (
+        (ReadCursor.user == user_id) &
+        (ReadCursor.chat_type == chat_type) &
+        (ReadCursor.chat_id == chat_id)
+    )
+    try:
+        with _transaction():
+            updated = (
+                ReadCursor
+                .update(last_read_at=ts)
+                .where(condition & (ReadCursor.last_read_at < ts))
+                .execute()
+            )
+            if updated or ReadCursor.select().where(condition).exists():
+                return
+            ReadCursor.create(
+                user=user_id,
+                chat_type=chat_type,
+                chat_id=chat_id,
+                last_read_at=ts,
+            )
+    except IntegrityError:
+        with _transaction():
+            updated = (
+                ReadCursor
+                .update(last_read_at=ts)
+                .where(condition & (ReadCursor.last_read_at < ts))
+                .execute()
+            )
+            if updated or ReadCursor.select().where(condition).exists():
+                return
+        raise
 
 
 def mark_read_up_to_message(user_id, message_id):
-    """Advance the cursor to include the given message (and everything before
-    it in the same chat)."""
-    db = get_db()
-    row = db.execute(
-        "SELECT chat_type, chat_id, created_at FROM messages WHERE id = ?",
-        (message_id,),
-    ).fetchone()
-    db.close()
-    if not row:
+    with _connection():
+        message = Message.get_or_none(Message.id == message_id)
+    if not message:
         return False
-    mark_read(user_id, row["chat_type"], row["chat_id"], row["created_at"])
+    mark_read(user_id, message.chat_type, message.chat_id, message.created_at)
     return True
 
 
 def mark_read_up_to_messages(user_id, message_ids):
-    """Batch variant: resolve each id to its (chat, created_at) and advance
-    the per-chat cursor to the MAX created_at. Missing ids are silently
-    ignored."""
-    ids = [m for m in (message_ids or []) if m]
+    ids = [message_id for message_id in (message_ids or []) if message_id]
     if not ids:
         return
-    placeholders = ",".join("?" for _ in ids)
-    db = get_db()
-    rows = db.execute(
-        f"SELECT chat_type, chat_id, MAX(created_at) AS ts FROM messages "
-        f"WHERE id IN ({placeholders}) GROUP BY chat_type, chat_id",
-        ids,
-    ).fetchall()
-    db.close()
-    for r in rows:
-        mark_read(user_id, r["chat_type"], r["chat_id"], r["ts"])
+    query = (
+        Message
+        .select(
+            Message.chat_type.alias("chat_type"),
+            Message.chat_id.alias("chat_id"),
+            fn.MAX(Message.created_at).alias("ts"),
+        )
+        .where(Message.id.in_(ids))
+        .group_by(Message.chat_type, Message.chat_id)
+    )
+    with _connection():
+        rows = list(query.dicts())
+    for row in rows:
+        mark_read(user_id, row["chat_type"], row["chat_id"], row["ts"])
 
 
-# Public alias used by callers that just want to "bulk mark this chat as
-# read up to now". Signature mirrors the historical `clear_unread` for
-# backward compatibility with call sites.
 def clear_unread(user_id, chat_type=None, chat_id=None):
     if chat_type and chat_id:
         mark_read(user_id, chat_type, chat_id)
         return
-    # No chat specified → mark every chat the user participates in.
-    db = get_db()
-    direct = db.execute(
-        "SELECT id FROM direct_chats WHERE user1_id = ? OR user2_id = ?",
-        (user_id, user_id),
-    ).fetchall()
-    groups = db.execute(
-        "SELECT group_id FROM group_members WHERE user_id = ?",
-        (user_id,),
-    ).fetchall()
-    db.close()
     ts = now()
-    for r in direct:
-        mark_read(user_id, "direct", r["id"], ts)
-    for r in groups:
-        mark_read(user_id, "group", r["group_id"], ts)
+    with _connection():
+        direct = list(DirectChat.select(DirectChat.id).where(
+            (DirectChat.user1 == user_id) | (DirectChat.user2 == user_id)
+        ))
+        groups = list(GroupMember.select(GroupMember.group).where(GroupMember.user == user_id))
+    for row in direct:
+        mark_read(user_id, "direct", row.id, ts)
+    for row in groups:
+        mark_read(user_id, "group", row.group_id, ts)
 
 
-def _unread_where_clauses():
-    """Shared CTE that enumerates each chat the user is in and joins the
-    per-chat baseline: either the user's cursor, or the chat-creation /
-    group-join timestamp when no cursor has been set yet."""
-    return (
-        "WITH user_chats AS ( "
-        "  SELECT 'direct' AS chat_type, dc.id AS chat_id, dc.created_at AS joined_at "
-        "  FROM direct_chats dc WHERE dc.user1_id = :uid OR dc.user2_id = :uid "
-        "  UNION ALL "
-        "  SELECT 'group', gm.group_id, gm.joined_at "
-        "  FROM group_members gm WHERE gm.user_id = :uid "
-        "), "
-        "chat_since AS ( "
-        "  SELECT uc.chat_type, uc.chat_id, "
-        "         COALESCE(rc.last_read_at, uc.joined_at) AS since "
-        "  FROM user_chats uc "
-        "  LEFT JOIN read_cursors rc "
-        "         ON rc.user_id = :uid AND rc.chat_type = uc.chat_type AND rc.chat_id = uc.chat_id "
-        ") "
-    )
+def _chat_baselines(user_id):
+    baselines = []
+    with _connection():
+        direct = list(DirectChat.select().where(
+            (DirectChat.user1 == user_id) | (DirectChat.user2 == user_id)
+        ))
+        memberships = list(GroupMember.select().where(GroupMember.user == user_id))
+        cursors = {
+            (row.chat_type, row.chat_id): row.last_read_at
+            for row in ReadCursor.select().where(ReadCursor.user == user_id)
+        }
+    for chat in direct:
+        key = ("direct", chat.id)
+        baselines.append((key[0], key[1], cursors.get(key, chat.created_at)))
+    for membership in memberships:
+        key = ("group", membership.group_id)
+        baselines.append((key[0], key[1], cursors.get(key, membership.joined_at)))
+    return baselines
 
 
 def get_unread_counts(user_id):
-    db = get_db()
-    sql = _unread_where_clauses() + (
-        "SELECT cs.chat_type, cs.chat_id, COUNT(m.id) AS count "
-        "FROM chat_since cs "
-        "LEFT JOIN messages m "
-        "       ON m.chat_type = cs.chat_type AND m.chat_id = cs.chat_id "
-        "      AND m.sender_id != :uid AND m.created_at > cs.since "
-        "GROUP BY cs.chat_type, cs.chat_id "
-        "HAVING count > 0"
-    )
-    rows = db.execute(sql, {"uid": user_id}).fetchall()
-    db.close()
-    return {f"{r['chat_type']}_{r['chat_id']}": r["count"] for r in rows}
+    result = {}
+    for chat_type, chat_id, since in _chat_baselines(user_id):
+        with _connection():
+            count = Message.select().where(
+                (Message.chat_type == chat_type) &
+                (Message.chat_id == chat_id) &
+                (Message.sender != user_id) &
+                (Message.created_at > since)
+            ).count()
+        if count > 0:
+            result[f"{chat_type}_{chat_id}"] = count
+    return result
 
 
 def get_unread_messages(user_id):
-    """Return all messages the user has not yet read, across every chat
-    they're in, ordered by creation time. Used for offline-catchup delivery
-    on (re)connect."""
-    db = get_db()
-    sql = _unread_where_clauses() + (
-        "SELECT m.*, u.display_name AS sender_name, u.avatar AS sender_avatar, "
-        "       u.is_agent AS sender_is_agent "
-        "FROM chat_since cs "
-        "JOIN messages m "
-        "  ON m.chat_type = cs.chat_type AND m.chat_id = cs.chat_id "
-        " AND m.sender_id != :uid AND m.created_at > cs.since "
-        "JOIN users u ON m.sender_id = u.id "
-        "ORDER BY m.created_at"
-    )
-    rows = db.execute(sql, {"uid": user_id}).fetchall()
-    db.close()
-    return [dict(r) for r in rows]
+    rows = []
+    for chat_type, chat_id, since in _chat_baselines(user_id):
+        with _connection():
+            rows.extend(
+                list(
+                    _messages_query(chat_type, chat_id, before=None, limit=None)
+                    .where((Message.sender != user_id) & (Message.created_at > since))
+                    .dicts()
+                )
+            )
+    rows.sort(key=lambda row: row["created_at"])
+    return [_message_dict(dict(row)) for row in rows]
 
 
 def cleanup_old_messages(days=None, *, cutoff=None):
@@ -951,35 +934,37 @@ def cleanup_old_messages(days=None, *, cutoff=None):
         return 0
     if cutoff is None:
         cutoff = now() - days * 86400
-    with get_db_ctx() as db:
-        cur = db.execute("DELETE FROM messages WHERE created_at < ?", (cutoff,))
-        return cur.rowcount
+    with _transaction():
+        return Message.delete().where(Message.created_at < cutoff).execute()
 
-
-# ── Settings ──
 
 def get_setting(key):
-    db = get_db()
-    row = db.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
-    db.close()
-    if row:
-        return row["value"]
-    return _DEFAULT_SETTINGS.get(key, "")
+    with _connection():
+        setting = Setting.get_or_none(Setting.key == key)
+    if setting:
+        return setting.value
+    return ""
 
 
 def set_setting(key, value):
-    with get_db_ctx() as db:
-        db.execute(
-            "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = ?",
-            (key, value, value),
-        )
+    try:
+        with _transaction():
+            updated = Setting.update(value=value).where(Setting.key == key).execute()
+            if updated or Setting.select().where(Setting.key == key).exists():
+                return
+            Setting.create(key=key, value=value)
+    except IntegrityError:
+        with _transaction():
+            updated = Setting.update(value=value).where(Setting.key == key).execute()
+            if updated or Setting.select().where(Setting.key == key).exists():
+                return
+        raise
 
 
 def get_all_settings():
-    db = get_db()
-    rows = db.execute("SELECT key, value FROM settings").fetchall()
-    db.close()
-    result = dict(_DEFAULT_SETTINGS)
-    for r in rows:
-        result[r["key"]] = r["value"]
+    with _connection():
+        settings = list(Setting.select())
+    result = {}
+    for setting in settings:
+        result[setting.key] = setting.value
     return result

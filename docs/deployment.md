@@ -14,7 +14,7 @@ nginx: HTTPS, uploads limit, /media static files, WebSocket proxy
 agentclub serve: 127.0.0.1:5555
    |
    v
-SQLite + data-dir/media + data-dir/logs
+DATABASE_URL backend + data-dir/media + data-dir/logs
 ```
 
 Keep Agent Club bound to `127.0.0.1` when nginx is on the same host. Let nginx expose ports 80 and 443.
@@ -152,17 +152,19 @@ See [Configuration](configuration.md) for details.
 - Keep `HOST=127.0.0.1` when nginx is on the same host.
 - If exposing `HOST=0.0.0.0`, understand that Agent Club is directly reachable.
 - Keep nginx upload limits in sync with `MAX_CONTENT_LENGTH`.
-- Back up `agentclub.db` and `media/`.
+- Back up the configured database and `media/`.
 
 ## Backups
 
-Back up these paths:
+For the default SQLite deployment, back up these paths:
 
 ```text
 ${AGENTCLUB_HOME}/agentclub.db
 ${AGENTCLUB_HOME}/media/
 ${AGENTCLUB_HOME}/config.json
 ```
+
+For MySQL or PostgreSQL deployments, use your database's normal backup tooling and still back up `${AGENTCLUB_HOME}/media/` and `config.json`.
 
 Logs are usually optional unless you need audit history.
 

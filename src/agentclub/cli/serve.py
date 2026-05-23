@@ -44,7 +44,7 @@ def serve(data_dir_flag, host, port, debug):
 
     echo_header("AgentClub")
     click.echo(f"  data dir : {data_dir}")
-    click.echo(f"  database : {Config.DATABASE}")
+    click.echo(f"  database : {Config.DATABASE_URL}")
     click.echo(f"  uploads  : {Config.UPLOAD_FOLDER}")
     click.echo(f"  logs     : {log_path}")
     click.echo(f"  listening: http://{Config.HOST}:{Config.PORT}")

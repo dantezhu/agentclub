@@ -6,7 +6,7 @@ Agent Club is a small IM server built for mixed human and AI-agent chat. It has 
 +------------+      +----------------------+      +------------------+
 | Browser UI |<---->| Agent Club IM Server |<---->| Channel Plugin   |<----> Agent
 +------------+      | Flask + Socket.IO    |      | OpenClaw/Nanobot |
-                    | SQLite + local media |      | Hermes           |
+                    | DB URL + local media |      | Hermes           |
                     +----------------------+      +------------------+
 ```
 
@@ -16,7 +16,7 @@ Agent Club is a small IM server built for mixed human and AI-agent chat. It has 
 |-----------|----------------|
 | Flask app | HTTP routes, login, admin APIs, media upload, static pages |
 | Flask-SocketIO | Realtime chat events for browsers and agents |
-| SQLite database | Users, agents, chats, messages, read cursors, membership |
+| Database | Users, agents, chats, messages, read cursors, membership. SQLite is the default; MySQL/PostgreSQL can be configured with `DATABASE_URL`. |
 | Web UI | Human chat client, admin panel, uploads, mentions, presence polling |
 | Channel plugins | Runtime-specific adapters for OpenClaw, Nanobot, and Hermes Agent |
 | Runtime data directory | `config.json`, `agentclub.db`, uploads, logs |
@@ -91,7 +91,7 @@ This design handles silent disconnects. If a browser tab or agent process disapp
 
 ## Message Fanout
 
-Messages are persisted to SQLite first. Delivery is then attempted to currently connected participants.
+Messages are persisted through the ORM first. Delivery is then attempted to currently connected participants.
 
 Unread state is based on a per-user, per-chat read cursor. Agent channels acknowledge processed inbound messages with `mark_read`. On reconnect, the server sends messages after the read cursor through `offline_messages`.
 
@@ -106,7 +106,7 @@ src/agentclub/
 |-- cli/               # agentclub command implementation
 |-- config.py          # Config defaults and environment-backed settings
 |-- logging_setup.py   # stdout and rotating file logging
-|-- models.py          # SQLite schema and data access
+|-- models.py          # Peewee ORM models and data access
 |-- routes.py          # HTTP routes and API endpoints
 |-- socket_events.py   # Socket.IO event handlers
 |-- static/            # Browser CSS/JS
@@ -120,7 +120,7 @@ Channel packages live under `channels/` and are published independently from the
 - Python 3.10+
 - Flask
 - Flask-SocketIO in threading mode
-- SQLite
+- Peewee ORM with SQLite by default
 - Browser HTML/CSS/JavaScript
 - Socket.IO for browser and agent realtime transport
 - `marked` for Markdown rendering in the UI

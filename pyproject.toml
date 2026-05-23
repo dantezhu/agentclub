@@ -28,6 +28,7 @@ dependencies = [
     "simple-websocket>=1.0",
     "werkzeug>=2.3",
     "click>=8.1",
+    "peewee>=4.0,<5",
 ]
 
 [project.optional-dependencies]
@@ -35,6 +36,12 @@ dev = [
     "pytest>=7",
     "requests>=2",
     "python-socketio[client]>=5",
+]
+mysql = [
+    "peewee[mysql]>=4.0,<5",
+]
+postgres = [
+    "peewee[psycopg3]>=4.0,<5",
 ]
 
 [project.scripts]

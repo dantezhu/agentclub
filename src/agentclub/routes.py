@@ -1,7 +1,6 @@
 import logging
 import os
 import json
-import sqlite3
 import uuid
 from flask import Blueprint, request, session, jsonify, send_from_directory
 from werkzeug.utils import secure_filename
@@ -157,7 +156,7 @@ def delete_agent(agent_id):
         return jsonify({"error": "Agent not found"}), 404
     try:
         models.delete_user(agent_id)
-    except sqlite3.IntegrityError as e:
+    except models.DatabaseIntegrityError as e:
         # Either delete_user is out of sync with the schema (a new table
         # references users(id) without being cleaned up) or the DB has
         # corrupt-looking rows. Either way it's a bug, not user error.
@@ -647,9 +646,9 @@ def _safe_user(user):
         "display_name": user["display_name"],
         "avatar": user["avatar"],
         # description is on every user row but only meaningful for agents
-        # today; humans get an empty string until/unless we surface a "user
-        # bio" UI somewhere. .get() guards against pre-migration callers.
-        "description": user.get("description", "") or "",
+        # today; humans get an empty string until/unless we surface a user
+        # bio UI somewhere.
+        "description": user["description"] or "",
         "role": user["role"],
         "is_agent": user["is_agent"],
         "is_online": user["is_online"],
@@ -658,5 +657,5 @@ def _safe_user(user):
         # privacy concern — the same value is already reachable via
         # /api/presence and /api/direct-chats for peers you share a chat
         # with, and /api/users restricts its scope the same way.
-        "last_active_at": user.get("last_active_at"),
+        "last_active_at": user["last_active_at"],
     }

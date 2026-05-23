@@ -34,7 +34,6 @@ the ``agent`` subcommand — keeps the two namespaces non-overlapping.
 from __future__ import annotations
 
 import secrets
-import sqlite3
 import sys
 import time
 from datetime import datetime
@@ -289,7 +288,7 @@ def user_delete(username, data_dir_flag, assume_yes):
 
     try:
         models.delete_user(user["id"])
-    except sqlite3.IntegrityError as e:
+    except models.DatabaseIntegrityError as e:
         # See note in agent.py: this means the schema grew a new FK that
         # delete_user doesn't know how to clean up. It's a bug, not user
         # error, so surface the original message.

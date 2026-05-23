@@ -22,7 +22,6 @@ on ``list``. Losing a token → ``reset-token``.
 """
 from __future__ import annotations
 
-import sqlite3
 import time
 from datetime import datetime
 
@@ -185,11 +184,7 @@ def agent_reset_token(name, data_dir_flag):
         raise click.ClickException(f"Agent '{name}' not found.")
 
     token = generate_agent_token()
-    with models.get_db_ctx() as db:
-        db.execute(
-            "UPDATE users SET agent_token = ? WHERE id = ?",
-            (token, agent["id"]),
-        )
+    models.reset_agent_token(agent["id"], token)
 
     echo_header(f"✓ Token reset for agent '{name}'")
     click.echo("")
@@ -244,7 +239,7 @@ def agent_delete(name, data_dir_flag, assume_yes):
 
     try:
         models.delete_user(agent["id"])
-    except sqlite3.IntegrityError as e:
+    except models.DatabaseIntegrityError as e:
         # delete_user is supposed to clean every reference; hitting this
         # means the schema grew a new FK someone forgot to wire in.
         raise click.ClickException(

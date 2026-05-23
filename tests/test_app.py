@@ -12,7 +12,7 @@ from agentclub import config
 # Use a temp sqlite + upload dir so tests never touch the developer's
 # real AGENTCLUB_HOME. Must happen BEFORE agentclub.app is imported.
 _tmpdb = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
-config.Config.DATABASE = _tmpdb.name
+config.Config.DATABASE_URL = f"sqlite:///{_tmpdb.name}"
 config.Config.UPLOAD_FOLDER = tempfile.mkdtemp()
 
 from agentclub import maintenance, models
@@ -20,18 +20,64 @@ from agentclub.app import app, socketio
 from agentclub.auth import hash_password
 
 
+def _delete_test_rows():
+    with models._transaction():
+        for model in [
+            models.ReadCursor,
+            models.Message,
+            models.GroupMember,
+            models.DirectChat,
+            models.Group,
+            models.User,
+            models.Setting,
+        ]:
+            model.delete().execute()
+
+
+def _set_group_joined_at(group_id, user_id, joined_at):
+    with models._transaction():
+        (
+            models.GroupMember
+            .update(joined_at=joined_at)
+            .where(
+                (models.GroupMember.group == group_id) &
+                (models.GroupMember.user == user_id)
+            )
+            .execute()
+        )
+
+
+def _set_message_created_at(message_id, created_at):
+    with models._transaction():
+        (
+            models.Message
+            .update(created_at=created_at)
+            .where(models.Message.id == message_id)
+            .execute()
+        )
+
+
+def _set_user_last_active_at(user_id, last_active_at):
+    with models._transaction():
+        (
+            models.User
+            .update(last_active_at=last_active_at)
+            .where(models.User.id == user_id)
+            .execute()
+        )
+
+
 @pytest.fixture(autouse=True)
 def setup_db():
     # Re-pin the test DB before each test in case a previous test
     # (e.g. from test_cli.py) or a CLI bootstrap() call mutated the
     # Config class attributes.
-    config.Config.DATABASE = _tmpdb.name
+    config.Config.DATABASE_URL = f"sqlite:///{_tmpdb.name}"
     config.Config.UPLOAD_FOLDER = config.Config.UPLOAD_FOLDER or tempfile.mkdtemp()
     models.init_db()
     yield
-    with models.get_db_ctx() as db:
-        for table in ["read_cursors", "messages", "group_members", "direct_chats", "groups", "users"]:
-            db.execute(f"DELETE FROM {table}")
+    config.Config.DATABASE_URL = f"sqlite:///{_tmpdb.name}"
+    _delete_test_rows()
 
 
 @pytest.fixture
@@ -238,6 +284,19 @@ class TestGroups:
         members = admin_client.get(f"/api/groups/{gid}/members").get_json()
         assert len(members) == 1
 
+    def test_user_lists_do_not_expose_credentials(self, admin_client):
+        gres = admin_client.post("/api/groups", json={"name": "G1"})
+        gid = gres.get_json()["id"]
+        ares = admin_client.post("/api/agents", json={"username": "bot1"})
+        agent = ares.get_json()
+        admin_client.post(f"/api/groups/{gid}/members", json={"user_id": agent["id"]})
+
+        users = admin_client.get("/api/users").get_json()
+        members = admin_client.get(f"/api/groups/{gid}/members").get_json()
+        for row in users + members:
+            assert "password_hash" not in row
+            assert "agent_token" not in row
+
 
 # ── Message Tests ──
 
@@ -312,11 +371,7 @@ class TestSocketIO:
         agent = ares.get_json()
         admin_client.post(f"/api/groups/{gid}/members", json={"user_id": agent["id"]})
 
-        with models.get_db_ctx() as db:
-            db.execute(
-                "UPDATE group_members SET joined_at = 0 WHERE group_id = ? AND user_id = ?",
-                (gid, agent["id"]),
-            )
+        _set_group_joined_at(gid, agent["id"], 0)
         models.save_message("group", gid, admin["id"], "offline hello")
 
         sio_client = socketio.test_client(app, auth={"agent_token": agent["agent_token"]})
@@ -748,11 +803,7 @@ class TestModels:
         assert models.get_user_by_id(uid)["is_online"] == 1
 
         # Forge a stale `last_active_at` and re-check via the snapshot API.
-        with models.get_db_ctx() as db:
-            db.execute(
-                "UPDATE users SET last_active_at = ? WHERE id = ?",
-                (_time.time() - config.Config.ACTIVE_TIMEOUT - 10, uid),
-            )
+        _set_user_last_active_at(uid, _time.time() - config.Config.ACTIVE_TIMEOUT - 10)
         snap = models.get_presence_snapshot([uid])
         assert snap == [
             {"user_id": uid, "is_online": 0, "last_active_at": snap[0]["last_active_at"]}
@@ -779,59 +830,6 @@ class TestModels:
         ids = {r["user_id"] for r in res.get_json()}
         assert ids == {direct_peer, group_only}
 
-    def test_migration_from_legacy_is_online_schema(self):
-        """Startup migration renames `last_seen` → `last_active_at` and drops
-        `is_online`. We simulate the legacy table on a fresh DB file to make
-        sure upgrade-in-place works (and online state survives the rename)."""
-        import sqlite3, tempfile, time as _time, os as _os
-        # Build a v1-style DB in a temp file.
-        tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
-        tmp.close()
-        conn = sqlite3.connect(tmp.name)
-        conn.executescript("""
-            CREATE TABLE users (
-                id TEXT PRIMARY KEY,
-                username TEXT UNIQUE NOT NULL,
-                password_hash TEXT,
-                display_name TEXT NOT NULL,
-                avatar TEXT DEFAULT '',
-                role TEXT DEFAULT 'user',
-                is_agent INTEGER DEFAULT 0,
-                agent_token TEXT UNIQUE,
-                is_online INTEGER DEFAULT 0,
-                last_seen REAL,
-                created_at REAL NOT NULL
-            );
-        """)
-        now = _time.time()
-        conn.execute(
-            "INSERT INTO users (id, username, password_hash, display_name, "
-            "role, is_online, last_seen, created_at) "
-            "VALUES ('u1', 'u1', 'x', 'U1', 'user', 1, ?, ?)",
-            (now, now),
-        )
-        conn.commit()
-        conn.close()
-
-        prev_db = config.Config.DATABASE
-        config.Config.DATABASE = tmp.name
-        try:
-            models.init_db()
-            user = models.get_user_by_id("u1")
-            assert user is not None
-            assert user["is_online"] == 1  # derived from the renamed column
-            assert "last_active_at" in user
-            # Legacy columns are gone.
-            db = models.get_db()
-            cols = {r["name"] for r in db.execute("PRAGMA table_info(users)").fetchall()}
-            db.close()
-            assert "is_online" not in cols
-            assert "last_seen" not in cols
-            assert "last_active_at" in cols
-        finally:
-            config.Config.DATABASE = prev_db
-            _os.unlink(tmp.name)
-
     def test_cleanup_old_messages(self):
         uid = models.create_user("u1", hash_password("pass"), "User1")
         gid = models.create_group("G1", uid)
@@ -839,12 +837,8 @@ class TestModels:
         # Create an old message
         import time
         old_ts = time.time() - 100 * 86400  # 100 days ago
-        with models.get_db_ctx() as db:
-            db.execute(
-                "INSERT INTO messages (id, chat_type, chat_id, sender_id, content, content_type, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                ("old_msg", "group", gid, uid, "old", "text", old_ts),
-            )
+        old = models.save_message("group", gid, uid, "old")
+        _set_message_created_at(old["id"], old_ts)
 
         models.save_message("group", gid, uid, "new")
 
@@ -873,12 +867,8 @@ class TestModels:
 
         uid = models.create_user("u1", hash_password("pass"), "User1")
         gid = models.create_group("G1", uid)
-        with models.get_db_ctx() as db:
-            db.execute(
-                "INSERT INTO messages (id, chat_type, chat_id, sender_id, content, content_type, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                ("old_msg", "group", gid, uid, "old", "text", old_ts),
-            )
+        old = models.save_message("group", gid, uid, "old")
+        _set_message_created_at(old["id"], old_ts)
         models.save_message("group", gid, uid, "new")
 
         result = maintenance.run_retention_cleanup(now_ts=current)

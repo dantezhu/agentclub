@@ -3,7 +3,7 @@
 Creates (in order):
     - the data directory
     - config.json with HOST/PORT + a freshly minted SECRET_KEY
-    - the SQLite database with the current schema
+    - the default database with the current schema
     - an admin account (password random-generated if not supplied)
 
 Idempotency is strict by design: re-running on a populated data
@@ -58,6 +58,9 @@ def _random_password(length: int = 20) -> str:
                    "loopback only; pass 0.0.0.0 to expose on LAN/public IPs.")
 @click.option("--port", default=5555, show_default=True, type=int,
               help="Bind port to write into config.json.")
+@click.option("--database-url", default=None,
+              help="Database URL to write into config.json. Defaults to "
+                   "sqlite:///${AGENTCLUB_HOME}/agentclub.db.")
 @click.option("--admin-username", default="admin", show_default=True,
               help="Initial admin username.")
 @click.option("--admin-display-name", default=None,
@@ -70,7 +73,8 @@ def _random_password(length: int = 20) -> str:
 @click.option("--force", is_flag=True,
               help="Overwrite an existing data directory (rewrites config "
                    "+ re-initializes DB but preserves already-stored data).")
-def onboard(data_dir_flag, host, port, admin_username, admin_display_name,
+def onboard(data_dir_flag, host, port, database_url,
+            admin_username, admin_display_name,
             admin_password, admin_password_stdin, force):
     data_dir = resolve_data_dir(data_dir_flag)
     cfg_path = config_path(data_dir)
@@ -101,6 +105,7 @@ def onboard(data_dir_flag, host, port, admin_username, admin_display_name,
     config_data = {
         "HOST": host,
         "PORT": port,
+        "DATABASE_URL": database_url or f"sqlite:///{data_dir / 'agentclub.db'}",
         "SECRET_KEY": secrets.token_hex(32),
     }
     with cfg_path.open("w", encoding="utf-8") as f:
@@ -135,7 +140,8 @@ def onboard(data_dir_flag, host, port, admin_username, admin_display_name,
     echo_header("✓ AgentClub onboarded")
     click.echo(f"  data dir  : {data_dir}")
     click.echo(f"  config    : {cfg_path}")
-    click.echo(f"  database  : {data_dir / 'agentclub.db'}")
+    from ..config import Config
+    click.echo(f"  database  : {Config.DATABASE_URL}")
     click.echo(f"  uploads   : {data_dir / 'media' / 'uploads'}")
     click.echo(f"  logs      : {data_dir / 'logs'}")
     click.echo("")

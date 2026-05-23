@@ -14,8 +14,7 @@ read env and expose a ``Config`` class that the Flask app mounts via
 
 JSON config file rule: keys are **UPPERCASE** and match the attributes
 below (e.g. ``HOST``, ``PORT``, ``SECRET_KEY``). Unknown keys are
-silently ignored so forward-compatible deploys don't break on extra
-fields.
+ignored; only the attributes below are read into runtime config.
 
 ``refresh_config()`` re-reads every env-backed attribute back onto the
 ``Config`` class. This is necessary because CLI subcommands set env
@@ -67,7 +66,7 @@ class Config:
     PORT = None
     DEBUG = None
     SECRET_KEY = None
-    DATABASE = None
+    DATABASE_URL = None
     UPLOAD_FOLDER = None
     MEDIA_FOLDER = None
     MAX_CONTENT_LENGTH = None
@@ -111,6 +110,12 @@ def _derive_logo_text(site_name):
     return name[:2].upper()
 
 
+def _sqlite_url_from_path(path):
+    if path == ":memory:":
+        return "sqlite:///:memory:"
+    return "sqlite:///" + os.path.abspath(os.path.expanduser(path))
+
+
 def refresh_config():
     """Re-read every env-backed Config attribute from ``os.environ``.
 
@@ -137,8 +142,14 @@ def refresh_config():
         "SECRET_KEY", "agentclub-dev-key-do-not-use-in-prod"
     )
 
-    # Storage (derived from BASE_DIR unless explicitly overridden)
-    Config.DATABASE = os.environ.get("DATABASE") or os.path.join(BASE_DIR, "agentclub.db")
+    # Storage (derived from BASE_DIR unless explicitly overridden).
+    #
+    # DATABASE_URL is the backend-agnostic setting used by the ORM:
+    #   sqlite:////abs/path/agentclub.db
+    #   mysql://user:pass@host:3306/agentclub
+    #   postgresql://user:pass@host:5432/agentclub
+    default_database = _sqlite_url_from_path(os.path.join(BASE_DIR, "agentclub.db"))
+    Config.DATABASE_URL = os.environ.get("DATABASE_URL") or default_database
     # Two related dirs:
     #   MEDIA_FOLDER   → data-dir/media           served at /media/<file>
     #   UPLOAD_FOLDER  → MEDIA_FOLDER/uploads     served at /media/uploads/<file>

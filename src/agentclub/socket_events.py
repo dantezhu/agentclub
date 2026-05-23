@@ -181,9 +181,7 @@ def register_events(socketio):
                     _notify_unread(socketio, m["id"])
 
         elif chat_type == "direct":
-            db = models.get_db()
-            chat = db.execute("SELECT * FROM direct_chats WHERE id = ?", (chat_id,)).fetchone()
-            db.close()
+            chat = models.get_direct_chat(chat_id)
             if chat:
                 peer_id = chat["user2_id"] if chat["user1_id"] == user_id else chat["user1_id"]
                 if peer_id in user_sids:

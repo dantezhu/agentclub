@@ -8,7 +8,6 @@ on disk + DB.
 """
 import json
 import os
-import sqlite3
 from pathlib import Path
 
 import pytest
@@ -37,6 +36,19 @@ def _onboard(runner, data_dir, **extra):
     return runner.invoke(onboard, args)
 
 
+def _models_for_data_dir(data_dir):
+    db_path = data_dir / "agentclub.db"
+    return _models_for_url(f"sqlite:///{db_path}")
+
+
+def _models_for_url(database_url):
+    from agentclub import config, models
+
+    config.Config.DATABASE_URL = database_url
+    models.init_db()
+    return models
+
+
 # ── Onboard ──
 
 class TestOnboard:
@@ -51,6 +63,7 @@ class TestOnboard:
         cfg = json.loads((data_dir / "config.json").read_text())
         assert cfg["HOST"] == "127.0.0.1"
         assert cfg["PORT"] == 5555
+        assert cfg["DATABASE_URL"] == f"sqlite:///{data_dir / 'agentclub.db'}"
         # SECRET_KEY must be a real key, not the dev fallback.
         assert len(cfg["SECRET_KEY"]) >= 32
         assert "dev-key" not in cfg["SECRET_KEY"]
@@ -58,12 +71,28 @@ class TestOnboard:
     def test_admin_account_is_created(self, runner, data_dir):
         res = _onboard(runner, data_dir)
         assert res.exit_code == 0
-        conn = sqlite3.connect(data_dir / "agentclub.db")
-        row = conn.execute(
-            "SELECT username, role FROM users WHERE username = 'admin'"
-        ).fetchone()
-        conn.close()
-        assert row == ("admin", "admin")
+        models = _models_for_data_dir(data_dir)
+        user = models.get_user_by_username("admin")
+        assert user["username"] == "admin"
+        assert user["role"] == "admin"
+
+    def test_database_url_option_is_written_and_initialized(self, runner, data_dir, tmp_path):
+        custom_db = tmp_path / "custom-agentclub.db"
+        database_url = f"sqlite:///{custom_db}"
+
+        res = _onboard(runner, data_dir, database_url=database_url)
+
+        assert res.exit_code == 0, res.output
+        cfg = json.loads((data_dir / "config.json").read_text())
+        assert cfg["DATABASE_URL"] == database_url
+        assert database_url in res.output
+        assert custom_db.exists()
+        assert not (data_dir / "agentclub.db").exists()
+
+        models = _models_for_url(database_url)
+        user = models.get_user_by_username("admin")
+        assert user["username"] == "admin"
+        assert user["role"] == "admin"
 
     def test_random_password_is_generated_and_printed(self, runner, data_dir):
         # Drop the inline password → onboard should mint one and print it.
@@ -93,17 +122,11 @@ class TestOnboard:
         ])
         assert r2.exit_code == 0, r2.output
         # New password works; old one doesn't.
-        from agentclub import models
         from agentclub.auth import verify_password
-        # Be mindful: test_app.py may have pinned Config.DATABASE. Use a
-        # direct connection instead of models.* to avoid that coupling.
-        conn = sqlite3.connect(data_dir / "agentclub.db")
-        row = conn.execute(
-            "SELECT password_hash FROM users WHERE username = 'admin'"
-        ).fetchone()
-        conn.close()
-        assert verify_password("second4567", row[0])
-        assert not verify_password("first1234", row[0])
+        models = _models_for_data_dir(data_dir)
+        user = models.get_user_by_username("admin")
+        assert verify_password("second4567", user["password_hash"])
+        assert not verify_password("first1234", user["password_hash"])
 
 
 # Admin-specific CLI tests used to live here under ``TestAdmin``;
@@ -128,14 +151,11 @@ class TestAgent:
         assert res.exit_code == 0, res.output
         assert "token" in res.output
         # The printed token must match what's in the DB.
-        conn = sqlite3.connect(data_dir / "agentclub.db")
-        row = conn.execute(
-            "SELECT agent_token, is_agent, display_name FROM users WHERE username = 'bot1'"
-        ).fetchone()
-        conn.close()
-        assert row[1] == 1
-        assert row[2] == "Bot One"
-        assert row[0] in res.output
+        models = _models_for_data_dir(data_dir)
+        agent = models.get_user_by_username("bot1")
+        assert agent["is_agent"] == 1
+        assert agent["display_name"] == "Bot One"
+        assert agent["agent_token"] in res.output
 
     def test_list_agents_never_shows_token(self, runner, data_dir):
         _onboard(runner, data_dir)
@@ -144,11 +164,8 @@ class TestAgent:
             "--data-dir", str(data_dir),
         ])
         # Remember the token, then ensure list doesn't leak it.
-        conn = sqlite3.connect(data_dir / "agentclub.db")
-        token = conn.execute(
-            "SELECT agent_token FROM users WHERE username = 'bot1'"
-        ).fetchone()[0]
-        conn.close()
+        models = _models_for_data_dir(data_dir)
+        token = models.get_user_by_username("bot1")["agent_token"]
 
         res = runner.invoke(agent_group, [
             "list", "--data-dir", str(data_dir),
@@ -172,11 +189,8 @@ class TestAgent:
             "create", "bot1",
             "--data-dir", str(data_dir),
         ])
-        conn = sqlite3.connect(data_dir / "agentclub.db")
-        old_token = conn.execute(
-            "SELECT agent_token FROM users WHERE username = 'bot1'"
-        ).fetchone()[0]
-        conn.close()
+        models = _models_for_data_dir(data_dir)
+        old_token = models.get_user_by_username("bot1")["agent_token"]
 
         res = runner.invoke(agent_group, [
             "reset-token", "bot1",
@@ -184,11 +198,8 @@ class TestAgent:
         ])
         assert res.exit_code == 0, res.output
 
-        conn = sqlite3.connect(data_dir / "agentclub.db")
-        new_token = conn.execute(
-            "SELECT agent_token FROM users WHERE username = 'bot1'"
-        ).fetchone()[0]
-        conn.close()
+        models = _models_for_data_dir(data_dir)
+        new_token = models.get_user_by_username("bot1")["agent_token"]
         assert new_token != old_token
         assert new_token in res.output
 
@@ -213,6 +224,8 @@ class TestConfigShow:
         assert res.exit_code == 0, res.output
         assert str(data_dir) in res.output
         assert "SECRET_KEY" in res.output
+        assert "DATABASE_URL" in res.output
+        assert "DATABASE " not in res.output
         assert "redacted" in res.output
 
     def test_show_secrets_prints_key(self, runner, data_dir):
