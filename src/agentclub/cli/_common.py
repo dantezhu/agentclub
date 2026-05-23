@@ -3,14 +3,13 @@
 The general flow every subcommand follows:
 
     1. Resolve the **data directory** (``--data-dir`` flag, else
-       ``AGENTCLUB_HOME`` env, else ``~/.agentclub``).
+       ``~/.agentclub``).
     2. Load ``config.json`` from the data directory (if present) and
-       propagate every UPPERCASE key into ``os.environ`` so that
-       ``agentclub.config`` picks them up on import.
-    3. Export ``AGENTCLUB_HOME`` so ``Config.BASE_DIR`` matches.
+       merge any explicit CLI overrides.
+    3. Apply the resolved config to ``agentclub.config.Config``.
     4. Lazy-import the rest of the server (``agentclub.app`` /
        ``agentclub.models``) — this order matters: config must be
-       materialized via env BEFORE those imports happen.
+       materialized BEFORE those imports happen.
 
 Keeping this all in one tiny module means every subcommand shares the
 same precedence rules and error messages.
@@ -18,7 +17,6 @@ same precedence rules and error messages.
 from __future__ import annotations
 
 import json
-import os
 import sys
 from pathlib import Path
 from typing import Optional
@@ -33,14 +31,10 @@ DEFAULT_DATA_DIR = Path("~/.agentclub").expanduser()
 def resolve_data_dir(cli_value: Optional[str]) -> Path:
     """Decide which directory is the runtime data root.
 
-    Precedence: ``--data-dir`` flag > ``AGENTCLUB_HOME`` env >
-    ``~/.agentclub``. The path is returned absolute so downstream
-    code never has to re-resolve it."""
+    Precedence: ``--data-dir`` flag > ``~/.agentclub``. The path is
+    returned absolute so downstream code never has to re-resolve it."""
     if cli_value:
         return Path(cli_value).expanduser().resolve()
-    env = os.environ.get("AGENTCLUB_HOME")
-    if env:
-        return Path(env).expanduser().resolve()
     return DEFAULT_DATA_DIR.resolve()
 
 
@@ -67,18 +61,17 @@ def load_config_file(data_dir: Path) -> dict:
     return data
 
 
-def apply_env(data_dir: Path, overrides: Optional[dict] = None) -> dict:
-    """Propagate the resolved config into ``os.environ``.
+def apply_config(data_dir: Path, overrides: Optional[dict] = None) -> dict:
+    """Apply the resolved config to ``agentclub.config.Config``.
 
     Precedence (lowest wins first — later overrides):
 
-        1. existing env (kept as-is; only keys we don't set stay as env)
+        1. built-in defaults
         2. ``config.json`` values
         3. explicit ``overrides`` (usually CLI flags)
 
-    Any UPPERCASE key is exported; nested / non-string values are
-    coerced via ``str(value)`` (``bool`` → ``"True"``/``"False"`` which
-    ``Config._bool`` understands). Returns the merged dict for display.
+    Only UPPERCASE keys are passed through. ``agentclub.config`` ignores
+    unknown keys, so stale config entries do not become runtime config.
     """
     file_cfg = load_config_file(data_dir)
     merged: dict = {}
@@ -88,20 +81,8 @@ def apply_env(data_dir: Path, overrides: Optional[dict] = None) -> dict:
                 continue
             merged[k] = v
 
-    os.environ["AGENTCLUB_HOME"] = str(data_dir)
-    for k, v in merged.items():
-        if isinstance(v, bool):
-            os.environ[k] = "true" if v else "false"
-        else:
-            os.environ[k] = str(v)
-
-    # If ``agentclub.config`` was imported earlier in this process
-    # (common during tests and when multiple CLI subcommands chain),
-    # its class-level attributes are frozen to the values at first
-    # import. Re-read from env to reflect our just-applied overrides.
-    import sys as _sys
-    if "agentclub.config" in _sys.modules:
-        _sys.modules["agentclub.config"].refresh_config()
+    from .. import config as config_mod
+    config_mod.apply_config(data_dir=data_dir, values=merged)
 
     return merged
 
@@ -124,14 +105,14 @@ def bootstrap(data_dir_flag: Optional[str],
               overrides: Optional[dict] = None) -> Path:
     """Common prologue for every non-onboard subcommand.
 
-    Resolves the data dir, loads config.json into env, optionally
-    validates that the dir+config exist. Returns the resolved data dir
-    so callers can print it or use it further.
+    Resolves the data dir, loads config.json, optionally validates that
+    the dir+config exist. Returns the resolved data dir so callers can
+    print it or use it further.
     """
     data_dir = resolve_data_dir(data_dir_flag)
     if require_exists:
         ensure_data_dir_exists(data_dir)
-    apply_env(data_dir, overrides=overrides)
+    apply_config(data_dir, overrides=overrides)
     return data_dir
 
 

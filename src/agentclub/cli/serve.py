@@ -10,7 +10,7 @@ from ._common import bootstrap, echo_header
 
 @click.command(help="Start the AgentClub server.")
 @click.option("--data-dir", "data_dir_flag", type=click.Path(),
-              help="Runtime data directory. Defaults to $AGENTCLUB_HOME or "
+              help="Runtime data directory. Defaults to "
                    "~/.agentclub.")
 @click.option("--host", default=None,
               help="Bind address. Overrides config.json HOST.")
@@ -29,7 +29,7 @@ def serve(data_dir_flag, host, port, debug):
 
     data_dir = bootstrap(data_dir_flag, require_exists=True, overrides=overrides)
 
-    # Imports must come AFTER bootstrap() so Config reads the right env.
+    # Imports must come AFTER bootstrap() so Config is already applied.
     from ..config import Config
     from ..logging_setup import setup_logging
     log_path = setup_logging()

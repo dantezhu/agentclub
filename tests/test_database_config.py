@@ -6,22 +6,34 @@ from agentclub import models
 
 
 def test_database_url_defaults_to_sqlite_file(monkeypatch, tmp_path):
-    monkeypatch.setenv("AGENTCLUB_HOME", str(tmp_path))
-    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("AGENTCLUB_HOME", str(tmp_path / "ignored"))
+    monkeypatch.setenv("DATABASE_URL", "mysql://ignored.example/agentclub")
 
-    config.refresh_config()
+    config.apply_config(data_dir=tmp_path, values={})
 
     assert config.Config.DATABASE_URL.startswith("sqlite:///")
     assert config.Config.DATABASE_URL.endswith("/agentclub.db")
+    assert str(tmp_path / "agentclub.db") in config.Config.DATABASE_URL
 
 
-def test_explicit_database_url_is_used(monkeypatch):
+def test_explicit_database_url_is_used():
     url = "mysql://agent:secret@db.example:3306/agentclub"
-    monkeypatch.setenv("DATABASE_URL", url)
 
-    config.refresh_config()
+    config.apply_config(values={"DATABASE_URL": url})
 
     assert config.Config.DATABASE_URL == url
+
+
+def test_environment_variables_do_not_override_config(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOST", "0.0.0.0")
+    monkeypatch.setenv("PORT", "7777")
+    monkeypatch.setenv("DATABASE_URL", "mysql://env.example/agentclub")
+
+    config.apply_config(data_dir=tmp_path, values={"PORT": 6000})
+
+    assert config.Config.HOST == "127.0.0.1"
+    assert config.Config.PORT == 6000
+    assert config.Config.DATABASE_URL == f"sqlite:///{tmp_path / 'agentclub.db'}"
 
 
 def test_database_path_config_is_not_exposed():

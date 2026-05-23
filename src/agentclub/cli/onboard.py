@@ -30,7 +30,7 @@ import click
 
 from ._common import (
     CONFIG_FILENAME,
-    apply_env,
+    apply_config,
     config_path,
     echo_header,
     resolve_data_dir,
@@ -52,7 +52,7 @@ def _random_password(length: int = 20) -> str:
 @click.command(help="Initialize a new AgentClub data directory.")
 @click.option("--data-dir", "data_dir_flag", type=click.Path(),
               help="Where to create the data directory. Defaults to "
-                   "$AGENTCLUB_HOME or ~/.agentclub.")
+                   "~/.agentclub.")
 @click.option("--host", default="127.0.0.1", show_default=True,
               help="Bind address to write into config.json. Defaults to "
                    "loopback only; pass 0.0.0.0 to expose on LAN/public IPs.")
@@ -60,7 +60,7 @@ def _random_password(length: int = 20) -> str:
               help="Bind port to write into config.json.")
 @click.option("--database-url", default=None,
               help="Database URL to write into config.json. Defaults to "
-                   "sqlite:///${AGENTCLUB_HOME}/agentclub.db.")
+                   "sqlite:///<data-dir>/agentclub.db.")
 @click.option("--admin-username", default="admin", show_default=True,
               help="Initial admin username.")
 @click.option("--admin-display-name", default=None,
@@ -112,8 +112,8 @@ def onboard(data_dir_flag, host, port, database_url,
         json.dump(config_data, f, indent=2)
         f.write("\n")
 
-    # ── Load the config we just wrote into env, then init DB ──
-    apply_env(data_dir)
+    # ── Apply the config we just wrote, then init DB ──
+    apply_config(data_dir)
     from .. import models  # noqa: WPS433 — lazy on purpose
     from ..auth import hash_password
     models.init_db()

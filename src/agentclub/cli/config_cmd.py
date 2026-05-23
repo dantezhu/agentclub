@@ -16,8 +16,7 @@ def config_group():
 
 
 # Fields we surface. Purposely excludes ALLOWED_EXTENSIONS — it's a
-# nested set/dict that doesn't translate cleanly to env vars and is
-# kept as a source-only constant.
+# nested set/dict and is kept as a source-only constant.
 _EXPOSED = [
     "HOST", "PORT", "DEBUG",
     "SECRET_KEY",
@@ -32,7 +31,7 @@ _EXPOSED = [
 
 @config_group.command("show", help="Print the resolved effective config.")
 @click.option("--data-dir", "data_dir_flag", type=click.Path(),
-              help="Data directory. Defaults to $AGENTCLUB_HOME or "
+              help="Data directory. Defaults to "
                    "~/.agentclub.")
 @click.option("--show-secrets", is_flag=True,
               help="Print SECRET_KEY in clear instead of redacting it.")

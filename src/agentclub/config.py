@@ -1,52 +1,64 @@
 """Server configuration.
 
-All knobs are read from environment variables so that the CLI can drive
-them from three layers, in increasing priority:
+Agent Club materializes runtime config from three layers, in increasing
+priority:
 
-    1. built-in defaults (this file)
-    2. ``${AGENTCLUB_HOME}/config.json``  (loaded by the CLI into env)
-    3. ``--foo`` CLI flags / shell env
+    1. built-in defaults
+    2. ``data-dir/config.json``
+    3. explicit CLI flags
 
-The CLI is responsible for translating JSON config files and CLI flags
-into ``os.environ`` BEFORE this module gets imported; here we simply
-read env and expose a ``Config`` class that the Flask app mounts via
-``app.config.from_object(Config)``.
+The CLI loads ``config.json``, merges any command-line overrides, and
+calls ``apply_config()`` before importing the server.
 
 JSON config file rule: keys are **UPPERCASE** and match the attributes
 below (e.g. ``HOST``, ``PORT``, ``SECRET_KEY``). Unknown keys are
-ignored; only the attributes below are read into runtime config.
-
-``refresh_config()`` re-reads every env-backed attribute back onto the
-``Config`` class. This is necessary because CLI subcommands set env
-vars AFTER importing this module (via ``apply_env`` in the common
-bootstrap), and class attributes otherwise stay frozen to the value at
-first import.
+ignored.
 """
 import os
 import secrets
 
 
-def _default_home():
-    """Runtime data directory. CLI sets ``AGENTCLUB_HOME`` explicitly;
-    importing this module standalone (tests, ``python -m agentclub.app``)
-    falls back to ``~/.agentclub`` (Unix-style per-user config dir)."""
-    return os.environ.get("AGENTCLUB_HOME") or os.path.expanduser("~/.agentclub")
+DEFAULT_DATA_DIR = os.path.expanduser("~/.agentclub")
+DATA_DIR = os.path.abspath(DEFAULT_DATA_DIR)
 
 
-def _bool(name, default):
-    raw = os.environ.get(name)
+def _normalize_data_dir(data_dir):
+    if data_dir is None:
+        data_dir = DEFAULT_DATA_DIR
+    return os.path.abspath(os.path.expanduser(os.fspath(data_dir)))
+
+
+def _bool(values, name, default):
+    raw = values.get(name, default)
+    if isinstance(raw, bool):
+        return raw
     if raw is None:
         return default
-    return raw.strip().lower() in ("1", "true", "yes", "on")
+    return str(raw).strip().lower() in ("1", "true", "yes", "on")
 
 
-# Module-level BASE_DIR is kept in sync by refresh_config().
-BASE_DIR = _default_home()
+def _int(values, name, default):
+    return int(values.get(name, default))
+
+
+def _string(values, name, default):
+    raw = values.get(name, default)
+    if raw is None:
+        return default
+    return str(raw)
+
+
+def _nonempty_string(values, name, default):
+    raw = values.get(name)
+    if raw is None:
+        return default
+    text = str(raw)
+    return text or default
 
 
 class Config:
-    # Fixed constants (not env-tunable). ALLOWED_EXTENSIONS is a nested
-    # set/dict that doesn't map cleanly to env vars; keep it source-only.
+    # Fixed constants. ALLOWED_EXTENSIONS is a nested set/dict that does
+    # not belong in JSON config.
     ALLOWED_EXTENSIONS = {
         "image": {"png", "jpg", "jpeg", "gif", "webp"},
         "audio": {"mp3", "wav", "ogg", "m4a"},
@@ -59,9 +71,6 @@ class Config:
         },
     }
 
-    # Env-tunable fields are populated by refresh_config() at import
-    # time and any time CLI ``apply_env`` runs. Keeping them declared
-    # here (as None) makes IDE autocomplete happy and signals intent.
     HOST = None
     PORT = None
     DEBUG = None
@@ -90,10 +99,10 @@ def _derive_logo_text(site_name):
     """Build a short 1-2 char wordmark from the site name.
 
     Heuristic:
-      - "Agent Club" → "AC"   (multiple ASCII words → take initials)
-      - "AgentClub"  → "AG"   (single ASCII word → take first 2 letters)
-      - "我的团队"    → "我的"  (CJK → take first 2 chars)
-      - empty/junk   → "AC"   (safe fallback)
+      - "Agent Club" -> "AC"   (multiple ASCII words -> take initials)
+      - "AgentClub"  -> "AG"   (single ASCII word -> take first 2 letters)
+      - "我的团队"    -> "我的"  (CJK -> take first 2 chars)
+      - empty/junk   -> "AC"   (safe fallback)
 
     Capped at 2 visible chars so the round mark stays legible at 24-40px.
     """
@@ -103,9 +112,9 @@ def _derive_logo_text(site_name):
     words = name.split()
     if len(words) >= 2:
         # Multiple whitespace-separated words: take leading char of each.
-        # Works for both "Agent Club" → AC and "我 的 团队" → 我的.
+        # Works for both "Agent Club" -> AC and "我 的 团队" -> 我的.
         return "".join(w[0] for w in words[:2]).upper()
-    # Single word — take the first two characters as-is. Upper-casing
+    # Single word -- take the first two characters as-is. Upper-casing
     # only matters for ASCII; CJK is unaffected.
     return name[:2].upper()
 
@@ -113,104 +122,71 @@ def _derive_logo_text(site_name):
 def _sqlite_url_from_path(path):
     if path == ":memory:":
         return "sqlite:///:memory:"
-    return "sqlite:///" + os.path.abspath(os.path.expanduser(path))
+    return "sqlite:///" + os.path.abspath(os.path.expanduser(os.fspath(path)))
 
 
-def refresh_config():
-    """Re-read every env-backed Config attribute from ``os.environ``.
+def apply_config(data_dir=None, values=None):
+    """Apply runtime config from explicit values.
 
-    Called automatically once at module import, and again by the CLI's
-    ``apply_env`` so that config.json / --flag overrides take effect
-    even when ``agentclub.config`` was imported earlier in the process
-    (which always happens when tests + CLI share a process)."""
-    global BASE_DIR
-    BASE_DIR = _default_home()
+    ``values`` is normally the merged ``config.json`` + CLI override dict.
+    Unknown keys are ignored by construction because only known fields
+    are read below.
+    """
+    global DATA_DIR
+    DATA_DIR = _normalize_data_dir(data_dir)
+    values = values or {}
 
     # Network
-    # Default to loopback only — safer "out of the box" stance for a
-    # service with auth + uploads. Production deploys behind nginx (the
-    # documented setup) hit 127.0.0.1 anyway. To expose on LAN/public
-    # IPs you must opt in: ``--host 0.0.0.0`` or set HOST in config.json.
-    Config.HOST = os.environ.get("HOST", "127.0.0.1")
-    Config.PORT = int(os.environ.get("PORT", "5555"))
-    Config.DEBUG = _bool("DEBUG", False)
+    # Default to loopback only. To expose on LAN/public IPs, opt in with
+    # ``--host 0.0.0.0`` or set HOST in config.json.
+    Config.HOST = _string(values, "HOST", "127.0.0.1")
+    Config.PORT = _int(values, "PORT", 5555)
+    Config.DEBUG = _bool(values, "DEBUG", False)
 
-    # Security — dev-only fallback lets ``python -m agentclub.app`` boot
-    # without CLI orchestration; ``agentclub onboard`` always mints a
-    # real random key.
-    Config.SECRET_KEY = os.environ.get(
-        "SECRET_KEY", "agentclub-dev-key-do-not-use-in-prod"
+    # Security. ``agentclub onboard`` always writes a real random key;
+    # this fallback only lets ``python -m agentclub.app`` boot locally.
+    Config.SECRET_KEY = _string(
+        values, "SECRET_KEY", "agentclub-dev-key-do-not-use-in-prod"
     )
 
-    # Storage (derived from BASE_DIR unless explicitly overridden).
-    #
-    # DATABASE_URL is the backend-agnostic setting used by the ORM:
-    #   sqlite:////abs/path/agentclub.db
-    #   mysql://user:pass@host:3306/agentclub
-    #   postgresql://user:pass@host:5432/agentclub
-    default_database = _sqlite_url_from_path(os.path.join(BASE_DIR, "agentclub.db"))
-    Config.DATABASE_URL = os.environ.get("DATABASE_URL") or default_database
-    # Two related dirs:
-    #   MEDIA_FOLDER   → data-dir/media           served at /media/<file>
-    #   UPLOAD_FOLDER  → MEDIA_FOLDER/uploads     served at /media/uploads/<file>
-    # Uploads is *always* a subdir of media — there's no separate env
-    # var for it. The previous design exposed ``UPLOAD_FOLDER`` and
-    # ``MEDIA_FOLDER`` as independent overrides, which let an operator
-    # split them in confusing ways (uploads written to one tree, served
-    # from another). Now the relationship is forced.
-    Config.MEDIA_FOLDER = os.environ.get("MEDIA_FOLDER") or os.path.join(BASE_DIR, "media")
+    # Storage
+    default_database = _sqlite_url_from_path(os.path.join(DATA_DIR, "agentclub.db"))
+    Config.DATABASE_URL = _nonempty_string(values, "DATABASE_URL", default_database)
+    Config.MEDIA_FOLDER = _nonempty_string(
+        values, "MEDIA_FOLDER", os.path.join(DATA_DIR, "media")
+    )
     Config.UPLOAD_FOLDER = os.path.join(Config.MEDIA_FOLDER, "uploads")
-
-    # Upload size cap. Unit is bytes (Flask convention). Default 50MB =
-    # 52428800. Remember to keep nginx ``client_max_body_size`` in sync.
-    Config.MAX_CONTENT_LENGTH = int(os.environ.get("MAX_CONTENT_LENGTH", str(50 * 1024 * 1024)))
+    Config.MAX_CONTENT_LENGTH = _int(values, "MAX_CONTENT_LENGTH", 50 * 1024 * 1024)
 
     # Retention + feature flags + paging
-    # Default is False: a fresh deploy ships closed. The initial admin
-    # is bootstrapped via ``agentclub onboard`` (CLI), not through a
-    # web "first user becomes admin" path — that path used to exist but
-    # made the attack surface equal to "whoever hits /api/register
-    # first on a misconfigured deploy wins the cluster". Set this to
-    # True only if you actually want open public registration; the
-    # endpoint only ever mints ``role=user``, never ``admin``.
-    Config.ALLOW_REGISTRATION = _bool("ALLOW_REGISTRATION", False)
-    Config.MESSAGE_RETENTION_DAYS = int(os.environ.get("MESSAGE_RETENTION_DAYS", "30"))
-    Config.MESSAGE_CLEANUP_INTERVAL_SECONDS = int(
-        os.environ.get("MESSAGE_CLEANUP_INTERVAL_SECONDS", "3600")
+    Config.ALLOW_REGISTRATION = _bool(values, "ALLOW_REGISTRATION", False)
+    Config.MESSAGE_RETENTION_DAYS = _int(values, "MESSAGE_RETENTION_DAYS", 30)
+    Config.MESSAGE_CLEANUP_INTERVAL_SECONDS = _int(
+        values, "MESSAGE_CLEANUP_INTERVAL_SECONDS", 3600
     )
-    Config.MESSAGE_PAGE_SIZE = int(os.environ.get("MESSAGE_PAGE_SIZE", "50"))
+    Config.MESSAGE_PAGE_SIZE = _int(values, "MESSAGE_PAGE_SIZE", 50)
 
-    # Presence cadences (see README § online status)
-    Config.HEARTBEAT_INTERVAL = int(os.environ.get("HEARTBEAT_INTERVAL", "30"))
-    Config.ACTIVE_TIMEOUT = int(os.environ.get("ACTIVE_TIMEOUT", "90"))
-    Config.PRESENCE_POLL_INTERVAL = int(os.environ.get("PRESENCE_POLL_INTERVAL", "30"))
+    # Presence cadences
+    Config.HEARTBEAT_INTERVAL = _int(values, "HEARTBEAT_INTERVAL", 30)
+    Config.ACTIVE_TIMEOUT = _int(values, "ACTIVE_TIMEOUT", 90)
+    Config.PRESENCE_POLL_INTERVAL = _int(values, "PRESENCE_POLL_INTERVAL", 30)
 
-    # Logging — file handler writes to LOG_DIR (defaults to data-dir/logs)
-    # and rotates by size. Disk usage cap = (1 + LOG_BACKUP_COUNT) *
-    # LOG_MAX_SIZE_MB MB. Defaults: 100MB × 5 backups → ~600MB worst case.
-    # stdout always gets a copy too. See agentclub/logging_setup.py.
-    Config.LOG_DIR = os.environ.get("LOG_DIR") or os.path.join(BASE_DIR, "logs")
-    Config.LOG_LEVEL = (os.environ.get("LOG_LEVEL") or "INFO").upper()
-    Config.LOG_MAX_SIZE_MB = int(os.environ.get("LOG_MAX_SIZE_MB", "100"))
-    Config.LOG_BACKUP_COUNT = int(os.environ.get("LOG_BACKUP_COUNT", "5"))
+    # Logging
+    Config.LOG_DIR = _nonempty_string(values, "LOG_DIR", os.path.join(DATA_DIR, "logs"))
+    Config.LOG_LEVEL = _nonempty_string(values, "LOG_LEVEL", "INFO").upper()
+    Config.LOG_MAX_SIZE_MB = _int(values, "LOG_MAX_SIZE_MB", 100)
+    Config.LOG_BACKUP_COUNT = _int(values, "LOG_BACKUP_COUNT", 5)
 
-    # Branding — all three are optional and only affect the title bar /
-    # logomark. Empty strings are treated as "use default":
-    #   SITE_NAME       → "Agent Club"
-    #   SITE_LOGO       → "" (no image, fall back to text wordmark)
-    #   SITE_LOGO_TEXT  → derived from SITE_NAME (see _derive_logo_text)
-    # Putting these in config.json — not in the DB settings table — is
-    # deliberate: the brand is part of the deploy, not a runtime knob
-    # that admins can poke from the web UI.
-    Config.SITE_NAME = (os.environ.get("SITE_NAME") or "Agent Club").strip()
-    Config.SITE_LOGO = (os.environ.get("SITE_LOGO") or "").strip()
-    explicit_text = (os.environ.get("SITE_LOGO_TEXT") or "").strip()
+    # Branding
+    Config.SITE_NAME = (_nonempty_string(values, "SITE_NAME", "Agent Club")).strip()
+    Config.SITE_LOGO = (_string(values, "SITE_LOGO", "")).strip()
+    explicit_text = (_string(values, "SITE_LOGO_TEXT", "")).strip()
     Config.SITE_LOGO_TEXT = explicit_text or _derive_logo_text(Config.SITE_NAME)
 
 
-# Populate on import so existing ``from .config import Config`` code
-# sees fully-initialized attributes.
-refresh_config()
+# Populate defaults on import so existing ``from .config import Config``
+# code sees fully initialized attributes.
+apply_config()
 
 
 def generate_secret_key():

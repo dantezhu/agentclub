@@ -2,9 +2,9 @@
 
 Importing this module builds the global ``app`` and ``socketio``
 objects. Production entry is ``agentclub serve`` (in ``agentclub.cli``)
-which sets ``AGENTCLUB_HOME`` and config env vars BEFORE importing
-this file, then calls ``socketio.run``. Tests and ``python -m
-agentclub.app`` also work for quick local iteration.
+which applies ``config.json`` and CLI overrides BEFORE importing this
+file, then calls ``socketio.run``. Tests and ``python -m agentclub.app``
+also work for quick local iteration.
 """
 import logging
 import os
@@ -43,8 +43,7 @@ register_events(socketio)
 @app.context_processor
 def _inject_branding():
     """Expose Config.SITE_* to every Jinja render so templates can show
-    a deployer-customised name / logomark. Read from Config (not env)
-    so refresh_config() takes effect at runtime."""
+    a deployer-customised name / logomark."""
     return {
         "site_name": Config.SITE_NAME,
         "site_logo": Config.SITE_LOGO,

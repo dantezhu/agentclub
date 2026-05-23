@@ -50,7 +50,7 @@ def _status(last_active_at, timeout):
 @agent_group.command("create", help="Create a new agent account.")
 @click.argument("name")
 @click.option("--data-dir", "data_dir_flag", type=click.Path(),
-              help="Data directory. Defaults to $AGENTCLUB_HOME or "
+              help="Data directory. Defaults to "
                    "~/.agentclub.")
 @click.option("--display-name", default=None,
               help="Display name shown in the UI. Defaults to NAME.")
@@ -85,7 +85,7 @@ def agent_create(name, data_dir_flag, display_name, description):
 
 @agent_group.command("list", help="List all agents (never prints tokens).")
 @click.option("--data-dir", "data_dir_flag", type=click.Path(),
-              help="Data directory. Defaults to $AGENTCLUB_HOME or "
+              help="Data directory. Defaults to "
                    "~/.agentclub.")
 def agent_list(data_dir_flag):
     bootstrap(data_dir_flag, require_exists=True)
@@ -124,7 +124,7 @@ def agent_list(data_dir_flag):
 @agent_group.command("edit", help="Edit an agent's editable fields.")
 @click.argument("name")
 @click.option("--data-dir", "data_dir_flag", type=click.Path(),
-              help="Data directory. Defaults to $AGENTCLUB_HOME or "
+              help="Data directory. Defaults to "
                    "~/.agentclub.")
 @click.option("--display-name", "display_name", default=None,
               help="New display name shown in the UI. Empty string is "
@@ -172,7 +172,7 @@ def agent_edit(name, data_dir_flag, display_name, description):
 @agent_group.command("reset-token", help="Regenerate an agent's token.")
 @click.argument("name")
 @click.option("--data-dir", "data_dir_flag", type=click.Path(),
-              help="Data directory. Defaults to $AGENTCLUB_HOME or "
+              help="Data directory. Defaults to "
                    "~/.agentclub.")
 def agent_reset_token(name, data_dir_flag):
     bootstrap(data_dir_flag, require_exists=True)
@@ -198,7 +198,7 @@ def agent_reset_token(name, data_dir_flag):
 @agent_group.command("delete", help="Hard-delete an agent and ALL its data.")
 @click.argument("name")
 @click.option("--data-dir", "data_dir_flag", type=click.Path(),
-              help="Data directory. Defaults to $AGENTCLUB_HOME or "
+              help="Data directory. Defaults to "
                    "~/.agentclub.")
 @click.option("--yes", "-y", "assume_yes", is_flag=True,
               help="Skip the confirmation prompt. Use in scripts.")

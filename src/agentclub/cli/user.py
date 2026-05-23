@@ -116,7 +116,7 @@ def _require_human(models_mod, username: str):
 @user_group.command("create", help="Create a new human account.")
 @click.argument("username")
 @click.option("--data-dir", "data_dir_flag", type=click.Path(),
-              help="Data directory. Defaults to $AGENTCLUB_HOME or "
+              help="Data directory. Defaults to "
                    "~/.agentclub.")
 @click.option("--role", default="user", show_default=True,
               type=click.Choice(VALID_ROLES, case_sensitive=False),
@@ -150,7 +150,7 @@ def user_create(username, data_dir_flag, role, display_name, password,
 
 @user_group.command("list", help="List all human (non-agent) accounts.")
 @click.option("--data-dir", "data_dir_flag", type=click.Path(),
-              help="Data directory. Defaults to $AGENTCLUB_HOME or "
+              help="Data directory. Defaults to "
                    "~/.agentclub.")
 def user_list(data_dir_flag):
     bootstrap(data_dir_flag, require_exists=True)
@@ -186,7 +186,7 @@ def user_list(data_dir_flag):
 @user_group.command("edit", help="Edit a human account.")
 @click.argument("username")
 @click.option("--data-dir", "data_dir_flag", type=click.Path(),
-              help="Data directory. Defaults to $AGENTCLUB_HOME or "
+              help="Data directory. Defaults to "
                    "~/.agentclub.")
 @click.option("--role", default=None,
               type=click.Choice(VALID_ROLES, case_sensitive=False),
@@ -249,7 +249,7 @@ def user_edit(username, data_dir_flag, role, display_name, password,
 @user_group.command("delete", help="Hard-delete a user and ALL their data.")
 @click.argument("username")
 @click.option("--data-dir", "data_dir_flag", type=click.Path(),
-              help="Data directory. Defaults to $AGENTCLUB_HOME or "
+              help="Data directory. Defaults to "
                    "~/.agentclub.")
 @click.option("--yes", "-y", "assume_yes", is_flag=True,
               help="Skip the confirmation prompt. Use in scripts.")

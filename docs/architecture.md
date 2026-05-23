@@ -43,7 +43,7 @@ Runtime data defaults to `~/.agentclub`:
     `-- uploads/
 ```
 
-You can override the directory with `--data-dir` or `AGENTCLUB_HOME`.
+You can override the directory with `--data-dir`.
 
 The source tree does not store runtime data. This lets packaged installs, editable installs, and production deploys share the same filesystem layout.
 
@@ -104,7 +104,7 @@ src/agentclub/
 |-- app.py             # Flask + Socket.IO application factory/entry
 |-- auth.py            # Password hashing, sessions, agent tokens
 |-- cli/               # agentclub command implementation
-|-- config.py          # Config defaults and environment-backed settings
+|-- config.py          # Config defaults and applied runtime settings
 |-- logging_setup.py   # stdout and rotating file logging
 |-- models.py          # Peewee ORM models and data access
 |-- routes.py          # HTTP routes and API endpoints

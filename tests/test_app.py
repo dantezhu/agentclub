@@ -10,7 +10,7 @@ import pytest
 # repo root.
 from agentclub import config
 # Use a temp sqlite + upload dir so tests never touch the developer's
-# real AGENTCLUB_HOME. Must happen BEFORE agentclub.app is imported.
+# real data directory. Must happen BEFORE agentclub.app is imported.
 _tmpdb = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
 config.Config.DATABASE_URL = f"sqlite:///{_tmpdb.name}"
 config.Config.UPLOAD_FOLDER = tempfile.mkdtemp()

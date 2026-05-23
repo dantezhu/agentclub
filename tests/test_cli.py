@@ -7,7 +7,6 @@ pin the command surface: arguments, idempotency, expected side effects
 on disk + DB.
 """
 import json
-import os
 from pathlib import Path
 
 import pytest
@@ -17,6 +16,7 @@ from agentclub.cli import main
 from agentclub.cli.onboard import onboard
 from agentclub.cli.agent import agent_group
 from agentclub.cli.config_cmd import config_group
+from agentclub.cli._common import DEFAULT_DATA_DIR, resolve_data_dir
 
 
 @pytest.fixture
@@ -250,6 +250,11 @@ class TestVersion:
 # ── Data dir resolution guardrails ──
 
 class TestDataDirResolution:
+    def test_default_ignores_agentclub_home_env(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("AGENTCLUB_HOME", str(tmp_path / "ignored"))
+
+        assert resolve_data_dir(None) == DEFAULT_DATA_DIR.resolve()
+
     def test_requires_onboarded_dir(self, runner, tmp_path):
         res = runner.invoke(config_group, [
             "show", "--data-dir", str(tmp_path / "nope"),

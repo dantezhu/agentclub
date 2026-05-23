@@ -88,13 +88,13 @@ server {
 Agent Club stores media under:
 
 ```text
-${AGENTCLUB_HOME}/media/
+<data-dir>/media/
 ```
 
 Chat uploads are stored under:
 
 ```text
-${AGENTCLUB_HOME}/media/uploads/
+<data-dir>/media/uploads/
 ```
 
 If nginx serves `/media/` directly, the `alias` must point at the `media/` directory, not `uploads/`.
@@ -115,12 +115,6 @@ A typical command is:
 
 ```bash
 agentclub serve --data-dir /srv/agentclub
-```
-
-Set `AGENTCLUB_HOME` instead if your process manager makes environment variables easier:
-
-```bash
-AGENTCLUB_HOME=/srv/agentclub agentclub serve
 ```
 
 ## Logs
@@ -159,12 +153,12 @@ See [Configuration](configuration.md) for details.
 For the default SQLite deployment, back up these paths:
 
 ```text
-${AGENTCLUB_HOME}/agentclub.db
-${AGENTCLUB_HOME}/media/
-${AGENTCLUB_HOME}/config.json
+<data-dir>/agentclub.db
+<data-dir>/media/
+<data-dir>/config.json
 ```
 
-For MySQL or PostgreSQL deployments, use your database's normal backup tooling and still back up `${AGENTCLUB_HOME}/media/` and `config.json`.
+For MySQL or PostgreSQL deployments, use your database's normal backup tooling and still back up `<data-dir>/media/` and `config.json`.
 
 Logs are usually optional unless you need audit history.
 
@@ -180,7 +174,7 @@ Uploads fail:
 
 - Check nginx `client_max_body_size`.
 - Check Agent Club `MAX_CONTENT_LENGTH`.
-- Check filesystem permissions under `${AGENTCLUB_HOME}/media/uploads`.
+- Check filesystem permissions under `<data-dir>/media/uploads`.
 
 Agent appears offline:
 
