@@ -90,10 +90,7 @@ class User(BaseModel):
 
     class Meta:
         table_name = "users"
-        indexes = (
-            (("created_at",), False),
-            (("agent_token",), False),
-        )
+        indexes = ((("created_at",), False),)
 
 
 class Group(BaseModel):
@@ -120,6 +117,7 @@ class GroupMember(BaseModel):
         backref="memberships",
         column_name="group_id",
         on_delete="CASCADE",
+        index=False,
     )
     user = ForeignKeyField(
         User,
@@ -132,7 +130,6 @@ class GroupMember(BaseModel):
     class Meta:
         table_name = "group_members"
         primary_key = CompositeKey("group", "user")
-        indexes = ((("user",), False),)
 
 
 class DirectChat(BaseModel):
@@ -187,6 +184,7 @@ class ReadCursor(BaseModel):
         backref="read_cursors",
         column_name="user_id",
         on_delete="CASCADE",
+        index=False,
     )
     chat_type = CharField(max_length=16)
     chat_id = CharField(max_length=64)
@@ -195,7 +193,6 @@ class ReadCursor(BaseModel):
     class Meta:
         table_name = "read_cursors"
         primary_key = CompositeKey("user", "chat_type", "chat_id")
-        indexes = ((("user",), False),)
 
 
 class Setting(BaseModel):
@@ -297,7 +294,14 @@ def _message_dict(row):
 
 def init_db():
     with _connection() as db:
-        db.create_tables(_MODELS, safe=True)
+        existing_tables = set(db.get_tables())
+        missing_models = [
+            model
+            for model in _MODELS
+            if model._meta.table_name not in existing_tables
+        ]
+        if missing_models:
+            db.create_tables(missing_models, safe=True)
 
 
 def now():
