@@ -94,6 +94,31 @@ def test_generated_mysql_index_names_are_unique():
     assert offenders == []
 
 
+def test_generated_mysql_timestamp_columns_use_double_precision():
+    from peewee import MySQLDatabase
+
+    mysql_db = MySQLDatabase("agentclub")
+    timestamp_columns = {
+        models.User: ["last_active_at", "created_at"],
+        models.Group: ["created_at"],
+        models.GroupMember: ["joined_at"],
+        models.DirectChat: ["created_at"],
+        models.Message: ["created_at"],
+        models.ReadCursor: ["last_read_at"],
+    }
+    offenders = []
+
+    with mysql_db.bind_ctx(models._MODELS, bind_refs=False, bind_backrefs=False):
+        for model, columns in timestamp_columns.items():
+            sql, _params = model._schema._create_table(safe=True).query()
+            for column in columns:
+                marker = f"`{column}` DOUBLE"
+                if marker not in sql:
+                    offenders.append(f"{model.__name__}.{column}")
+
+    assert offenders == []
+
+
 def test_init_db_skips_create_tables_when_tables_already_exist(monkeypatch):
     calls = []
 

@@ -7,7 +7,7 @@ from peewee import (
     CharField,
     CompositeKey,
     DatabaseProxy,
-    FloatField,
+    DoubleField,
     ForeignKeyField,
     IntegrityError,
     IntegerField,
@@ -85,8 +85,8 @@ class User(BaseModel):
     role = CharField(default="user", max_length=32)
     is_agent = IntegerField(default=0)
     agent_token = CharField(unique=True, null=True, max_length=255)
-    last_active_at = FloatField(null=True)
-    created_at = FloatField()
+    last_active_at = DoubleField(null=True)
+    created_at = DoubleField()
 
     class Meta:
         table_name = "users"
@@ -104,7 +104,7 @@ class Group(BaseModel):
         column_name="created_by",
         on_delete="RESTRICT",
     )
-    created_at = FloatField()
+    created_at = DoubleField()
 
     class Meta:
         table_name = "groups"
@@ -125,7 +125,7 @@ class GroupMember(BaseModel):
         column_name="user_id",
         on_delete="CASCADE",
     )
-    joined_at = FloatField()
+    joined_at = DoubleField()
 
     class Meta:
         table_name = "group_members"
@@ -146,7 +146,7 @@ class DirectChat(BaseModel):
         column_name="user2_id",
         on_delete="RESTRICT",
     )
-    created_at = FloatField()
+    created_at = DoubleField()
 
     class Meta:
         table_name = "direct_chats"
@@ -168,7 +168,7 @@ class Message(BaseModel):
     file_url = CharField(default="", max_length=2048)
     file_name = CharField(default="", max_length=1024)
     mentions = TextField()
-    created_at = FloatField()
+    created_at = DoubleField()
 
     class Meta:
         table_name = "messages"
@@ -188,7 +188,7 @@ class ReadCursor(BaseModel):
     )
     chat_type = CharField(max_length=16)
     chat_id = CharField(max_length=64)
-    last_read_at = FloatField()
+    last_read_at = DoubleField()
 
     class Meta:
         table_name = "read_cursors"
