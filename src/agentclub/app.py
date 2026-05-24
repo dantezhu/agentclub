@@ -1,10 +1,9 @@
-"""Flask + Socket.IO application instance.
+"""Flask + Socket.IO application objects.
 
-Importing this module builds the global ``app`` and ``socketio``
-objects. Production entry is ``agentclub serve`` (in ``agentclub.cli``)
-which applies ``config.json`` and CLI overrides BEFORE importing this
-file, then calls ``socketio.run``. Tests and ``python -m agentclub.app``
-also work for quick local iteration.
+The supported server entry point is ``agentclub serve``. The CLI applies
+``config.json`` and command-line overrides before importing this module,
+so the global ``app`` and ``socketio`` objects are built with the active
+runtime config. Direct imports use the built-in defaults.
 """
 import logging
 import os

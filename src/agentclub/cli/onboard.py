@@ -3,7 +3,7 @@
 Creates (in order):
     - the data directory
     - config.json with HOST/PORT + a freshly minted SECRET_KEY
-    - the default database with the current schema
+    - the configured database with the current schema
     - an admin account (password random-generated if not supplied)
 
 Idempotency is strict by design: re-running on a populated data
