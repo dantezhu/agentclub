@@ -142,7 +142,37 @@
                     <label style="display:block;font-size:13px;color:#555;margin-bottom:6px">Display name</label>
                     <input type="text" id="profileDisplayName" style="width:100%;padding:10px 12px;border:1.5px solid #ddd;border-radius:8px;font-size:16px;outline:none">
                 </div>
+                <div class="form-group" style="margin-bottom:16px">
+                    <label style="display:block;font-size:13px;color:#555;margin-bottom:6px">Password</label>
+                    <button class="btn-sm ghost" style="width:100%;padding:10px" onclick="showChangePasswordModal()">Change password</button>
+                </div>
                 <button class="btn-sm" style="width:100%;padding:10px" onclick="saveProfile()">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Change password modal -->
+    <div class="modal hidden" id="changePasswordModal">
+        <div class="modal-content modal-sm">
+            <div class="modal-header">
+                <h3>Change password</h3>
+                <button class="icon-btn" onclick="closeModal('changePasswordModal')" data-icon="x" title="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group" style="margin-bottom:16px">
+                    <label style="display:block;font-size:13px;color:#555;margin-bottom:6px">Current password</label>
+                    <input type="password" id="currentPassword" autocomplete="current-password" style="width:100%;padding:10px 12px;border:1.5px solid #ddd;border-radius:8px;font-size:16px;outline:none">
+                </div>
+                <div class="form-group" style="margin-bottom:16px">
+                    <label style="display:block;font-size:13px;color:#555;margin-bottom:6px">New password</label>
+                    <input type="password" id="newPassword" autocomplete="new-password" style="width:100%;padding:10px 12px;border:1.5px solid #ddd;border-radius:8px;font-size:16px;outline:none">
+                </div>
+                <div class="form-group" style="margin-bottom:16px">
+                    <label style="display:block;font-size:13px;color:#555;margin-bottom:6px">Confirm new password</label>
+                    <input type="password" id="confirmNewPassword" autocomplete="new-password" style="width:100%;padding:10px 12px;border:1.5px solid #ddd;border-radius:8px;font-size:16px;outline:none">
+                </div>
+                <div class="form-status" id="passwordStatus" aria-live="polite"></div>
+                <button class="btn-sm" id="changePasswordBtn" style="width:100%;padding:10px" onclick="changePassword()">Change password</button>
             </div>
         </div>
     </div>

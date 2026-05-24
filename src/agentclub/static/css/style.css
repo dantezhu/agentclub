@@ -738,6 +738,14 @@ button, .icon-btn, .chat-item, .member-item {
     outline: none;
 }
 .inline-form input:focus { border-color: var(--color-primary); }
+.form-status {
+    min-height: 18px;
+    margin: -2px 0 10px;
+    font-size: 13px;
+    line-height: 1.35;
+}
+.form-status.error { color: var(--color-danger); }
+.form-status.success { color: #2f9e44; }
 .btn-sm {
     padding: 8px 16px;
     background: var(--color-primary);

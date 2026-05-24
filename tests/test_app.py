@@ -17,7 +17,7 @@ config.Config.UPLOAD_FOLDER = tempfile.mkdtemp()
 
 from agentclub import maintenance, models
 from agentclub.app import app, socketio
-from agentclub.auth import hash_password
+from agentclub.auth import hash_password, verify_password
 
 
 def _delete_test_rows():
@@ -216,6 +216,59 @@ class TestAuth:
         assert res.status_code == 200
         res = admin_client.get("/api/me")
         assert res.status_code == 401
+
+    def test_change_password_requires_login(self, client):
+        res = client.post("/api/me/password", json={
+            "current_password": "oldpass",
+            "new_password": "newpass123",
+        })
+
+        assert res.status_code == 401
+
+    def test_change_password_rejects_wrong_current_password(self, user_client):
+        user = user_client.get("/api/me").get_json()
+
+        res = user_client.post("/api/me/password", json={
+            "current_password": "wrongpass",
+            "new_password": "newpass123",
+        })
+
+        assert res.status_code == 400
+        unchanged = models.get_user_by_id(user["id"])
+        assert verify_password("user123", unchanged["password_hash"])
+
+    def test_change_password_validates_new_password_length(self, user_client):
+        res = user_client.post("/api/me/password", json={
+            "current_password": "user123",
+            "new_password": "short",
+        })
+
+        assert res.status_code == 400
+
+    def test_change_password_updates_password(self, user_client):
+        user = user_client.get("/api/me").get_json()
+
+        res = user_client.post("/api/me/password", json={
+            "current_password": "user123",
+            "new_password": "newpass123",
+        })
+
+        assert res.status_code == 200
+        changed = models.get_user_by_id(user["id"])
+        assert not verify_password("user123", changed["password_hash"])
+        assert verify_password("newpass123", changed["password_hash"])
+
+        c2 = app.test_client()
+        old_login = c2.post("/api/login", json={
+            "username": "user1",
+            "password": "user123",
+        })
+        new_login = c2.post("/api/login", json={
+            "username": "user1",
+            "password": "newpass123",
+        })
+        assert old_login.status_code == 401
+        assert new_login.status_code == 200
 
 
 # ── Agent Tests ──

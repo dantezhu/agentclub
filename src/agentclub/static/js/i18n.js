@@ -94,6 +94,13 @@
             "chat.wasOnlineMinute": "Last online 1 minute ago",
             "chat.wasOnlineMinutes": "Last online {count} minutes ago",
             "chat.wasOnlineNow": "Online just now",
+
+            "profile.changePassword": "Change password",
+            "profile.changePasswordFailed": "Change password failed",
+            "profile.passwordChanged": "Password changed",
+            "profile.passwordMismatch": "New passwords do not match",
+            "profile.passwordRequired": "Enter current password and new password",
+            "profile.passwordTooShort": "Password must be at least 6 characters",
         },
     };
 

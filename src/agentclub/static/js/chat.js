@@ -1639,6 +1639,80 @@ async function saveProfile() {
     }
 }
 
+function showChangePasswordModal() {
+    closeModal('profileModal');
+    resetChangePasswordForm();
+    document.getElementById('changePasswordModal').classList.remove('hidden');
+    setTimeout(() => document.getElementById('currentPassword').focus(), 0);
+}
+
+function resetChangePasswordForm() {
+    for (const id of ['currentPassword', 'newPassword', 'confirmNewPassword']) {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
+    }
+    setPasswordStatus('', '');
+    const btn = document.getElementById('changePasswordBtn');
+    if (btn) {
+        btn.disabled = false;
+        btn.textContent = t('profile.changePassword');
+    }
+}
+
+function setPasswordStatus(message, kind) {
+    const el = document.getElementById('passwordStatus');
+    if (!el) return;
+    el.textContent = message || '';
+    el.className = 'form-status';
+    if (kind) el.classList.add(kind);
+}
+
+async function changePassword() {
+    const currentPassword = document.getElementById('currentPassword').value;
+    const newPassword = document.getElementById('newPassword').value;
+    const confirmPassword = document.getElementById('confirmNewPassword').value;
+
+    if (!currentPassword || !newPassword) {
+        setPasswordStatus(t('profile.passwordRequired'), 'error');
+        return;
+    }
+    if (newPassword.length < 6) {
+        setPasswordStatus(t('profile.passwordTooShort'), 'error');
+        return;
+    }
+    if (newPassword !== confirmPassword) {
+        setPasswordStatus(t('profile.passwordMismatch'), 'error');
+        return;
+    }
+
+    const btn = document.getElementById('changePasswordBtn');
+    btn.disabled = true;
+    btn.textContent = t('common.saving');
+    setPasswordStatus('', '');
+    try {
+        const res = await fetch('/api/me/password', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                current_password: currentPassword,
+                new_password: newPassword,
+            }),
+        });
+        if (res.ok) {
+            resetChangePasswordForm();
+            setPasswordStatus(t('profile.passwordChanged'), 'success');
+        } else {
+            const err = await res.json().catch(() => ({}));
+            setPasswordStatus(err.error || t('profile.changePasswordFailed'), 'error');
+        }
+    } catch {
+        setPasswordStatus(t('common.networkError'), 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = t('profile.changePassword');
+    }
+}
+
 /* Chat-header kebab → dropdown for the *currently open* chat. This is
  * the single entry point for destructive chat actions on every device
  * (desktop and mobile alike) — we deliberately don't bind right-click

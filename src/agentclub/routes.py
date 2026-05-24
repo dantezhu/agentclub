@@ -126,6 +126,33 @@ def update_me():
     return jsonify(_safe_user(user))
 
 
+@api.route("/api/me/password", methods=["POST"])
+@login_required
+def change_password():
+    data = request.get_json(silent=True) or {}
+    current_password = data.get("current_password", "")
+    new_password = data.get("new_password", "")
+
+    if not current_password or not new_password:
+        return jsonify({"error": "Current password and new password are required"}), 400
+    if len(new_password) < 6:
+        return jsonify({"error": "Password must be at least 6 characters"}), 400
+    if not verify_password(current_password, request.current_user["password_hash"]):
+        return jsonify({"error": "Current password is incorrect"}), 400
+
+    models.update_user(
+        request.current_user["id"],
+        password_hash=hash_password(new_password),
+    )
+    logger.info(
+        "password changed: user=%s (%s) ip=%s",
+        request.current_user["username"],
+        request.current_user["id"],
+        request.remote_addr,
+    )
+    return jsonify({"ok": True})
+
+
 @api.route("/api/agents/<agent_id>", methods=["PUT"])
 @admin_required
 def update_agent(agent_id):
