@@ -19,7 +19,7 @@ def config_group():
 # nested set/dict and is kept as a source-only constant.
 _EXPOSED = [
     "HOST", "PORT", "DEBUG",
-    "SECRET_KEY",
+    "SECRET_KEY", "SESSION_LIFETIME_DAYS",
     "DATABASE_URL", "MEDIA_FOLDER", "MAX_CONTENT_LENGTH",
     "LOG_DIR", "LOG_LEVEL", "LOG_MAX_SIZE_MB", "LOG_BACKUP_COUNT",
     "ALLOW_REGISTRATION", "MESSAGE_RETENTION_DAYS",

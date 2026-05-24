@@ -75,6 +75,7 @@ class Config:
     PORT = None
     DEBUG = None
     SECRET_KEY = None
+    SESSION_LIFETIME_DAYS = None
     DATABASE_URL = None
     UPLOAD_FOLDER = None
     MEDIA_FOLDER = None
@@ -148,6 +149,7 @@ def apply_config(data_dir=None, values=None):
     Config.SECRET_KEY = _string(
         values, "SECRET_KEY", "agentclub-dev-key-do-not-use-in-prod"
     )
+    Config.SESSION_LIFETIME_DAYS = _int(values, "SESSION_LIFETIME_DAYS", 90)
 
     # Storage
     default_database = _sqlite_url_from_path(os.path.join(DATA_DIR, "agentclub.db"))

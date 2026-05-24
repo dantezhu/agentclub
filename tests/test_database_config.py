@@ -24,6 +24,18 @@ def test_explicit_database_url_is_used():
     assert config.Config.DATABASE_URL == url
 
 
+def test_session_lifetime_days_defaults_to_90():
+    config.apply_config(values={})
+
+    assert config.Config.SESSION_LIFETIME_DAYS == 90
+
+
+def test_session_lifetime_days_is_configurable():
+    config.apply_config(values={"SESSION_LIFETIME_DAYS": 14})
+
+    assert config.Config.SESSION_LIFETIME_DAYS == 14
+
+
 def test_environment_variables_do_not_override_config(monkeypatch, tmp_path):
     monkeypatch.setenv("HOST", "0.0.0.0")
     monkeypatch.setenv("PORT", "7777")

@@ -26,9 +26,11 @@ app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 # (no Expires/Max-Age) and dies when the user quits the browser. For an IM
 # app that's a worse experience than every comparable product (Feishu /
 # WeChat Web etc. all keep you logged in for weeks). We mark the session
-# permanent in login()/register() and cap it at 90 days here so the cookie
-# carries Max-Age=90d. Idle users get re-prompted only after the cap.
-app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=90)
+# permanent in login()/register() and cap it here so the cookie carries
+# Max-Age. Idle users get re-prompted only after the cap.
+app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(
+    days=Config.SESSION_LIFETIME_DAYS
+)
 
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading",
                    max_http_buffer_size=50 * 1024 * 1024)

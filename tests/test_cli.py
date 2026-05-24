@@ -227,6 +227,7 @@ class TestConfigShow:
         assert "DATABASE_URL" in res.output
         assert "DATABASE " not in res.output
         assert "redacted" in res.output
+        assert "SESSION_LIFETIME_DAYS" in res.output
 
     def test_show_secrets_prints_key(self, runner, data_dir):
         _onboard(runner, data_dir)
