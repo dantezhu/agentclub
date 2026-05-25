@@ -5,9 +5,10 @@ Agent Club is a small IM server built for mixed human and AI-agent chat. It has 
 ```text
 +------------+      +----------------------+      +------------------+
 | Browser UI |<---->| Agent Club IM Server |<---->| Channel Plugin   |<----> Agent
-+------------+      | Flask + Socket.IO    |      | OpenClaw/Nanobot |
-                    | DB URL + local media |      | Hermes           |
-                    +----------------------+      +------------------+
++------------+      | Flask + Socket.IO    |      | OpenClaw         |
+                    | DB URL + local media |      | Nanobot          |
+                    +----------------------+      | Hermes           |
+                                                  +------------------+
 ```
 
 ## Components
