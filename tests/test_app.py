@@ -120,6 +120,13 @@ def user_client():
     return c
 
 
+def _client_for_user_id(user_id):
+    c = app.test_client()
+    with c.session_transaction() as sess:
+        sess["user_id"] = user_id
+    return c
+
+
 # ── Auth Tests ──
 
 class TestAuth:
@@ -389,6 +396,68 @@ class TestMessages:
         older = res.get_json()
         assert len(older) == 3
 
+    def test_clear_group_messages_keeps_group_and_members(self, admin_client):
+        gres = admin_client.post("/api/groups", json={"name": "G1"})
+        gid = gres.get_json()["id"]
+        user = admin_client.get("/api/me").get_json()
+        models.save_message("group", gid, user["id"], "msg")
+        models.mark_read(user["id"], "group", gid)
+
+        res = admin_client.delete(f"/api/groups/{gid}/messages")
+
+        assert res.status_code == 200
+        assert models.get_messages("group", gid) == []
+        assert models.get_group(gid)["name"] == "G1"
+        assert [m["id"] for m in models.get_group_members(gid)] == [user["id"]]
+        assert models.ReadCursor.select().where(
+            (models.ReadCursor.chat_type == "group") &
+            (models.ReadCursor.chat_id == gid)
+        ).count() == 0
+
+    def test_clear_group_messages_requires_creator(self, admin_client):
+        gres = admin_client.post("/api/groups", json={"name": "G1"})
+        gid = gres.get_json()["id"]
+        admin = admin_client.get("/api/me").get_json()
+        bob_id = models.create_user("bob", hash_password("pw"), "Bob")
+        models.add_group_member(gid, bob_id)
+        models.save_message("group", gid, admin["id"], "msg")
+        bob_client = _client_for_user_id(bob_id)
+
+        res = bob_client.delete(f"/api/groups/{gid}/messages")
+
+        assert res.status_code == 403
+        assert [m["content"] for m in models.get_messages("group", gid)] == ["msg"]
+
+    def test_clear_direct_messages_keeps_chat(self, admin_client):
+        alice = admin_client.get("/api/me").get_json()
+        bob_id = models.create_user("bob", hash_password("pw"), "Bob")
+        chat = models.get_or_create_direct_chat(alice["id"], bob_id)
+        models.save_message("direct", chat["id"], bob_id, "hello")
+        models.mark_read(alice["id"], "direct", chat["id"])
+
+        res = admin_client.delete(f"/api/direct-chats/{chat['id']}/messages")
+
+        assert res.status_code == 200
+        assert models.get_messages("direct", chat["id"]) == []
+        assert models.get_direct_chat(chat["id"])["id"] == chat["id"]
+        assert models.ReadCursor.select().where(
+            (models.ReadCursor.chat_type == "direct") &
+            (models.ReadCursor.chat_id == chat["id"])
+        ).count() == 0
+
+    def test_clear_direct_messages_ignores_non_participant(self, admin_client):
+        alice = admin_client.get("/api/me").get_json()
+        bob_id = models.create_user("bob", hash_password("pw"), "Bob")
+        mallory_id = models.create_user("mallory", hash_password("pw"), "Mallory")
+        chat = models.get_or_create_direct_chat(alice["id"], bob_id)
+        models.save_message("direct", chat["id"], alice["id"], "secret")
+        mallory_client = _client_for_user_id(mallory_id)
+
+        res = mallory_client.delete(f"/api/direct-chats/{chat['id']}/messages")
+
+        assert res.status_code == 200
+        assert [m["content"] for m in models.get_messages("direct", chat["id"])] == ["secret"]
+
 
 # ── Socket.IO Tests ──
 
@@ -534,6 +603,47 @@ class TestSocketIO:
 
         agent_sio.disconnect()
         admin_sio.disconnect()
+
+    def test_clear_group_messages_emits_messages_cleared(self, admin_client):
+        gres = admin_client.post("/api/groups", json={"name": "G1"})
+        gid = gres.get_json()["id"]
+        admin = admin_client.get("/api/me").get_json()
+        bob_id = models.create_user("bob", hash_password("pw"), "Bob")
+        models.add_group_member(gid, bob_id)
+        models.save_message("group", gid, admin["id"], "hello")
+        bob_client = _client_for_user_id(bob_id)
+        bob_sio = socketio.test_client(app, flask_test_client=bob_client)
+        bob_sio.get_received()
+
+        res = admin_client.delete(f"/api/groups/{gid}/messages")
+
+        assert res.status_code == 200
+        received = bob_sio.get_received()
+        events = [r["name"] for r in received]
+        assert "messages_cleared" in events
+        assert "chat_list_updated" not in events
+        payload = next(r["args"][0] for r in received if r["name"] == "messages_cleared")
+        assert payload == {"chat_type": "group", "chat_id": gid}
+        bob_sio.disconnect()
+
+    def test_delete_direct_chat_emits_chat_deleted(self, admin_client):
+        alice = admin_client.get("/api/me").get_json()
+        bob_id = models.create_user("bob", hash_password("pw"), "Bob")
+        chat = models.get_or_create_direct_chat(alice["id"], bob_id)
+        bob_client = _client_for_user_id(bob_id)
+        bob_sio = socketio.test_client(app, flask_test_client=bob_client)
+        bob_sio.get_received()
+
+        res = admin_client.delete(f"/api/direct-chats/{chat['id']}")
+
+        assert res.status_code == 200
+        received = bob_sio.get_received()
+        events = [r["name"] for r in received]
+        assert "chat_deleted" in events
+        assert "chat_list_updated" not in events
+        payload = next(r["args"][0] for r in received if r["name"] == "chat_deleted")
+        assert payload == {"chat_type": "direct", "chat_id": chat["id"]}
+        bob_sio.disconnect()
 
     def test_typing_indicator(self, admin_client):
         gres = admin_client.post("/api/groups", json={"name": "G1"})

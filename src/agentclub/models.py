@@ -599,6 +599,16 @@ def delete_group(group_id):
         Group.delete().where(Group.id == group_id).execute()
 
 
+def clear_group_messages(group_id):
+    with _transaction():
+        ReadCursor.delete().where(
+            (ReadCursor.chat_type == "group") & (ReadCursor.chat_id == group_id)
+        ).execute()
+        return Message.delete().where(
+            (Message.chat_type == "group") & (Message.chat_id == group_id)
+        ).execute()
+
+
 def is_group_member(group_id, user_id):
     with _connection():
         return GroupMember.select().where(
@@ -637,6 +647,22 @@ def delete_direct_chat(chat_id, user_id):
             (Message.chat_type == "direct") & (Message.chat_id == chat_id)
         ).execute()
         DirectChat.delete().where(DirectChat.id == chat_id).execute()
+
+
+def clear_direct_chat_messages(chat_id, user_id):
+    with _transaction():
+        chat = DirectChat.get_or_none(
+            (DirectChat.id == chat_id) &
+            ((DirectChat.user1 == user_id) | (DirectChat.user2 == user_id))
+        )
+        if not chat:
+            return 0
+        ReadCursor.delete().where(
+            (ReadCursor.chat_type == "direct") & (ReadCursor.chat_id == chat_id)
+        ).execute()
+        return Message.delete().where(
+            (Message.chat_type == "direct") & (Message.chat_id == chat_id)
+        ).execute()
 
 
 def get_direct_chat(chat_id):

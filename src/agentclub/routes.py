@@ -378,6 +378,23 @@ def _room_transition(socketio, sids, room, *, join):
             pass
 
 
+def _emit_to_user_ids(event, user_ids, payload):
+    """Best-effort Socket.IO emit to every open tab for the given users."""
+    from .socket_events import user_sids
+    from .app import socketio
+
+    seen_sids = set()
+    for user_id in user_ids:
+        for sid in list(user_sids.get(user_id, set())):
+            if sid in seen_sids:
+                continue
+            seen_sids.add(sid)
+            try:
+                socketio.emit(event, payload, to=sid)
+            except Exception:
+                pass
+
+
 @api.route("/api/groups/<group_id>/members/<user_id>", methods=["DELETE"])
 @login_required
 def remove_member(group_id, user_id):
@@ -408,15 +425,29 @@ def delete_group(group_id):
         return jsonify({"error": "Group not found"}), 404
     if group["created_by"] != request.current_user["id"]:
         return jsonify({"error": "Only the creator can dissolve this group"}), 403
-    # Notify all online members
-    from .socket_events import user_sids
-    from .app import socketio
     members = models.get_group_members(group_id)
-    for m in members:
-        if m["id"] in user_sids:
-            for sid in user_sids[m["id"]]:
-                socketio.emit("chat_list_updated", to=sid)
     models.delete_group(group_id)
+    _emit_to_user_ids("chat_deleted", [m["id"] for m in members], {
+        "chat_type": "group",
+        "chat_id": group_id,
+    })
+    return jsonify({"ok": True})
+
+
+@api.route("/api/groups/<group_id>/messages", methods=["DELETE"])
+@login_required
+def clear_group_messages(group_id):
+    group = models.get_group(group_id)
+    if not group:
+        return jsonify({"error": "Group not found"}), 404
+    if group["created_by"] != request.current_user["id"]:
+        return jsonify({"error": "Only the creator can clear this group's messages"}), 403
+    members = models.get_group_members(group_id)
+    models.clear_group_messages(group_id)
+    _emit_to_user_ids("messages_cleared", [m["id"] for m in members], {
+        "chat_type": "group",
+        "chat_id": group_id,
+    })
     return jsonify({"ok": True})
 
 
@@ -435,7 +466,34 @@ def leave_group(group_id):
 @api.route("/api/direct-chats/<chat_id>", methods=["DELETE"])
 @login_required
 def delete_direct_chat(chat_id):
+    chat = models.get_direct_chat(chat_id)
+    user_id = request.current_user["id"]
+    participant_ids = []
+    if chat and user_id in {chat["user1_id"], chat["user2_id"]}:
+        participant_ids = [chat["user1_id"], chat["user2_id"]]
     models.delete_direct_chat(chat_id, request.current_user["id"])
+    if participant_ids:
+        _emit_to_user_ids("chat_deleted", participant_ids, {
+            "chat_type": "direct",
+            "chat_id": chat_id,
+        })
+    return jsonify({"ok": True})
+
+
+@api.route("/api/direct-chats/<chat_id>/messages", methods=["DELETE"])
+@login_required
+def clear_direct_chat_messages(chat_id):
+    chat = models.get_direct_chat(chat_id)
+    user_id = request.current_user["id"]
+    participant_ids = []
+    if chat and user_id in {chat["user1_id"], chat["user2_id"]}:
+        participant_ids = [chat["user1_id"], chat["user2_id"]]
+    models.clear_direct_chat_messages(chat_id, user_id)
+    if participant_ids:
+        _emit_to_user_ids("messages_cleared", participant_ids, {
+            "chat_type": "direct",
+            "chat_id": chat_id,
+        })
     return jsonify({"ok": True})
 
 

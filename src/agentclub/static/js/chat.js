@@ -131,9 +131,62 @@ function connectSocket() {
         loadChats();
     });
 
+    socket.on('messages_cleared', (data) => {
+        applyMessagesCleared(data?.chat_type, data?.chat_id);
+    });
+
+    socket.on('chat_deleted', (data) => {
+        applyChatDeleted(data?.chat_type, data?.chat_id);
+    });
+
     socket.on('disconnect', () => {
         console.log('Disconnected');
     });
+}
+
+function clearChatLocalState(type, id) {
+    if (!type || !id) return;
+    const key = `${type}_${id}`;
+    delete lastMessages[key];
+    delete unreadCounts[key];
+    delete oldestTimestamp[key];
+}
+
+function hideOpenChat() {
+    currentChat = null;
+    invalidateMentionMembers();
+    hideMentionPicker();
+    document.getElementById('chatContainer').classList.add('hidden');
+    document.getElementById('emptyState').classList.remove('hidden');
+    document.getElementById('membersPanel').classList.add('hidden');
+}
+
+function applyMessagesCleared(type, id) {
+    if (!type || !id) return;
+    clearChatLocalState(type, id);
+    if (currentChat && currentChat.type === type && currentChat.id === id) {
+        document.getElementById('messageList').innerHTML = '';
+        document.getElementById('loadMoreBtn').classList.add('hidden');
+        document.getElementById('typingIndicator').classList.add('hidden');
+    }
+    renderChatList();
+}
+
+function applyChatDeleted(type, id) {
+    if (!type || !id) return;
+    clearChatLocalState(type, id);
+    if (type === 'group') {
+        chats.groups = chats.groups.filter((g) => g.id !== id);
+    } else if (type === 'direct') {
+        chats.directs = chats.directs.filter((d) => d.id !== id);
+    }
+    if (currentChat && currentChat.type === type && currentChat.id === id) {
+        if (socket && socket.connected) {
+            socket.emit('leave_chat', { chat_type: type, chat_id: id });
+        }
+        hideOpenChat();
+    }
+    renderChatList();
 }
 
 /* ── Heartbeat ── */
@@ -1719,9 +1772,9 @@ async function changePassword() {
  * / long-press menus on sidebar rows. Items are decided here at click
  * time based on currentChat:
  *
- *   direct                         → delete conversation
+ *   direct                         → clear messages + delete conversation
  *   group, regular member          → leave group
- *   group, creator (or admin)      → group settings + dissolve group
+ *   group, creator                 → group settings + clear messages + dissolve group
  *
  * Reuses the same #contextMenu element used by the member kebab
  * dropdowns, so a single document-click handler dismisses both. */
@@ -1732,7 +1785,8 @@ function showChatActionsMenu(event) {
     const menu = document.getElementById('contextMenu');
     let html = '';
     if (currentChat.type === 'direct') {
-        html = `<button class="danger" onclick="deleteDirectChat('${currentChat.id}')">${t('chat.deleteChat')}</button>`;
+        html = `<button class="danger" onclick="clearDirectMessages('${currentChat.id}')">${t('chat.clearMessages')}</button>`;
+        html += `<button class="danger" onclick="deleteDirectChat('${currentChat.id}')">${t('chat.deleteChat')}</button>`;
     } else if (currentChat.type === 'group') {
         const isCreator = currentChat.created_by === currentUser.id;
         const canManage = isCreator || currentUser.role === 'admin';
@@ -1740,6 +1794,7 @@ function showChatActionsMenu(event) {
             html += `<button onclick="closeContextMenu();openGroupSettings('${currentChat.id}')">${t('chat.groupSettings')}</button>`;
         }
         if (isCreator) {
+            html += `<button class="danger" onclick="clearGroupMessages('${currentChat.id}')">${t('chat.clearMessages')}</button>`;
             html += `<button class="danger" onclick="dissolveGroup('${currentChat.id}')">${t('chat.dissolveGroup')}</button>`;
         } else {
             html += `<button class="danger" onclick="leaveGroup('${currentChat.id}')">${t('chat.leaveGroup')}</button>`;
@@ -1773,15 +1828,25 @@ async function dissolveGroup(groupId) {
     }))) return;
     const res = await fetch(`/api/groups/${groupId}`, { method: 'DELETE' });
     if (res.ok) {
-        if (currentChat && currentChat.type === 'group' && currentChat.id === groupId) {
-            currentChat = null;
-            document.getElementById('chatContainer').classList.add('hidden');
-            document.getElementById('emptyState').classList.remove('hidden');
-        }
-        loadChats();
+        applyChatDeleted('group', groupId);
     } else {
         const data = await res.json();
         showAppAlert(data.error || t('chat.dissolveFailed'));
+    }
+}
+
+async function clearGroupMessages(groupId) {
+    document.getElementById('contextMenu').classList.add('hidden');
+    if (!(await showAppConfirm(t('chat.clearGroupMessagesConfirm'), {
+        confirmText: t('chat.clearMessages'),
+        danger: true,
+    }))) return;
+    const res = await fetch(`/api/groups/${groupId}/messages`, { method: 'DELETE' });
+    if (res.ok) {
+        applyMessagesCleared('group', groupId);
+    } else {
+        const data = await res.json().catch(() => ({}));
+        showAppAlert(data.error || t('chat.clearMessagesFailed'));
     }
 }
 
@@ -1813,14 +1878,24 @@ async function deleteDirectChat(chatId) {
     }))) return;
     const res = await fetch(`/api/direct-chats/${chatId}`, { method: 'DELETE' });
     if (res.ok) {
-        if (currentChat && currentChat.type === 'direct' && currentChat.id === chatId) {
-            currentChat = null;
-            document.getElementById('chatContainer').classList.add('hidden');
-            document.getElementById('emptyState').classList.remove('hidden');
-        }
-        loadChats();
+        applyChatDeleted('direct', chatId);
     } else {
         showAppAlert(t('common.deleteFailed'));
+    }
+}
+
+async function clearDirectMessages(chatId) {
+    document.getElementById('contextMenu').classList.add('hidden');
+    if (!(await showAppConfirm(t('chat.clearDirectMessagesConfirm'), {
+        confirmText: t('chat.clearMessages'),
+        danger: true,
+    }))) return;
+    const res = await fetch(`/api/direct-chats/${chatId}/messages`, { method: 'DELETE' });
+    if (res.ok) {
+        applyMessagesCleared('direct', chatId);
+    } else {
+        const data = await res.json().catch(() => ({}));
+        showAppAlert(data.error || t('chat.clearMessagesFailed'));
     }
 }
 
