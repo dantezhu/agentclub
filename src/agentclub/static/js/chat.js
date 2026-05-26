@@ -68,6 +68,13 @@ async function init() {
         },
         breaks: true,
     });
+    marked.use({
+        renderer: {
+            html(token) {
+                return escHtml(typeof token === 'string' ? token : (token.text || ''));
+            },
+        },
+    });
 
     connectSocket();
     unreadCounts = await (await fetch('/api/unread-counts')).json();
@@ -642,7 +649,21 @@ function renderMarkdown(text) {
     } catch {
         html = escHtml(prepared);
     }
-    return html.replace(/\uE000MENTION(\d+)\uE001/g, (_, i) => pills[Number(i)] || '');
+    html = html.replace(/\uE000MENTION(\d+)\uE001/g, (_, i) => pills[Number(i)] || '');
+    return sanitizeMessageHtml(html);
+}
+
+function sanitizeMessageHtml(html) {
+    if (window.DOMPurify && typeof window.DOMPurify.sanitize === 'function' && window.DOMPurify.isSupported !== false) {
+        return window.DOMPurify.sanitize(html, {
+            USE_PROFILES: { html: true },
+            ADD_ATTR: ['data-user-id'],
+            FORBID_ATTR: ['style'],
+        });
+    }
+    // If the sanitizer fails to load, degrade to escaped text instead of
+    // inserting untrusted HTML.
+    return escHtml(html);
 }
 
 function renderAudioPlayer(url, name) {
