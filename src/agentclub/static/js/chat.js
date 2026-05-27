@@ -348,7 +348,7 @@ function renderChatList() {
     }
 
     if (sortedDirects.length) {
-        html += `<div class="section-label">${t('chat.directMessages')}</div>`;
+        html += `<div class="section-label">${t('chat.directChats')}</div>`;
         for (const d of sortedDirects) {
             const isActive = currentChat && currentChat.type === 'direct' && currentChat.id === d.id;
             const initial = (d.peer_name || '?').charAt(0);
@@ -360,7 +360,7 @@ function renderChatList() {
             const agentTag = isAgent ? ' <span class="chat-tag agent">Agent</span>' : '';
             const dAvatarStyle = d.peer_avatar ? '' : ` style="${AgentClubUI.avatarStyle(d.peer_name || d.id)}"`;
             // See note above on groups: no right-click on sidebar rows.
-            // Delete conversation is reachable from the chat header kebab instead.
+            // Delete chat is reachable from the chat header kebab instead.
             html += `<div class="chat-item ${isActive ? 'active' : ''}" onclick="openChat('direct','${d.id}','${escHtml(d.peer_name)}',${isAgent})">
                 <div class="${avatarClass}"${dAvatarStyle}>${d.peer_avatar ? `<img src="${escHtml(d.peer_avatar)}">` : initial}</div>
                 <div class="chat-item-info">
@@ -1788,14 +1788,14 @@ async function changePassword() {
 }
 
 /* Chat-header kebab → dropdown for the *currently open* chat. This is
- * the single entry point for destructive chat actions on every device
+ * the single entry point for chat-level actions on every device
  * (desktop and mobile alike) — we deliberately don't bind right-click
  * / long-press menus on sidebar rows. Items are decided here at click
  * time based on currentChat:
  *
- *   direct                         → clear messages + delete conversation
- *   group, regular member          → leave group
- *   group, creator                 → group settings + clear messages + dissolve group
+ *   direct                         → chat info + clear messages + delete chat
+ *   group, regular member          → chat info + leave group
+ *   group, creator                 → chat info + group settings + clear messages + dissolve group
  *
  * Reuses the same #contextMenu element used by the member kebab
  * dropdowns, so a single document-click handler dismisses both. */
@@ -1804,9 +1804,9 @@ function showChatActionsMenu(event) {
     event.stopPropagation();
     if (!currentChat) return;
     const menu = document.getElementById('contextMenu');
-    let html = '';
+    let html = `<button onclick="showChatInfoModal()">${t('chat.chatInfo')}</button>`;
     if (currentChat.type === 'direct') {
-        html = `<button class="danger" onclick="clearDirectMessages('${currentChat.id}')">${t('chat.clearMessages')}</button>`;
+        html += `<button class="danger" onclick="clearDirectMessages('${currentChat.id}')">${t('chat.clearMessages')}</button>`;
         html += `<button class="danger" onclick="deleteDirectChat('${currentChat.id}')">${t('chat.deleteChat')}</button>`;
     } else if (currentChat.type === 'group') {
         const isCreator = currentChat.created_by === currentUser.id;
@@ -1835,6 +1835,57 @@ function showChatActionsMenu(event) {
     if (left < 8) left = 8;
     menu.style.left = left + 'px';
     menu.style.top = (rect.bottom + 4) + 'px';
+}
+
+function showChatInfoModal() {
+    closeContextMenu();
+    if (!currentChat) return;
+    const typeLabel = currentChat.type === 'group'
+        ? t('chat.groupChat')
+        : t('chat.directChat');
+    document.getElementById('chatInfoTitle').textContent = t('chat.chatInfo');
+    document.getElementById('chatInfoName').textContent =
+        currentChat.name || document.getElementById('chatTitle').textContent || '';
+    document.getElementById('chatInfoType').textContent = typeLabel;
+    document.getElementById('chatIdLabel').textContent = t('chat.chatId');
+    document.getElementById('chatIdValue').textContent = currentChat.id;
+    document.getElementById('chatIdHelp').textContent = t('chat.chatIdHelp');
+    document.getElementById('chatIdCopyBtn').textContent = t('common.copy');
+    document.getElementById('chatInfoModal').classList.remove('hidden');
+}
+
+async function copyTextToClipboard(text) {
+    if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        return;
+    }
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.setAttribute('readonly', '');
+    textarea.style.position = 'fixed';
+    textarea.style.top = '0';
+    textarea.style.left = '-9999px';
+    document.body.appendChild(textarea);
+    textarea.select();
+    const ok = document.execCommand('copy');
+    textarea.remove();
+    if (!ok) throw new Error('copy failed');
+}
+
+async function copyChatId() {
+    const id = document.getElementById('chatIdValue').textContent.trim();
+    if (!id) return;
+    const btn = document.getElementById('chatIdCopyBtn');
+    const copyLabel = t('common.copy');
+    try {
+        await copyTextToClipboard(id);
+        btn.textContent = t('common.copied');
+        setTimeout(() => {
+            btn.textContent = copyLabel;
+        }, 1500);
+    } catch {
+        showAppAlert(t('chat.copyChatIdFailed'));
+    }
 }
 
 document.addEventListener('click', () => {

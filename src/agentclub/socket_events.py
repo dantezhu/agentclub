@@ -101,7 +101,7 @@ def register_events(socketio):
             return {"ok": False, "error": "chat_id is required"}
 
         # Permission check — prevent IDOR: anyone with a leaked/guessed
-        # chat_id could otherwise write into a conversation they're not
+        # chat_id could otherwise write into a chat they're not
         # part of. Uniform gate for humans and agents; groups check
         # membership, direct chats check participation.
         if not models.can_access_chat(chat_type, chat_id, user_id):
@@ -110,14 +110,14 @@ def register_events(socketio):
                 {
                     "message": "You are not in this group"
                     if chat_type == "group"
-                    else "You are not in this conversation",
+                    else "You are not in this chat",
                 },
             )
             return {
                 "ok": False,
                 "error": "You are not in this group"
                 if chat_type == "group"
-                else "You are not in this conversation",
+                else "You are not in this chat",
             }
 
         result = models.save_message(

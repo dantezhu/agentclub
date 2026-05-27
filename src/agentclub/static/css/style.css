@@ -980,6 +980,69 @@ button, .icon-btn, .chat-item, .member-item {
 }
 .profile-view-actions .btn-sm.hidden { display: none; }
 
+/* Chat info modal. Kept separate from user/group profile cards
+ * because the ID is operational metadata, not part of someone's profile. */
+.chat-info {
+    padding: 4px 2px 2px;
+    text-align: left;
+}
+.chat-info-title {
+    font-size: 18px;
+    font-weight: 600;
+    line-height: 1.3;
+    color: var(--color-text);
+    text-align: center;
+    word-break: break-word;
+}
+.chat-info-type {
+    display: table;
+    margin: 8px auto 18px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    background: var(--color-primary-soft);
+    color: var(--color-primary);
+    font-size: 11px;
+    font-weight: 600;
+}
+.chat-id-card {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px 10px;
+    align-items: center;
+    padding: 0;
+}
+.chat-id-label {
+    grid-column: 1 / -1;
+    font-size: 12px;
+    font-weight: 600;
+    color: #5f6670;
+}
+.chat-id-value {
+    display: block;
+    min-width: 0;
+    padding: 8px 10px;
+    border: 1px solid #e1e4e8;
+    border-radius: 6px;
+    background: #fff;
+    color: #333;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    font-size: 12px;
+    line-height: 1.45;
+    white-space: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+}
+.chat-id-card .btn-sm {
+    align-self: stretch;
+    padding: 8px 12px;
+}
+.chat-id-help {
+    margin-top: 10px;
+    color: #8a8f97;
+    font-size: 12px;
+    line-height: 1.5;
+}
+
 /* Avatars that double as click affordances get a subtle hover cue so
  * users discover the new "open profile" interaction. We add this to
  * msg-avatar and chat-header-avatar via a .clickable modifier (set
