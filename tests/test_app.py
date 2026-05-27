@@ -313,14 +313,14 @@ class TestAgents:
         assert token != created["agent_token"]
         assert "*" in token
         assert token.startswith(created["agent_token"][:10])
-        assert token.endswith(created["agent_token"][-4:])
+        assert token.endswith(created["agent_token"][-6:])
 
     def test_mask_agent_token_keeps_short_tokens_hidden(self):
         from agentclub.routes import _mask_agent_token
 
         assert _mask_agent_token("a" * 29) == "*" * 29
         assert _mask_agent_token("abcdefghijklmnopqrstuvwxyz1234") == (
-            "abcdefghij****************1234"
+            "abcdefghij**************yz1234"
         )
 
     def test_reset_agent_token(self, admin_client):

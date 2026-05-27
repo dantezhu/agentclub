@@ -781,4 +781,4 @@ def _mask_agent_token(token):
         return ""
     if len(token) < 30:
         return "*" * len(token)
-    return f"{token[:10]}{'*' * (len(token) - 14)}{token[-4:]}"
+    return f"{token[:10]}{'*' * (len(token) - 16)}{token[-6:]}"
