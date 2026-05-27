@@ -609,6 +609,7 @@
                 </div>
                 <div class="agent-actions">
                     <button class="icon-action" onclick="editAgent('${a.id}')" title="${t('common.edit')}" aria-label="${t('common.edit')}">${AgentClubUI.iconHTML('pencil')}</button>
+                    <button class="icon-action" onclick="resetAgentToken('${a.id}')" title="${t('admin.resetAgentToken')}" aria-label="${t('admin.resetAgentToken')}">${AgentClubUI.iconHTML('refresh-cw')}</button>
                     <button class="icon-action danger" onclick="deleteAgent('${a.id}','${esc(a.display_name)}')" title="${t('common.delete')}" aria-label="${t('common.delete')}">${AgentClubUI.iconHTML('trash-2')}</button>
                 </div>
             </div>`;
@@ -785,13 +786,40 @@
         else showAppAlert(t('common.deleteFailed'));
     }
 
-    function showTokenDialog(token) {
+    async function resetAgentToken(agentId) {
+        const a = agentsById[agentId];
+        if (!a) return;
+        const name = a.display_name || a.username || agentId;
+        if (!(await showAppConfirm(t('admin.resetAgentTokenConfirm', { name }), {
+            confirmText: t('common.reset'),
+            danger: true,
+        }))) return;
+
+        const res = await fetch(`/api/agents/${agentId}/reset-token`, { method: 'POST' });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            showAppAlert(err.error || t('admin.resetTokenFailed'));
+            return;
+        }
+        const data = await res.json();
+        await loadAgents();
+        if (data.agent_token) {
+            showTokenDialog(data.agent_token, {
+                title: t('admin.agentTokenReset'),
+                help: t('admin.agentTokenResetHelp'),
+            });
+        }
+    }
+
+    function showTokenDialog(token, opts) {
+        const title = esc((opts && opts.title) || t('admin.agentCreated'));
+        const help = esc((opts && opts.help) || t('admin.agentTokenHelp'));
         const overlay = document.createElement('div');
         overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:999';
         overlay.innerHTML = `<div style="background:#fff;border-radius:12px;padding:24px;max-width:480px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,0.2);position:relative">
             <button onclick="this.closest('div[style]').parentElement.remove()" style="position:absolute;top:12px;right:12px;background:none;border:none;cursor:pointer;color:#999;display:inline-flex;padding:4px">${AgentClubUI.iconHTML('x')}</button>
-            <h3 style="margin-bottom:6px;font-size:16px">${t('admin.agentCreated')}</h3>
-            <p style="font-size:13px;color:#999;margin-bottom:16px">${t('admin.agentTokenHelp')}</p>
+            <h3 style="margin-bottom:6px;font-size:16px">${title}</h3>
+            <p style="font-size:13px;color:#999;margin-bottom:16px">${help}</p>
             <div style="display:flex;gap:8px">
                 <input readonly value="${esc(token)}" style="flex:1;padding:10px 12px;border:1.5px solid #ddd;border-radius:8px;font-family:monospace;font-size:13px;outline:none;background:#f8f9fa" onclick="this.select()">
                 <button class="btn" onclick="navigator.clipboard.writeText('${esc(token)}');this.textContent='${t('common.copied')}';setTimeout(()=>this.textContent='${t('common.copy')}',1500)">${t('common.copy')}</button>

@@ -303,6 +303,45 @@ class TestAgents:
         assert res.status_code == 200
         assert len(res.get_json()) == 2
 
+    def test_list_agents_masks_tokens(self, admin_client):
+        created = admin_client.post("/api/agents", json={"username": "bot1"}).get_json()
+
+        res = admin_client.get("/api/agents")
+
+        assert res.status_code == 200
+        token = res.get_json()[0]["agent_token"]
+        assert token != created["agent_token"]
+        assert "*" in token
+        assert token.startswith(created["agent_token"][:10])
+        assert token.endswith(created["agent_token"][-4:])
+
+    def test_mask_agent_token_keeps_short_tokens_hidden(self):
+        from agentclub.routes import _mask_agent_token
+
+        assert _mask_agent_token("a" * 29) == "*" * 29
+        assert _mask_agent_token("abcdefghijklmnopqrstuvwxyz1234") == (
+            "abcdefghij****************1234"
+        )
+
+    def test_reset_agent_token(self, admin_client):
+        created = admin_client.post("/api/agents", json={"username": "bot1"}).get_json()
+        old_token = created["agent_token"]
+
+        res = admin_client.post(f"/api/agents/{created['id']}/reset-token")
+
+        assert res.status_code == 200
+        new_token = res.get_json()["agent_token"]
+        assert new_token != old_token
+        assert models.get_user_by_agent_token(old_token) is None
+        assert models.get_user_by_agent_token(new_token)["id"] == created["id"]
+
+    def test_reset_agent_token_requires_admin(self, admin_client, user_client):
+        created = admin_client.post("/api/agents", json={"username": "bot1"}).get_json()
+
+        res = user_client.post(f"/api/agents/{created['id']}/reset-token")
+
+        assert res.status_code == 403
+
 
 # ── Group Tests ──
 

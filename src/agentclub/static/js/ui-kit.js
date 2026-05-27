@@ -42,6 +42,7 @@
         'arrow-up':    '<path d="m5 12 7-7 7 7"/><path d="M12 19V5"/>',
         loader:        '<path d="M12 2v4"/><path d="m16.2 7.8 2.9-2.9"/><path d="M18 12h4"/><path d="m16.2 16.2 2.9 2.9"/><path d="M12 18v4"/><path d="m4.9 19.1 2.9-2.9"/><path d="M2 12h4"/><path d="m4.9 4.9 2.9 2.9"/>',
         'log-out':     '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/>',
+        'refresh-cw':  '<path d="M3 12a9 9 0 0 1 15.74-5.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.74 5.74L3 16"/><path d="M8 16H3v5"/>',
         // Kebab (3 dots) — preferred over an inline X for "row actions";
         // collapses any number of operations into one consistent affordance.
         'more-horizontal': '<circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/>',

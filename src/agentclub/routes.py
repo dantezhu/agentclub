@@ -194,6 +194,26 @@ def delete_agent(agent_id):
     return jsonify({"ok": True})
 
 
+@api.route("/api/agents/<agent_id>/reset-token", methods=["POST"])
+@admin_required
+def reset_agent_token(agent_id):
+    agent = models.get_user_by_id(agent_id)
+    if not agent or not agent["is_agent"]:
+        return jsonify({"error": "Agent not found"}), 404
+
+    token = generate_agent_token()
+    models.reset_agent_token(agent_id, token)
+    logger.info(
+        "agent token reset: agent=%s (%s) admin=%s (%s) ip=%s",
+        agent["username"],
+        agent_id,
+        request.current_user["username"],
+        request.current_user["id"],
+        request.remote_addr,
+    )
+    return jsonify({"ok": True, "agent_token": token})
+
+
 @api.route("/api/groups/<group_id>", methods=["PUT"])
 @login_required
 def update_group(group_id):
@@ -242,7 +262,12 @@ def create_agent():
 @api.route("/api/agents")
 @admin_required
 def list_agents():
-    return jsonify(models.list_agents())
+    agents = []
+    for agent in models.list_agents():
+        row = dict(agent)
+        row["agent_token"] = _mask_agent_token(row.get("agent_token"))
+        agents.append(row)
+    return jsonify(agents)
 
 
 @api.route("/api/users")
@@ -749,3 +774,11 @@ def _safe_user(user):
         # with, and /api/users restricts its scope the same way.
         "last_active_at": user["last_active_at"],
     }
+
+
+def _mask_agent_token(token):
+    if not token:
+        return ""
+    if len(token) < 30:
+        return "*" * len(token)
+    return f"{token[:10]}{'*' * (len(token) - 14)}{token[-4:]}"
