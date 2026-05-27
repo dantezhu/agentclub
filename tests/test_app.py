@@ -645,6 +645,26 @@ class TestSocketIO:
         assert payload == {"chat_type": "direct", "chat_id": chat["id"]}
         bob_sio.disconnect()
 
+    def test_create_direct_chat_emits_chat_list_updated(self, admin_client):
+        alice_sio = socketio.test_client(app, flask_test_client=admin_client)
+        alice_sio.get_received()
+
+        bob_id = models.create_user("bob", hash_password("pw"), "Bob")
+        bob_client = _client_for_user_id(bob_id)
+        bob_sio = socketio.test_client(app, flask_test_client=bob_client)
+        bob_sio.get_received()
+
+        res = admin_client.post("/api/direct-chats", json={"user_id": bob_id})
+
+        assert res.status_code == 200
+        alice_events = [r["name"] for r in alice_sio.get_received()]
+        bob_events = [r["name"] for r in bob_sio.get_received()]
+        assert "chat_list_updated" in alice_events
+        assert "chat_list_updated" in bob_events
+
+        alice_sio.disconnect()
+        bob_sio.disconnect()
+
     def test_typing_indicator(self, admin_client):
         gres = admin_client.post("/api/groups", json={"name": "G1"})
         gid = gres.get_json()["id"]

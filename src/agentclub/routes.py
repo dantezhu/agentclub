@@ -513,6 +513,11 @@ def create_direct_chat():
     if not peer_id or not models.get_user_by_id(peer_id):
         return jsonify({"error": "User not found"}), 404
     chat = models.get_or_create_direct_chat(request.current_user["id"], peer_id)
+    from .socket_events import user_sids
+    from .app import socketio
+    room = f"direct_{chat['id']}"
+    for user_id in {chat["user1_id"], chat["user2_id"]}:
+        _room_transition(socketio, user_sids.get(user_id, set()), room, join=True)
     return jsonify(chat)
 
 
