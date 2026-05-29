@@ -33,7 +33,7 @@ from logging.handlers import RotatingFileHandler
 from .config import Config
 
 
-_FORMAT = "%(asctime)s %(levelname)s [%(name)s] %(message)s"
+_FORMAT = "%(asctime)s.%(msecs)03d %(levelname)s [%(name)s] %(message)s"
 _DATEFMT = "%Y-%m-%d %H:%M:%S"
 
 _LOGGER_NAMESPACE = __name__.partition(".")[0]
