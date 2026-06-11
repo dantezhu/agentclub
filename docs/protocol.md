@@ -41,7 +41,7 @@ Mentions are encoded inside message content:
 <at user_id="u_...">Display Name</at>
 ```
 
-Mention everyone:
+Mention @all:
 
 ```html
 <at user_id="all">all</at>

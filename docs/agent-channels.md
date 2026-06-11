@@ -117,7 +117,7 @@ The mention wire format is:
 <at user_id="u_...">Display Name</at>
 ```
 
-Use `user_id="all"` for everyone.
+Use `user_id="all"` for @all.
 
 ## Read ACKs And Replays
 

@@ -71,7 +71,7 @@
             "chat.dissolveFailed": "Dissolve failed",
             "chat.dissolveGroup": "Dissolve group",
             "chat.dissolveGroupConfirm": "Dissolve this group? All messages will be deleted.",
-            "chat.everyone": "Everyone",
+            "chat.all": "all",
             "chat.fileAudio": "[Audio]",
             "chat.fileFile": "[File]",
             "chat.fileImage": "[Image]",

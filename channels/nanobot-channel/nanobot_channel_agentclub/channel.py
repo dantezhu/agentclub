@@ -166,7 +166,7 @@ def _build_roster_hint(
         parts.append(
             'To @mention someone in your reply, emit the same tag: '
             '<at user_id="UUID">name</at>. Use user_id="all" for '
-            '@everyone. Room roster:\n' + "\n".join(lines)
+            '@all. Room roster:\n' + "\n".join(lines)
         )
     return " ".join(parts)
 

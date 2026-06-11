@@ -20,7 +20,7 @@ import { basename } from "node:path";
  * Wire format for @mentions, mirrored from the feishu channel:
  *   <at user_id="uuid-or-all">display name</at>
  *
- * - `user_id` is authoritative (a uuid, or the literal "all" for @everyone).
+ * - `user_id` is authoritative (a uuid, or the literal "all" for @all).
  * - The display name is for human rendering only.
  *
  * The agent sees the tags verbatim in its prompt; we additionally supply a
@@ -546,7 +546,7 @@ async function processInbound(
       );
       hints.push(
         "To @mention someone in your reply, emit the same tag: " +
-          '<at user_id="UUID">name</at>. Use user_id="all" for @everyone. ' +
+          '<at user_id="UUID">name</at>. Use user_id="all" for @all. ' +
           "Room roster:\n" +
           lines.join("\n"),
       );

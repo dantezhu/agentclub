@@ -203,7 +203,7 @@ def _build_roster_hint(
             lines.append(f'- {name}: user_id="{uid}"{suffix}')
         parts.append(
             "To @mention someone in your reply, emit the same tag: "
-            '<at user_id="UUID">name</at>. Use user_id="all" for @everyone. '
+            '<at user_id="UUID">name</at>. Use user_id="all" for @all. '
             "Room roster:\n" + "\n".join(lines)
         )
     return " ".join(parts)

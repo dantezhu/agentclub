@@ -78,7 +78,7 @@ def register_events(socketio):
         file_name = data.get("file_name", "")
 
         # `mentions` travels the wire as an array of user_ids (uuid strings)
-        # plus the special literal "all" for @everyone. We normalize here so
+        # plus the special literal "all" for @all. We normalize here so
         # downstream (DB, channel plugins) can trust the shape.
         raw_mentions = data.get("mentions", [])
         if not isinstance(raw_mentions, list):

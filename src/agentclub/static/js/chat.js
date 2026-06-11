@@ -632,8 +632,8 @@ function renderMarkdown(text) {
                 .replace(/&lt;/g, '<')
                 .replace(/&gt;/g, '>')
                 .replace(/&amp;/g, '&');
-            const labelName = (decoded && decoded.trim()) || (uid === 'all' ? t('chat.everyone') : uid);
-            const label = uid === 'all' ? t('chat.everyone') : labelName;
+            const labelName = (decoded && decoded.trim()) || (uid === 'all' ? t('chat.all') : uid);
+            const label = uid === 'all' ? t('chat.all') : labelName;
             const pill = `<span class="${cls}" data-user-id="${escHtml(uid)}">@${escHtml(label)}</span>`;
             // Use Unicode Private-Use-Area delimiters so marked's parser
             // doesn't touch them (NUL and ASCII punctuation both risk being
@@ -1182,7 +1182,7 @@ async function maybeShowMentionPicker(input) {
 
     const members = await loadMentionMembers(currentChat.id);
     const items = [
-        { id: 'all', label: t('chat.everyone'), is_agent: false, is_all: true },
+        { id: 'all', label: t('chat.all'), is_agent: false, is_all: true },
         ...members
             .filter((u) => u.id !== currentUser.id)
             .map((u) => ({ id: u.id, label: u.display_name, is_agent: !!u.is_agent, is_all: false })),
@@ -2441,7 +2441,7 @@ function previewText(msg) {
                     .replace(/&lt;/g, '<')
                     .replace(/&gt;/g, '>')
                     .replace(/&amp;/g, '&');
-                return `@${decoded || t('chat.everyone')}`;
+                return `@${decoded || t('chat.all')}`;
             },
         );
         text = raw.replace(/\n/g, ' ').slice(0, 30);
